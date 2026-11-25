@@ -81,6 +81,69 @@ describe('MessageStore', () => {
             expect(store.hasMore).toBe(true);
         });
 
+        it('dedupes a refetched page despite timestamp precision mismatch (#1823)', () => {
+            const store = new MessageStore(() => {});
+            store.pushMessage({ role: 'user', content: 'hi', timestamp: '2026-11-24T20:00:00.123Z' });
+            store.pushMessage({
+                role: 'tool', tool_call_id: 'tc1', tool: 'shell', content: 'ok', timestamp: '2026-11-24T20:00:00.456Z',
+            });
+            store.pushMessage({ role: 'assistant', content: 'done', timestamp: '2026-11-24T20:00:00.789Z' });
+
+            store.handleMessage({
+                type: MESSAGE_TYPES.CONV_HISTORY,
+                conv_id: '1',
+                has_more: false,
+                messages: [
+                    { role: 'user', content: 'hi', timestamp: '2026-11-24T12:00:00.123456' },
+                    {
+                        role: 'assistant', content: null,
+                        tool_calls: [{ id: 'tc1', function: { name: 'shell' } }],
+                        timestamp: '2026-11-24T12:00:00.456789',
+                    },
+                    { role: 'tool', tool_call_id: 'tc1', content: 'ok', timestamp: '2026-11-24T12:00:00.456999' },
+                    { role: 'assistant', content: 'done', timestamp: '2026-11-24T12:00:00.789123' },
+                ],
+            }, '1');
+
+            expect(store.currentMessages.map(m => m.role)).toEqual(['user', 'tool', 'assistant']);
+            expect(store.currentMessages.map(m => m.content)).toEqual(['hi', 'ok', 'done']);
+        });
+
+        it('prepends an older page that does not overlap (#1823)', () => {
+            const store = new MessageStore(() => {});
+            store.pushMessage({ role: 'user', content: 'newest', timestamp: 't2' });
+
+            store.handleMessage({
+                type: MESSAGE_TYPES.CONV_HISTORY,
+                conv_id: '1',
+                has_more: false,
+                messages: [
+                    { role: 'user', content: 'older', timestamp: 't0' },
+                    { role: 'assistant', content: 'reply', timestamp: 't1' },
+                ],
+            }, '1');
+
+            expect(store.currentMessages.map(m => m.content)).toEqual(['older', 'reply', 'newest']);
+        });
+
+        it('does not drop an older row that merely repeats current content (#1823)', () => {
+            const store = new MessageStore(() => {});
+            store.pushMessage({ role: 'assistant', content: 'Done.', timestamp: 't2' });
+            store.pushMessage({ role: 'assistant', content: 'Later.', timestamp: 't3' });
+
+            store.handleMessage({
+                type: MESSAGE_TYPES.CONV_HISTORY,
+                conv_id: '1',
+                has_more: false,
+                messages: [
+                    { role: 'user', content: 'older', timestamp: 't0' },
+                    { role: 'assistant', content: 'Done.', timestamp: 't1' },
+                ],
+            }, '1');
+
+            expect(store.currentMessages.map(m => m.content)).toEqual(['older', 'Done.', 'Done.', 'Later.']);
+        });
+
         it('keeps outcome tags when merging archived tool messages (#1569)', () => {
             const store = new MessageStore(() => {});
             store.handleMessage({

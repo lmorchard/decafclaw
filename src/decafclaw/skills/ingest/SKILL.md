@@ -78,6 +78,7 @@ For each planned update (all paths must start with `agent/pages/` — if you cat
     ```
   - Body that synthesizes the source in your own words. Add `[[wiki-links]]` to related pages you touched in this ingest.
   - `## Sources` section at the bottom with the URL or file path and the current date (use `current_time`).
+  - **Never put a URL inside `[[...]]`.** Wiki-links resolve vault page names; a URL there can never resolve and pollutes the broken-link audit. Write sources as plain text or `[label](url)` — e.g. `- [post](https://example.com) (2026-04-10)`, never `[[https://example.com]]`.
 
 Prefer synthesis over quotation. If you do quote, keep quotes short and attribute inline.
 

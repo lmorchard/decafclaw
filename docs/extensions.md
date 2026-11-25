@@ -352,9 +352,10 @@ returns no contribution, so the turn still composes.
 
 `src/decafclaw/extensions/vault_retrieval.py` owns proactive vault retrieval
 (#301, #1048, #1157, epic #1483 phase 4). It subscribes `PRE_COMPOSE`, embeds
-the user message, scores candidates by similarity, recency, and importance,
-suppresses pages resident in active history, trims to the turn's token
-budget, and returns a `WORKING_MEMORY` `ContextContribution` holding the
+the user message, fuses the dense vector ranking with an FTS5 lexical ranking
+via reciprocal rank fusion (#1816), scores candidates by similarity, recency,
+and importance, suppresses pages resident in active history, trims to the turn's
+token budget, and returns a `WORKING_MEMORY` `ContextContribution` holding the
 `vault_retrieval` block plus a `memory` source entry. The block reaches the
 provider for that turn only; the surfaced paths travel as metadata on the
 archived user row for auditing and Context Inspector display without suppressing
@@ -371,7 +372,7 @@ state for reflection and the Context Inspector, publishes the
 `vault_retrieval` UI event, and publishes `retrieval_event` telemetry.
 
 Modes and gates match the pre-extraction behavior: `always`, `headlines`,
-`on_demand`; skipped for heartbeat, scheduled, and child-agent turns; honors
+`tapered`, `on_demand`; skipped for heartbeat, scheduled, and child-agent turns; honors
 `ctx.skip_vault_retrieval`. The extension declares
 `pre_compose_timeout = 5.0` because the first retrieval loads the embedding
 model.
@@ -385,6 +386,8 @@ section:
 | `max_results` | `vault_retrieval.max_results` | `5` |
 | `max_tokens` | `vault_retrieval.max_tokens` | `4000` |
 | `headline_summary_max_chars` | `vault_retrieval.headline_summary_max_chars` | `200` |
+| `top_n_detailed` | `vault_retrieval.tapered_top_n_detailed` | `1` |
+| `tapered_summary_max_chars` | `vault_retrieval.tapered_summary_max_chars` | `140` |
 | `show_in_ui` | `vault_retrieval.show_in_ui` | `true` |
 
 Disabled (`extensions.vault_retrieval.enabled: false`), the agent keeps

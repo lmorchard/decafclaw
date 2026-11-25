@@ -11,12 +11,15 @@ import pytest
 import decafclaw.embeddings as embeddings_module
 from decafclaw.embeddings import (
     _entry_hash,
+    _fts_match_query,
     _get_db,
     _has_embedding_column,
+    _open_db,
     delete_by_source_type,
     delete_entries,
     index_entry_sync,
     prune_stale_embeddings,
+    search_fts_sync,
     search_similar_sync,
 )
 
@@ -610,3 +613,87 @@ def test_format_progress():
     completed_line = embeddings_module._format_progress(100, 100, 20.0, "vault pages")
     assert "vault pages: 100/100 (100.0%)" in completed_line
     assert "Total: 20s" in completed_line
+
+
+# -- FTS5 lexical index (#1816) -----------------------------------------------
+
+
+def _index_page(config, path: str, text: str, source_type: str = "page") -> None:
+    index_entry_sync(
+        config,
+        path,
+        text,
+        [1.0] * config.embedding.dimensions,
+        source_type=source_type,
+    )
+
+
+def test_fts_indexes_entries_and_matches_exact_token(config):
+    _index_page(config, "pages/ports.md", "The daemon listens on port 32848 for admin traffic.")
+    _index_page(config, "pages/networking.md", "Generic networking concepts and routing notes.")
+
+    results = search_fts_sync(config, "32848", top_k=5)
+    assert [r["file_path"] for r in results] == ["pages/ports.md"]
+    assert isinstance(results[0]["id"], int)
+    assert results[0]["bm25"] < 0
+
+
+def test_fts_matches_hyphenated_identifier_tokens(config):
+    _index_page(config, "pages/hosts.md", "myriad-docker runs the companion services.")
+    _index_page(config, "pages/other.md", "Docker is a container runtime.")
+
+    results = search_fts_sync(config, "myriad-docker", top_k=5)
+    assert results[0]["file_path"] == "pages/hosts.md"
+
+
+def test_fts_match_query_sanitizes_punctuation():
+    query = _fts_match_query('port: 32848 "quoted" --no-token #1805')
+    assert query == '"port" OR "32848" OR "quoted" OR "no" OR "token" OR "1805"'
+
+
+def test_fts_match_query_empty_input():
+    assert _fts_match_query("!!! ...") == ""
+
+
+def test_fts_empty_query_returns_no_results(config):
+    assert search_fts_sync(config, "!!! ...") == []
+
+
+def test_fts_delete_entries_removes_rows(config):
+    _index_page(config, "pages/ports.md", "The daemon listens on port 32848.")
+
+    assert delete_entries(config, "pages/ports.md") == 1
+    assert search_fts_sync(config, "32848") == []
+
+
+def test_fts_delete_by_source_type_removes_rows(config):
+    _index_page(config, "pages/ports.md", "The daemon listens on port 32848.")
+
+    assert delete_by_source_type(config, "page") == 1
+    assert search_fts_sync(config, "32848") == []
+
+
+def test_fts_backfills_rows_when_table_is_empty(config):
+    _index_page(config, "pages/ports.md", "The daemon listens on port 32848.")
+
+    with _open_db(config) as conn:
+        conn.execute("DELETE FROM fts_pages")
+        conn.commit()
+
+    results = search_fts_sync(config, "32848")
+    assert [r["file_path"] for r in results] == ["pages/ports.md"]
+
+
+def test_fts_search_filters_source_type(config):
+    _index_page(config, "pages/ports.md", "The daemon listens on port 32848.", source_type="page")
+    _index_page(config, "journal/2026-01-01.md", "## Ports\n\nOpened port 32848.", source_type="journal")
+
+    results = search_fts_sync(config, "32848", source_type="journal")
+    assert [r["file_path"] for r in results] == ["journal/2026-01-01.md"]
+
+
+def test_search_similar_results_include_row_id(config):
+    _index_page(config, "pages/ports.md", "The daemon listens on port 32848.")
+
+    results = search_similar_sync(config, [1.0] * config.embedding.dimensions, top_k=5)
+    assert isinstance(results[0]["id"], int)

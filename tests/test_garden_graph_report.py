@@ -126,3 +126,99 @@ class TestVaultGraphReport:
         assert TOOLS["vault_graph_report"] is tool_vault_graph_report
         entry = next(d for d in TOOL_DEFINITIONS if d["function"]["name"] == "vault_graph_report")
         assert entry["writes"] is False
+
+
+class TestExcludedFolders:
+    """Machine-generated folders must not participate in graph metrics.
+
+    ``notifications/`` is written by the notification channel subscriber on
+    every scheduled run — 216 pages at 69% isolate on the live vault. Those
+    pages were never meant to be linked, so counting them as isolates
+    overstated the editorial backlog by roughly 46%.
+    """
+
+    @pytest.fixture
+    def exclude_vault(self, config, monkeypatch):
+        from decafclaw.skills.garden import tools as garden_tools
+
+        monkeypatch.setattr(garden_tools, "_skill_config", garden_tools.SkillConfig())
+
+        vault = config.vault_root
+        pages = config.vault_agent_pages_dir
+        pages.mkdir(parents=True, exist_ok=True)
+
+        def write(rel: str, text: str) -> None:
+            path = vault / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+
+        write("agent/pages/real.md", "Links to [[other]].\n")
+        write("agent/pages/other.md", "target\n")
+        # A pile of machine-generated isolates, as the live vault has.
+        for i in range(5):
+            write(f"agent/pages/notifications/2026-11-{i:02d}.md", "notification rollup\n")
+        write("agent/pages/kindle/book-one.md", "highlights\n")
+        # A subfolder is NOT excluded just because a sibling is.
+        write("agent/pages/notifications-archive/kept.md", "real page\n")
+
+        backlinks.rebuild_index(config)
+        return config
+
+    @pytest.mark.asyncio
+    async def test_excluded_pages_not_counted_in_totals(self, exclude_vault):
+        from types import SimpleNamespace
+
+        result = await tool_vault_graph_report(SimpleNamespace(config=exclude_vault))
+        totals = result.data["totals"]
+        # real + other + notifications-archive/kept = 3
+        assert totals["pages"] == 3
+
+    @pytest.mark.asyncio
+    async def test_excluded_pages_absent_from_isolates(self, exclude_vault):
+        from types import SimpleNamespace
+
+        result = await tool_vault_graph_report(SimpleNamespace(config=exclude_vault))
+        isolates = result.data["isolates"]
+        assert not [p for p in isolates if "/notifications/" in p]
+        assert not [p for p in isolates if "/kindle/" in p]
+
+    @pytest.mark.asyncio
+    async def test_similarly_named_folder_is_not_excluded(self, exclude_vault):
+        from types import SimpleNamespace
+
+        result = await tool_vault_graph_report(SimpleNamespace(config=exclude_vault))
+        assert "agent/pages/notifications-archive/kept.md" in result.data["isolates"]
+
+    @pytest.mark.asyncio
+    async def test_broken_links_ignores_excluded_pages(self, exclude_vault):
+        from types import SimpleNamespace
+
+        from decafclaw.skills.garden.tools import tool_vault_broken_links
+
+        (exclude_vault.vault_root / "agent/pages/notifications/broken.md").write_text(
+            "See [[nowhere at all]].\n", encoding="utf-8"
+        )
+        result = await tool_vault_broken_links(SimpleNamespace(config=exclude_vault))
+        pages = {entry["page"] for entry in result.data["broken"]}
+        assert not [p for p in pages if "/notifications/" in p]
+
+    def test_is_excluded_matches_only_whole_folder_segments(self, config, monkeypatch):
+        from decafclaw.skills.garden import tools as garden_tools
+
+        monkeypatch.setattr(garden_tools, "_skill_config", garden_tools.SkillConfig())
+        assert garden_tools._is_excluded("agent/pages/notifications/2026-11-01.md")
+        assert garden_tools._is_excluded("agent/pages/kindle/book.md")
+        assert not garden_tools._is_excluded("agent/pages/notifications-archive/kept.md")
+        assert not garden_tools._is_excluded("agent/pages/notifications.md")
+        assert not garden_tools._is_excluded("agent/pages/real.md")
+
+    def test_excluded_folders_configurable(self, monkeypatch):
+        from decafclaw.skills.garden import tools as garden_tools
+
+        monkeypatch.setattr(
+            garden_tools,
+            "_skill_config",
+            garden_tools.SkillConfig(excluded_folders=("bookmarks",)),
+        )
+        assert garden_tools._is_excluded("agent/pages/bookmarks/x.md")
+        assert not garden_tools._is_excluded("agent/pages/notifications/2026-11-01.md")
