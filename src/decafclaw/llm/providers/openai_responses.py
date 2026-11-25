@@ -146,8 +146,14 @@ class OpenAIResponsesProvider(OpenAIProvider):
         timeout: int = 300,
         reasoning_effort: str | None = None,
         max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_tokens: int | None = None,
+        stop: list[str] | None = None,
         **kwargs: Any,
     ) -> dict:
+        if stop:
+            raise ValueError("openai-responses provider does not support stop sequences")
         body: dict[str, Any] = {
             "model": model,
             "input": self._input(model, messages),
@@ -160,6 +166,12 @@ class OpenAIResponsesProvider(OpenAIProvider):
             body["reasoning"] = {"effort": reasoning_effort}
         if max_output_tokens is not None:
             body["max_output_tokens"] = max_output_tokens
+        elif max_tokens is not None:
+            body["max_output_tokens"] = max_tokens
+        if temperature is not None:
+            body["temperature"] = temperature
+        if top_p is not None:
+            body["top_p"] = top_p
         if tools:
             body["tools"] = [
                 {"type": "function", **deepcopy(tool["function"]), "strict": tool["function"].get("strict", False)}

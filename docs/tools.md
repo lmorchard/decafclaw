@@ -421,19 +421,21 @@ See [Sub-Agent Delegation](delegation.md).
 
 ## LLM Models & Query (`tools/llm_tools.py`)
 
-Model discovery and one-shot completions against a named model — no tool schemas, no conversation history (#1258, #1444).
+Model discovery and completions against a named model — no tool schemas (#1258, #1444, #1820).
 
 | Tool | What it does |
 |------|--------------|
 | `llm_models` | List `config.model_configs` entries — the names `llm_query(model=...)` and `delegate_task(model=...)` accept — with provider, underlying model id, and active/default flags. Optional `provider` and `query` filters |
-| `llm_query` | Single-shot completion (or a batch of up to 25, concurrency 5) against a `config.model_configs` entry. For narrow text transformation — extraction, summarization, classification — especially against small local models |
+| `llm_query` | Completion (or a batch of up to 25, concurrency 5) against a `config.model_configs` entry, with an optional multi-turn history and per-call sampler overrides. For narrow text transformation — extraction, summarization, classification — especially against small local models |
 
 - `llm_models` is read-only and local: no network probe or remote provider ping. It reports the effective default model (#1211: catalog pointer when set, else `config.default_model`) and the conversation's active model; a stale active name that is no longer configured is not reported as active. `provider` matches the provider key (exact or case-insensitive substring); `query` matches the config name or underlying model id. Structured output lives on `ToolResult.data` as `{default_model, active_model, total, models: [{name, provider, model, is_default, is_active}]}`.
 - `llm_query` `model=""` inherits the conversation's active model; an unknown name is a hard error that lists configured models (no silent fallback).
+- `messages` supplies a real multi-turn history (`[{'role': 'system'|'user'|'assistant', 'content': '...'}]`); `prompt` is optional and appends a final user turn. `system` merges into a leading system message or is prepended. `messages` cannot be combined with a prompt list.
+- Per-call `temperature` (0.0–2.0), `top_p` (>0.0–1.0), `max_tokens`, and `stop` sequences override the model configuration for that call only. `openai-compat` sends `max_tokens`; `openai-responses` maps it to `max_output_tokens` and rejects `stop` (the API has no stop parameter); Vertex maps to `generationConfig`.
 - `return_schema` requests a fenced JSON block via prompt-level instruction; a compliant block parses to `ToolResult.data`. `strict=true` turns non-compliant output into an error with field-level feedback.
 - Each item runs under its own per-item timeout (default 60s); the tool opts out of the global watchdog. Usage accumulates into the turn's token counters, same as agent LLM calls.
 
-For a subtask that needs tools or multi-turn reasoning, use `delegate_task` instead.
+For a subtask that needs tools or its own context, use `delegate_task` instead.
 
 ## Skills (`tools/skill_tools.py`)
 
