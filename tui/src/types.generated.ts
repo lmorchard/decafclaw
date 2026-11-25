@@ -83,6 +83,7 @@ export interface SrvConvHistory {
   context_limit: number;
   read_only?: boolean;
   estimated_tokens?: number;
+  context_usage?: number;
   active_model?: string;
   available_models?: string[];
   model_groups?: Array<Record<string, unknown>>;
@@ -222,6 +223,7 @@ export interface SrvToolEnd {
   is_error?: boolean;
   timed_out?: boolean;
   timeout_sec?: number;
+  details?: Record<string, unknown>;
 }
 
 export interface SrvToolStart {

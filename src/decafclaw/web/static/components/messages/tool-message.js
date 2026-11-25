@@ -10,6 +10,8 @@ export class ToolMessage extends LitElement {
     content: { type: String },
     icon: { type: String },
     display_short_text: { type: String },
+    /** UI-only purpose/approval metadata from ToolResult.details (#1654) */
+    details: { type: Object, attribute: false },
     /** Array of {text, timestamp} status history entries from the tool_call phase */
     statusHistory: { type: Array, attribute: false },
     /** Optional widget payload: {widget_type, target, data} */
@@ -36,6 +38,8 @@ export class ToolMessage extends LitElement {
     this.content = '';
     this.icon = '\u{1f527}';
     this.display_short_text = '';
+    /** @type {object|null} */
+    this.details = null;
     /** @type {Array<{text: string, timestamp: string}>|null} */
     this.statusHistory = null;
     /** @type {{widget_type: string, target: string, data: object}|null} */
@@ -125,6 +129,22 @@ export class ToolMessage extends LitElement {
             <div class="tool-result-detail">
               <strong>Command</strong>
               <pre>${this.command}</pre>
+            </div>
+          ` : nothing}
+          ${this.details ? html`
+            <div class="tool-result-detail tool-details">
+              ${this.details.purpose ? html`
+                <div><strong>Purpose</strong> ${this.details.purpose}</div>
+              ` : nothing}
+              ${this.details.approval ? html`
+                <div>
+                  <strong>Approval</strong>
+                  ${this.details.approval.decision || ''}${this.details.approval.tier ? ` (${this.details.approval.tier})` : ''}
+                </div>
+                ${this.details.approval.reason ? html`
+                  <div class="tool-detail-reason">${this.details.approval.reason}</div>
+                ` : nothing}
+              ` : nothing}
             </div>
           ` : nothing}
           ${hasHistory ? html`

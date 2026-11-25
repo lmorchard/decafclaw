@@ -199,6 +199,7 @@ class SrvConvHistory(TypedDict):
     context_limit: int
     read_only: NotRequired[bool]
     estimated_tokens: NotRequired[int]
+    context_usage: NotRequired[int]
     active_model: NotRequired[str]
     available_models: NotRequired[list[str]]
     model_groups: NotRequired[list[dict[str, object]]]
@@ -338,6 +339,7 @@ class SrvToolEnd(TypedDict):
     is_error: NotRequired[bool]
     timed_out: NotRequired[bool]
     timeout_sec: NotRequired[int]
+    details: NotRequired[dict[str, object]]
 
 
 class SrvToolStart(TypedDict):

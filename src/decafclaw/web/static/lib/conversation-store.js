@@ -24,6 +24,7 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {string} [command]
  * @property {string} [tool_call_id]
  * @property {string} [display_short_text]
+ * @property {object} [details]
  * @property {object[]} [tool_calls]
  * @property {boolean} [_merged]
  * @property {Array<{text: string, timestamp: string}>} [statusHistory]
@@ -884,7 +885,10 @@ export class ConversationStore extends EventTarget {
       // Handle side effects that live in ConversationStore
       if (msg.type === MESSAGE_TYPES.CONV_HISTORY && msg.conv_id === this.#currentConvId) {
         if (msg.context_limit) this.#contextLimit = msg.context_limit;
-        if (msg.estimated_tokens) this.#contextUsage = msg.estimated_tokens;
+        // Prefer the last turn's recorded usage (#1275); older servers send
+        // only the history estimate.
+        if (msg.context_usage) this.#contextUsage = msg.context_usage;
+        else if (msg.estimated_tokens) this.#contextUsage = msg.estimated_tokens;
         if (msg.active_model) this.#activeModel = msg.active_model;
         if (msg.available_models) this.#availableModels = msg.available_models;
         // Grouped payload (#1441). Older servers omit it: keep whatever flat

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import fcntl
 import importlib.util
+import json
 import pathlib
 import re
 import sys
@@ -359,7 +360,80 @@ def test_state_round_trip(tmp_path):
 
 
 @pytest.mark.parametrize("bad", ["not json", "[]", "null"])
-def test_state_load_tolerates_bad_input(tmp_path, bad):
+def test_state_load_rejects_bad_input(tmp_path, bad):
+    """A corrupt state file must fail safe, not silently reset quarantine."""
     path = tmp_path / "state.json"
     path.write_text(bad)
-    assert dr.DeployState.load(path) == dr.DeployState()
+    with pytest.raises(dr.StateError):
+        dr.DeployState.load(path)
+
+
+# -- Poll policy (#1648) -----------------------------------------------------
+
+
+def test_no_candidate_is_quiet(tmp_path):
+    world = FakeWorld(candidate=HEAD)
+    runner = make_runner(tmp_path, world)
+
+    assert runner.run() == dr.EXIT_OK
+
+    assert not any("systemctl --user stop" in command for command in _commands(world))
+    assert world.notifications == []
+
+
+def test_corrupt_state_refuses_and_notifies(tmp_path):
+    world = FakeWorld(health_script=[_health(commit=HEAD)])
+    (tmp_path / "state.json").write_text("not json")
+    runner = make_runner(tmp_path, world)
+
+    assert runner.run() == dr.EXIT_REFUSED
+
+    assert not any("systemctl --user stop" in command for command in _commands(world))
+    assert world.notifications[-1]["title"] == "Deploy state unreadable; refusing to deploy"
+    assert world.notifications[-1]["priority"] == "high"
+
+
+def test_defer_busy_skips_without_stopping(tmp_path):
+    world = FakeWorld(health_script=[_health(commit=HEAD, busy=True)])
+    runner = make_runner(tmp_path, world, defer_busy=True)
+
+    assert runner.run() == dr.EXIT_OK
+
+    assert not any("systemctl --user stop" in command for command in _commands(world))
+    assert world.notifications == []
+    state = dr.DeployState.load(tmp_path / "state.json")
+    assert state.first_seen[CANDIDATE]
+
+
+def test_deferral_cap_notifies_exactly_once(tmp_path):
+    world = FakeWorld(health_script=[_health(commit=HEAD, busy=True)])
+    runner = make_runner(tmp_path, world, defer_busy=True, deferral_cap_hours=6)
+
+    assert runner.run() == dr.EXIT_OK
+    state = dr.DeployState.load(tmp_path / "state.json")
+    state.first_seen[CANDIDATE] = "2026-01-01T00:00:00Z"
+    state.save(tmp_path / "state.json")
+
+    assert runner.run() == dr.EXIT_OK
+    assert len(world.notifications) == 1
+    assert world.notifications[0]["title"] == "Deploy candidate is waiting"
+
+    assert runner.run() == dr.EXIT_OK
+    assert len(world.notifications) == 1
+
+
+def test_deploy_attempt_clears_deferral_state(tmp_path):
+    world = FakeWorld(
+        health_script=[
+            _health(commit=HEAD),  # pre-deploy
+            _health(commit=CANDIDATE),  # verify
+        ]
+    )
+    (tmp_path / "state.json").write_text(json.dumps({"first_seen": {CANDIDATE: "2026-01-01T00:00:00Z"}}))
+    runner = make_runner(tmp_path, world)
+
+    assert runner.run() == dr.EXIT_OK
+
+    state = dr.DeployState.load(tmp_path / "state.json")
+    assert CANDIDATE not in state.first_seen
+    assert CANDIDATE not in state.deferral_notified

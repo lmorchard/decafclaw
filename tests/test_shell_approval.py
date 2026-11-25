@@ -379,7 +379,7 @@ async def test_allowlist_bypasses_security_monitor_and_llm(ctx):
         patch("decafclaw.tools.shell_tools.request_confirmation") as mock_confirm,
     ):
         result = await check_shell_approval(ctx, 'gh issue create --body "line 1\n\nline 2"')
-        assert result == {"approved": True}
+        assert result["approved"] is True
         mock_eval_llm.assert_not_called()
         mock_confirm.assert_not_called()
 
@@ -394,7 +394,7 @@ async def test_allowlist_overrides_sensitive_ask(ctx):
         patch("decafclaw.tools.shell_tools.request_confirmation") as mock_confirm,
     ):
         result = await check_shell_approval(ctx, "npm install lodash")
-        assert result == {"approved": True}
+        assert result["approved"] is True
         mock_eval_llm.assert_not_called()
         mock_confirm.assert_not_called()
 
@@ -508,7 +508,7 @@ async def test_ask_confirmation_message_includes_monitor_reason(ctx):
         return_value={"approved": False},
     ) as mock_confirm:
         result = await check_shell_approval(ctx, "chmod 777 script.sh")
-        assert result == {"approved": False}
+        assert result["approved"] is False
         _, kwargs = mock_confirm.call_args
         message = kwargs["message"]
         assert "Shell command (security review requested): `chmod 777 script.sh`" in message
@@ -544,7 +544,7 @@ async def test_aux_decline_confirmation_message_includes_risk_and_reason(ctx):
         return_value={"approved": False},
     ) as mock_confirm:
         result = await check_shell_approval(ctx, "touch hello")
-        assert result == {"approved": False}
+        assert result["approved"] is False
         _, kwargs = mock_confirm.call_args
         message = kwargs["message"]
         assert "Shell command: `touch hello`" in message
@@ -570,7 +570,7 @@ async def test_no_reason_confirmation_message_unchanged(ctx):
         return_value={"approved": False},
     ) as mock_confirm:
         result = await check_shell_approval(ctx, "touch hello")
-        assert result == {"approved": False}
+        assert result["approved"] is False
         _, kwargs = mock_confirm.call_args
         assert kwargs["message"] == "Shell command: `touch hello`"
 
@@ -585,7 +585,7 @@ async def test_caller_message_takes_precedence(ctx):
         return_value={"approved": False},
     ) as mock_confirm:
         result = await check_shell_approval(ctx, "chmod 777 script.sh", message="Custom ask message")
-        assert result == {"approved": False}
+        assert result["approved"] is False
         _, kwargs = mock_confirm.call_args
         assert kwargs["message"] == "Custom ask message"
 
@@ -607,6 +607,48 @@ async def test_caller_message_takes_precedence(ctx):
         return_value={"approved": False},
     ) as mock_confirm:
         result = await check_shell_approval(ctx, "touch hello", message="Background process: `touch hello`")
-        assert result == {"approved": False}
+        assert result["approved"] is False
         _, kwargs = mock_confirm.call_args
         assert kwargs["message"] == "Background process: `touch hello`"
+
+
+# -- UI-only details (#1654) -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_shell_result_carries_purpose_and_approval_details(ctx):
+    from decafclaw.media import ToolResult
+
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.check_shell_approval",
+            new_callable=AsyncMock,
+            return_value={"approved": True, "decision": "allow", "tier": "read_only"},
+        ),
+        patch(
+            "decafclaw.tools.shell_tools._execute_command",
+            new_callable=AsyncMock,
+            return_value=ToolResult(text="ok"),
+        ),
+    ):
+        result = await tool_shell(ctx, "git status", purpose="check the tree")
+
+    assert result.details == {
+        "purpose": "check the tree",
+        "approval": {"decision": "allow", "tier": "read_only", "reason": ""},
+    }
+
+
+@pytest.mark.asyncio
+async def test_shell_denial_carries_decision_and_reason(ctx):
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    with patch(
+        "decafclaw.tools.shell_tools.check_shell_approval",
+        new_callable=AsyncMock,
+        return_value={"approved": False, "decision": "deny", "tier": "human", "reason": "not now"},
+    ):
+        result = await tool_shell(ctx, "rm data.txt", purpose="clean up")
+
+    assert result.details["purpose"] == "clean up"
+    assert result.details["approval"] == {"decision": "deny", "tier": "human", "reason": "not now"}

@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from decafclaw.agent import TurnRunner, _Continue, _Final, _maybe_compact
+from decafclaw.config_types import ModelConfig
 from decafclaw.context_types import effective_compaction_threshold
 from decafclaw.conversation_manager import ConversationManager, TurnKind
 from decafclaw.events import EventBus
@@ -152,6 +153,29 @@ async def test_reactive_overflow_clears_compaction_estimate_on_next_usage(ctx, c
 
 
 @pytest.mark.asyncio
+async def test_message_complete_context_limit_uses_model_window(manager, monkeypatch):
+    """A known model window is the meter's denominator, not the compaction cap (#1275)."""
+    manager.config.compaction.max_tokens = 10000
+    manager.config.model_configs["big"] = ModelConfig(provider="scripted", model="x", context_window_size=200_000)
+    manager.config.default_model = "big"
+
+    async def mock_call_llm_with_events(ctx, config, messages, tools, **kwargs):
+        return {"content": "Hello", "role": "assistant"}
+
+    monkeypatch.setattr("decafclaw.agent._call_llm_with_events", mock_call_llm_with_events)
+
+    events = []
+    manager.subscribe("c1", lambda e: events.append(e))
+    fut = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.USER, prompt="hi", history=[])
+    await asyncio.wait_for(fut, timeout=5.0)
+
+    complete = [e for e in events if e.get("type") == "message_complete"]
+    assert complete
+    assert complete[-1]["context_limit"] == 200_000
+    assert complete[-1]["context_limit"] != manager.config.compaction.max_tokens
+
+
+@pytest.mark.asyncio
 async def test_reactive_overflow_does_not_affect_second_conversation(manager, monkeypatch):
     manager.config.compaction.max_tokens = 10000
 
@@ -237,6 +261,27 @@ def test_effective_compaction_threshold_lowered_beats_ratio(ctx, config):
     config.compaction.threshold_ratio = 0.4
     config.llm.context_window_size = 128000
     assert effective_compaction_threshold(config, ctx, lowered=51200) == 51200
+
+
+@pytest.mark.asyncio
+async def test_maybe_compact_clears_for_skip_mode_even_with_preserve(ctx, config, monkeypatch):
+    """Non-interactive modes clear tool results even when interactive history is preserved."""
+    from decafclaw.context_cleanup import ClearStats
+    from decafclaw.context_types import ComposerMode, TaskMode
+
+    mock_clear = MagicMock(return_value=ClearStats())
+    monkeypatch.setattr("decafclaw.agent.clear_old_tool_results", mock_clear)
+    monkeypatch.setattr("decafclaw.extensions.compaction.find_compaction_extension", lambda ctx: None)
+
+    config.cleanup.preserve_prompt_cache = True
+    ctx.task_mode = TaskMode.INTERACTIVE
+    await _maybe_compact(ctx, config, [], prompt_tokens=0)
+    mock_clear.assert_not_called()
+
+    ctx.task_mode = TaskMode.HEARTBEAT
+    await _maybe_compact(ctx, config, [], prompt_tokens=0)
+    mock_clear.assert_called_once()
+    assert mock_clear.call_args.kwargs["mode"] is ComposerMode.HEARTBEAT
 
 
 @pytest.mark.asyncio

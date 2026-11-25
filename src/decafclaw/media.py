@@ -96,6 +96,9 @@ class ToolResult:
     display_text: str | None = None
     display_short_text: str | None = None
     data: dict | None = None
+    # UI-only metadata (purpose, approval decision/tier/reason). Never appended
+    # to the model-visible text; `data` remains the structured model output.
+    details: dict | None = None
     # end_turn: True = end turn with final no-tools LLM call.
     # EndTurnConfirm = show confirmation buttons; approved → continue, denied → end.
     # WidgetInputPause = pause on input widget, resume with user selection.

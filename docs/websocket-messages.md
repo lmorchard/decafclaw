@@ -119,6 +119,7 @@ Page of historical messages for a conversation.
 - `context_limit` — number
 - `read_only` — boolean?
 - `estimated_tokens` — number?
+- `context_usage` — number?
 - `active_model` — string?
 - `available_models` — array of string?
 - `model_groups` — array of object?
@@ -309,6 +310,7 @@ Final result of a tool call. Replaces the in-flight tool_status with terminal st
 - `is_error` — boolean?
 - `timed_out` — boolean?
 - `timeout_sec` — number?
+- `details` — object?
 
 ### `tool_start`
 

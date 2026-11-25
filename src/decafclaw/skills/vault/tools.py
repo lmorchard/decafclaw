@@ -452,6 +452,8 @@ async def tool_vault_edit(
 ) -> ToolResult:
     """Edit a vault page by replacing exact text matches."""
     log.info(f"[tool:vault_edit] page={page}")
+    if old_text == new_text:
+        return ToolResult(text="[error: old_text and new_text are identical; no changes were made]")
     path = resolve_page(ctx.config, page)
     if path is None:
         return ToolResult(text=f"[error: vault page '{page}' not found]")

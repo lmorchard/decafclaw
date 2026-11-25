@@ -45,7 +45,7 @@
     "conv_history": {
       "direction": "server_to_client",
       "description": "Page of historical messages for a conversation.",
-      "fields": {"conv_id": "string", "messages": "array of object", "has_more": "boolean", "context_limit": "number", "read_only": "boolean?", "estimated_tokens": "number?", "active_model": "string?", "available_models": "array of string?", "model_groups": "array of object?", "default_model": "string?", "turn_active": "boolean?", "pending_confirmation": "object?"}
+      "fields": {"conv_id": "string", "messages": "array of object", "has_more": "boolean", "context_limit": "number", "read_only": "boolean?", "estimated_tokens": "number?", "context_usage": "number?", "active_model": "string?", "available_models": "array of string?", "model_groups": "array of object?", "default_model": "string?", "turn_active": "boolean?", "pending_confirmation": "object?"}
     },
     "conv_renamed": {
       "direction": "server_to_client",
@@ -105,7 +105,7 @@
     "tool_end": {
       "direction": "server_to_client",
       "description": "Final result of a tool call. Replaces the in-flight tool_status with terminal state. `is_error` and `timed_out` are structured outcome tags so clients render failures without parsing result_text; `timeout_sec` is the watchdog limit that fired.",
-      "fields": {"conv_id": "string", "tool": "string", "tool_call_id": "string", "result_text": "string", "display_short_text": "string?", "widget": "object?", "is_error": "boolean?", "timed_out": "boolean?", "timeout_sec": "number?"}
+      "fields": {"conv_id": "string", "tool": "string", "tool_call_id": "string", "result_text": "string", "display_short_text": "string?", "widget": "object?", "is_error": "boolean?", "timed_out": "boolean?", "timeout_sec": "number?", "details": "object?"}
     },
     "tool_start": {
       "direction": "server_to_client",

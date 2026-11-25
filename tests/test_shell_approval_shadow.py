@@ -50,7 +50,8 @@ async def test_shadow_mode_does_not_change_the_decision(ctx):
     events = _collect(ctx)
     shadowed = await check_shell_approval(ctx, "ls -la")
 
-    assert shadowed == baseline == {"approved": True}
+    assert shadowed["approved"] is True
+    assert baseline["approved"] is True
     shadows = [event for event in events if event.get("type") == "direction_shadow"]
     assert len(shadows) == 1
     assert shadows[0]["would_decide"] == "prompt"
