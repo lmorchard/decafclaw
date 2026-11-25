@@ -48,9 +48,9 @@ _GEMINI_CONTEXT_WINDOW = 1_048_576
 # 2026-11-25 across v1/v1beta1, publishers/google/models paths, @default,
 # :getModel, and project-scoped variants — all return name/versionId/
 # launchStage only). generativelanguage has inputTokenLimit but refuses
-# service accounts. Google's model docs declare every Gemini 3 / 4 model at
-# 1M. Update when a family with a different window appears; the resolver
-# warns loudly on a miss.
+# service accounts. Google's model docs declare every Gemini 2.5 / 3 / 4
+# model at 1M. Update when a family with a different window appears; the
+# resolver warns loudly on a miss.
 _VERTEX_CONTEXT_WINDOWS: dict[str, int] = {
     "gemini-4": 1_048_576,
     "gemini-3": 1_048_576,

@@ -592,7 +592,7 @@ Named model configurations referencing a provider. See [Model Selection](model-s
 |-------|------|---------|-------------|
 | `provider` | str | required | Key into `providers` dict |
 | `model` | str | required | Model name for the provider |
-| `context_window_size` | int | `0` | Context window tokens (0 = use compaction_max_tokens) |
+| `context_window_size` | int | `0` | Context window tokens (0 = discover from the provider, else compaction_max_tokens) |
 | `timeout` | int | `300` | HTTP timeout in seconds |
 | `streaming` | bool | `true` | Use streaming responses |
 | `reasoning_effort` | str or null | `null` | OpenAI Responses only: reasoning effort; omitted/null uses model default |

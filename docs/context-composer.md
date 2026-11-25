@@ -216,7 +216,7 @@ model with tools but not the instructions governing them.
 
 ### Token budget
 
-- `context_window_size` on the model config is the hard upper bound
+- `context_window_size` on the model config is the hard upper bound; when unset, `llm.ensure_model_context_window` fills it from provider discovery (or Vertex family defaults) before composition, else the `compaction.max_tokens` proxy applies. See [context-window resolution](model-selection.md#context-window-resolution)
 - `compaction.max_tokens` triggers compaction based on `prompt_tokens` from the API (system prompt + tools + all messages)
 - `compaction.threshold_ratio` (optional, default `None`) sets the compaction trigger as a fraction of the model context window; when set and the model window is known (`context_window_size > 0`) the effective threshold is `int(context_window_size * ratio)`, otherwise the fixed `compaction.max_tokens` cap applies. Per-conversation overrides (`compaction_threshold` / `compaction_threshold_ratio`) ride the same resolution through conversation state (#1099).
 - Tool definitions are fixed overhead on every turn — [tool deferral](tool-search.md) keeps this in check
