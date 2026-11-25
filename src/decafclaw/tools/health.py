@@ -5,9 +5,13 @@ Provides both structured data (dicts for JSON API) and markdown formatting
 """
 
 import logging
+import os
 import resource
+import subprocess
 import sys
 import time
+from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -17,6 +21,50 @@ log = logging.getLogger(__name__)
 
 # Captured at import time for uptime calculation
 _start_time = time.monotonic()
+
+# ``src/decafclaw/tools/health.py`` -> repository root. The SHA is read from
+# here only when the process was not launched with a stamped value.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# Set this in the launch environment (for example, a systemd unit) to avoid
+# depending on a Git checkout at runtime.
+COMMIT_SHA_ENV = "DECAFCLAW_COMMIT_SHA"
+
+
+def _git_commit_sha() -> str | None:
+    """Read HEAD from the checkout that contains this module, or None."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.debug("Could not read git commit SHA: %s", exc)
+        return None
+    sha = result.stdout.strip()
+    if result.returncode != 0 or not sha:
+        log.debug("git rev-parse HEAD failed: %s", result.stderr.strip())
+        return None
+    return sha
+
+
+@lru_cache(maxsize=1)
+def read_commit_sha() -> str | None:
+    """Return the commit the process is running from, or None.
+
+    The value comes from ``DECAFCLAW_COMMIT_SHA`` when the launch environment
+    stamps it, otherwise from ``git rev-parse HEAD``. Read once per process:
+    a deploy gate compares it against the target commit to tell a fresh
+    process from a stale one.
+    """
+    stamped = os.environ.get(COMMIT_SHA_ENV, "").strip()
+    if stamped:
+        return stamped
+    return _git_commit_sha()
 
 
 def _format_uptime(seconds: float) -> str:
@@ -70,32 +118,78 @@ def get_process_data() -> dict:
 
 
 def get_mcp_data() -> dict:
-    """Return MCP server status as a dict."""
+    """Return MCP server status as a dict.
+
+    Counts alone hide a configured server that is neither connected nor
+    failed. The payload reports the configured total, the connected set by
+    name, and the total tool count so a deploy gate can compare sets before
+    and after a restart instead of asserting ``failed == 0``.
+    """
     from ..mcp_client import ConnState, get_registry
 
     registry = get_registry()
     if not registry or not registry.servers:
-        return {"connected": 0, "failed": 0, "connecting": 0, "servers": {}}
+        return {
+            "configured": 0,
+            "connected": 0,
+            "failed": 0,
+            "connecting": 0,
+            "disconnected": 0,
+            "connected_servers": [],
+            "tool_count": 0,
+            "servers": {},
+        }
 
     connected = 0
     failed = 0
     connecting = 0
+    disconnected = 0
+    connected_servers: list[str] = []
+    tool_count = 0
     servers = {}
     for name, state in registry.servers.items():
         status = state.status
+        tools = len(state.tools)
         if status == ConnState.CONNECTED:
             connected += 1
+            connected_servers.append(name)
+            tool_count += tools
         elif status == ConnState.CONNECTING:
             connecting += 1
         elif status == ConnState.FAILED:
             failed += 1
+        else:
+            disconnected += 1
         servers[name] = {
             "status": status.value,
-            "tools": len(state.tools),
+            "tools": tools,
             "retries": state.retry_count,
         }
 
-    return {"connected": connected, "failed": failed, "connecting": connecting, "servers": servers}
+    return {
+        "configured": len(registry.servers),
+        "connected": connected,
+        "failed": failed,
+        "connecting": connecting,
+        "disconnected": disconnected,
+        "connected_servers": sorted(connected_servers),
+        "tool_count": tool_count,
+        "servers": servers,
+    }
+
+
+def get_busy_data(manager) -> dict:
+    """Return whether any conversation has an active turn.
+
+    The HTTP app supplies its ``ConversationManager`` through ``app.state``;
+    no per-conversation ``Context`` is available on the health route. A
+    missing manager reports ``known: false`` so a deploy gate does not read
+    "not busy" from an unreadable state.
+    """
+    if manager is None:
+        return {"known": False, "active": False, "conversations": []}
+    busy = list(manager.get_busy_conversations())
+    return {"known": True, "active": bool(busy), "conversations": busy}
 
 
 def get_heartbeat_data(config) -> dict:
@@ -209,14 +303,23 @@ def get_schedule_data(config) -> dict:
     }
 
 
-def get_health_data(config) -> dict:
+def get_health_data(config, *, manager=None) -> dict:
     """Gather all health data as a JSON-serializable dict.
 
     Used by the HTTP /health endpoint. Does not require a per-conversation
-    context, so tool stats are omitted.
+    context, so tool stats are omitted. ``manager`` is the HTTP app's
+    ``ConversationManager`` (``app.state.manager``); omit it when no
+    conversation state is available.
     """
-    data: dict = {"status": "ok"}
+    data: dict = {"status": "ok", "commit": read_commit_sha()}
     errors: list[str] = []
+
+    try:
+        data["busy"] = get_busy_data(manager)
+    except Exception as exc:
+        log.exception("Failed to gather busy-conversation state")
+        data["busy"] = None
+        errors.append(f"busy: {exc}")
 
     try:
         data["process"] = get_process_data()

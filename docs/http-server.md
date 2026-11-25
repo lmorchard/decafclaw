@@ -48,7 +48,49 @@ Emoji reactions still work alongside buttons. Both paths can resolve the same co
 
 ### `GET /health`
 
-Returns `{"status": "ok"}`. Useful for monitoring and load balancer health checks.
+Liveness and readiness probe for monitoring and deploy gates. Returns `200`
+when `status` is `"ok"` and `503` when it is `"degraded"`, so `curl -f`
+distinguishes the two without parsing the body.
+
+```json
+{
+  "status": "ok",
+  "commit": "986c6157ed527ce39a9f1c2a9961dc9118b01f3e",
+  "busy": {"known": true, "active": false, "conversations": []},
+  "process": {"uptime_seconds": 12.3, "memory_rss_mb": 210.4},
+  "mcp_servers": {
+    "configured": 5,
+    "connected": 4,
+    "failed": 0,
+    "connecting": 0,
+    "disconnected": 1,
+    "connected_servers": ["filesystem", "memory", "playwright", "vault"],
+    "tool_count": 41,
+    "servers": {"playwright": {"status": "connected", "tools": 25, "retries": 0}}
+  },
+  "heartbeat": {"enabled": true},
+  "embeddings": {"total": 0, "journal": 0, "page": 0, "user": 0},
+  "schedules": {"total": 0, "enabled": 0}
+}
+```
+
+- `commit` is `DECAFCLAW_COMMIT_SHA` when the launch environment stamps it,
+  otherwise `git rev-parse HEAD` from the checkout, read once per process.
+  It is `null` when neither is available; a deploy gate must treat an unknown
+  SHA as a failure, not a pass.
+- `busy` reports whether any conversation has an active turn, using the
+  manager supplied through `app.state`. `known` is `false` when the route has
+  no manager; do not read that as idle.
+- `mcp_servers` reports the configured total, the connected set by name, and
+  the total tool count. Compare the connected set and `tool_count` before and
+  after a deploy: a server that drops to `disconnected` is invisible in the
+  `connected`/`failed` counters alone.
+- Any section that raises is `null`, adds an entry to `errors`, and makes
+  `status` `"degraded"`.
+
+The endpoint binds `http.host` (default `0.0.0.0`). It discloses server names,
+schedule names, and error strings, so keep it on a trusted network or a
+loopback-only listener when an external runner does not need remote access.
 
 ### `POST /actions/confirm?secret=<secret>`
 

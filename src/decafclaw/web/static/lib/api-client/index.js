@@ -554,14 +554,21 @@ var textRequest = (config, options) => {
 var DefaultService = class {
   /**
    * Health
-   * Liveness probe — returns the static health snapshot.
-   * @returns any Successful Response
+   * Health/readiness probe for monitoring and deploy gates.
+   *
+   * Returns 503 when any section failed to gather. The payload carries the
+   * commit the process started from and the busy-conversation state, so an
+   * external runner can tell a fresh process from a stale one.
+   * @returns any Healthy
    * @throws ApiError
    */
   static healthHealthGet() {
     return request2(OpenAPI, {
       method: "GET",
-      url: "/health"
+      url: "/health",
+      errors: {
+        503: `Degraded: one or more health sections failed`
+      }
     });
   }
   /**

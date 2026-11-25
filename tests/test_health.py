@@ -153,3 +153,76 @@ async def test_health_full_report_all_sections(ctx):
     assert "### Heartbeat" in result
     assert "### Tools" in result
     assert "### Embeddings" in result
+
+
+# -- Deploy-grade health payload (#1644) -------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_commit_sha_cache():
+    from decafclaw.tools.health import read_commit_sha
+
+    read_commit_sha.cache_clear()
+    yield
+    read_commit_sha.cache_clear()
+
+
+def test_read_commit_sha_from_environment(monkeypatch):
+    from decafclaw.tools.health import COMMIT_SHA_ENV, read_commit_sha
+
+    monkeypatch.setenv(COMMIT_SHA_ENV, "abc123")
+    assert read_commit_sha() == "abc123"
+
+
+def test_read_commit_sha_unavailable(monkeypatch):
+    import decafclaw.tools.health as health_module
+
+    monkeypatch.delenv(health_module.COMMIT_SHA_ENV, raising=False)
+    monkeypatch.setattr(health_module, "_git_commit_sha", lambda: None)
+    assert health_module.read_commit_sha() is None
+
+
+def test_mcp_data_reports_disconnected_server():
+    """A DISCONNECTED server is in the configured set, not failed/connected."""
+    from decafclaw.tools.health import get_mcp_data
+
+    connected = MagicMock()
+    connected.status = ConnState.CONNECTED
+    connected.tools = {"mcp__alpha__one": None, "mcp__alpha__two": None}
+    connected.retry_count = 0
+    disconnected = MagicMock()
+    disconnected.status = ConnState.DISCONNECTED
+    disconnected.tools = {}
+    disconnected.retry_count = 0
+    registry = MagicMock()
+    registry.servers = {"alpha": connected, "beta": disconnected}
+
+    with patch("decafclaw.mcp_client.get_registry", return_value=registry):
+        data = get_mcp_data()
+
+    assert data["configured"] == 2
+    assert data["connected"] == 1
+    assert data["disconnected"] == 1
+    assert data["connected_servers"] == ["alpha"]
+    assert data["tool_count"] == 2
+    assert data["servers"]["beta"]["status"] == "disconnected"
+
+
+def test_health_data_includes_commit_and_busy(config, monkeypatch):
+    from decafclaw.tools.health import COMMIT_SHA_ENV, get_health_data
+
+    monkeypatch.setenv(COMMIT_SHA_ENV, "deadbeef")
+    manager = MagicMock()
+    manager.get_busy_conversations.return_value = ["conv-1"]
+
+    data = get_health_data(config, manager=manager)
+
+    assert data["commit"] == "deadbeef"
+    assert data["busy"] == {"known": True, "active": True, "conversations": ["conv-1"]}
+
+
+def test_health_data_busy_unknown_without_manager(config):
+    from decafclaw.tools.health import get_health_data
+
+    data = get_health_data(config)
+    assert data["busy"] == {"known": False, "active": False, "conversations": []}
