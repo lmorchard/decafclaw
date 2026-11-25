@@ -3,7 +3,7 @@
 import logging
 import re
 
-from .embeddings import embed_text, search_similar_sync
+from .embeddings import embed_text, search_fts_sync, search_similar_sync
 from .util import estimate_tokens
 
 log = logging.getLogger(__name__)
@@ -22,6 +22,66 @@ SOURCE_LABELS = {
     "memory": "Memory",
     "conversation": "Conversation",
 }
+
+
+def _result_key(result: dict) -> tuple:
+    """Identity used to merge the dense and lexical candidate lists."""
+    row_id = result.get("id")
+    if row_id is not None:
+        return ("id", row_id)
+    return ("path", result.get("file_path", ""), result.get("entry_text", ""))
+
+
+def _reciprocal_rank_fusion(
+    vector_results: list[dict],
+    lexical_results: list[dict],
+    *,
+    k: int = 60,
+    vector_weight: float = 1.0,
+    fts_weight: float = 1.0,
+) -> list[dict]:
+    """Fuse dense and lexical rankings with reciprocal rank fusion (#1816).
+
+    ``RRF(d) = vector_weight / (k + rank_vector) + fts_weight / (k + rank_fts)``.
+    A document ranked highly by both branches outranks one ranked highly by
+    only one. Each fused row carries ``rrf_score`` (raw), ``rrf_score_normalized``
+    (0.5..1.0, used as composite relevance downstream), and the per-branch
+    ordinal ranks. Rows are merged by ``id`` when present, else by
+    ``(file_path, entry_text)``.
+    """
+    smoothing = max(0, int(k))
+    vector_weight = max(0.0, float(vector_weight))
+    fts_weight = max(0.0, float(fts_weight))
+    merged: dict[tuple, dict] = {}
+
+    def add(result: dict, rank: int, weight: float, branch: str) -> None:
+        key = _result_key(result)
+        entry = merged.get(key)
+        if entry is None:
+            entry = dict(result)
+            entry["rrf_score"] = 0.0
+            entry["vector_rank"] = None
+            entry["fts_rank"] = None
+            merged[key] = entry
+        entry["rrf_score"] += weight / (smoothing + rank)
+        if branch == "vector":
+            entry["vector_rank"] = rank
+        else:
+            entry["fts_rank"] = rank
+            for field in ("id", "entry_text", "file_path", "source_type", "created_at"):
+                if entry.get(field) in (None, "") and result.get(field) not in (None, ""):
+                    entry[field] = result[field]
+
+    for rank, result in enumerate(vector_results, start=1):
+        add(result, rank, vector_weight, "vector")
+    for rank, result in enumerate(lexical_results, start=1):
+        add(result, rank, fts_weight, "fts")
+
+    max_raw = (vector_weight + fts_weight) / (smoothing + 1)
+    for entry in merged.values():
+        ratio = entry["rrf_score"] / max_raw if max_raw > 0 else 0.0
+        entry["rrf_score_normalized"] = min(1.0, 0.5 + 0.5 * ratio)
+    return sorted(merged.values(), key=lambda item: item["rrf_score"], reverse=True)
 
 
 async def retrieve_memory_context(config, user_message: str) -> list[dict]:
@@ -44,13 +104,34 @@ async def retrieve_memory_context(config, user_message: str) -> list[dict]:
 
         # Search all source types, fetch extra to allow for threshold filtering.
         # Over-fetch to allow for deduplication and token budget filtering.
-        results = search_similar_sync(config, query_embedding, top_k=mc.max_results * 2)
+        # Hybrid retrieval gives each branch the same candidate depth (#1816).
+        branch_k = mc.max_results * 2
+        if mc.hybrid_enabled:
+            branch_k = max(branch_k, mc.hybrid_candidates)
+        vector_results = search_similar_sync(config, query_embedding, top_k=branch_k)
 
         # Exclude legacy conversation embeddings — they add noise (see #133)
-        results = [r for r in results if r.get("source_type") != "conversation"]
+        vector_results = [r for r in vector_results if r.get("source_type") != "conversation"]
 
         # Filter by similarity threshold
-        results = [r for r in results if r["similarity"] >= mc.similarity_threshold]
+        vector_results = [r for r in vector_results if r["similarity"] >= mc.similarity_threshold]
+
+        results = vector_results
+        if mc.hybrid_enabled:
+            lexical_results: list[dict] = []
+            try:
+                lexical_results = search_fts_sync(config, user_message, top_k=branch_k)
+            except Exception:
+                log.warning("FTS retrieval failed; using dense results only", exc_info=True)
+            lexical_results = [r for r in lexical_results if r.get("source_type") != "conversation"]
+            if lexical_results:
+                results = _reciprocal_rank_fusion(
+                    vector_results,
+                    lexical_results,
+                    k=mc.rrf_k,
+                    vector_weight=mc.vector_weight,
+                    fts_weight=mc.fts_weight,
+                )
 
         # Trim to max_results
         results = results[: mc.max_results]

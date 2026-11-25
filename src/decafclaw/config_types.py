@@ -528,6 +528,19 @@ class VaultRetrievalConfig:
     # An unknown value logs a warning at compose time and falls back to "always".
     mode: RetrievalMode = RetrievalMode.ALWAYS
     headline_summary_max_chars: int = 120
+    # Hybrid lexical + dense retrieval (#1816). The lexical FTS5 branch and
+    # the dense vector branch are fused with reciprocal rank fusion:
+    #   RRF(d) = vector_weight / (rrf_k + rank_vector) +
+    #            fts_weight / (rrf_k + rank_fts)
+    # Fused candidates carry a normalized RRF score (0.5..1.0) as their
+    # composite relevance; recency and importance break ties. Set
+    # hybrid_enabled false to restore dense-only ranking.
+    hybrid_enabled: bool = True
+    rrf_k: int = 60
+    fts_weight: float = 1.0
+    vector_weight: float = 1.0
+    # Per-branch candidate depth before fusion (issue #1816 suggests K=20).
+    hybrid_candidates: int = 20
 
 
 @dataclass

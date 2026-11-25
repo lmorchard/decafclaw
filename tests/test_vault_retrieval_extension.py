@@ -103,6 +103,18 @@ class TestContribution:
             ]
         }
 
+    async def test_hybrid_candidate_survives_composite_threshold(self, ctx):
+        ctx.config.relevance.min_composite_score = 0.65
+        candidate = _candidate("pages/exact.md", similarity=0.31, rrf_score_normalized=0.75)
+        with (
+            patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=[candidate]),
+            patch(FORMAT_PATCH, return_value="formatted"),
+        ):
+            contribution = await _hook(ctx)
+
+        assert contribution.source_entry.items_included == 1
+        assert contribution.messages[0]["file_paths"] == ["pages/exact.md"]
+
     async def test_no_candidates_yields_skipped_entry(self, ctx):
         with patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=[]):
             contribution = await _hook(ctx)
@@ -392,6 +404,32 @@ class TestScoring:
     def test_missing_modified_at_defaults_recency(self, config):
         scored = score_candidates([{"similarity": 0.5, "importance": 0.5}], config)
         assert scored[0]["recency"] == 0.5
+
+    def test_hybrid_rrf_order_is_authoritative(self, config):
+        scored = score_candidates(
+            [
+                _candidate("pages/lexical.md", similarity=0.31, rrf_score_normalized=0.75),
+                _candidate("pages/dense.md", similarity=0.95, rrf_score_normalized=0.60),
+            ],
+            config,
+        )
+
+        assert [c["file_path"] for c in scored] == ["pages/lexical.md", "pages/dense.md"]
+        assert scored[0]["composite_score"] == pytest.approx(0.75)
+
+    def test_hybrid_recency_breaks_rrf_ties(self, config):
+        now = datetime.now()
+        recent = (now - timedelta(hours=1)).isoformat()
+        old = (now - timedelta(hours=1000)).isoformat()
+        scored = score_candidates(
+            [
+                _candidate("pages/old.md", modified_at=old, rrf_score_normalized=0.7),
+                _candidate("pages/new.md", modified_at=recent, rrf_score_normalized=0.7),
+            ],
+            config,
+        )
+
+        assert scored[0]["file_path"] == "pages/new.md"
 
 
 class TestComposerIntegration:
