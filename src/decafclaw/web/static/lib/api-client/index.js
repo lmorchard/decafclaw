@@ -589,7 +589,7 @@ var DefaultService = class {
    * @returns any Successful Response
    * @throws ApiError
    */
-  static handleConfirmActionsConfirmGet() {
+  static confirmActionGet() {
     return request2(OpenAPI, {
       method: "GET",
       url: "/actions/confirm"
@@ -601,7 +601,7 @@ var DefaultService = class {
    * @returns any Successful Response
    * @throws ApiError
    */
-  static handleConfirmActionsConfirmPost() {
+  static confirmActionPost() {
     return request2(OpenAPI, {
       method: "POST",
       url: "/actions/confirm"
@@ -613,7 +613,7 @@ var DefaultService = class {
    * @returns any Successful Response
    * @throws ApiError
    */
-  static handleCancelActionsCancelGet() {
+  static cancelActionGet() {
     return request2(OpenAPI, {
       method: "GET",
       url: "/actions/cancel"
@@ -625,7 +625,7 @@ var DefaultService = class {
    * @returns any Successful Response
    * @throws ApiError
    */
-  static handleCancelActionsCancelPost() {
+  static cancelActionPost() {
     return request2(OpenAPI, {
       method: "POST",
       url: "/actions/cancel"
