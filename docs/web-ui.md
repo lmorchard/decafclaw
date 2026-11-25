@@ -884,6 +884,7 @@ See [Configuration Reference](config.md#http) for the full `http` config group.
 - `src/decafclaw/web/schedule_routes.py` — Schedules route module: models + handlers + router
 - `src/decafclaw/web/notification_routes.py` — Notifications (inbox) route module: models + handlers + router
 - `src/decafclaw/web/terminal_routes.py` — Terminal route module: the `/ws/terminal/{conv_id}/{tab_id}` WebSocket entry point + router
+- `src/decafclaw/web/widget_routes.py` — Widget/canvas/sticky route module: models + handlers + router
 - `src/decafclaw/web/http_auth.py` — Shared auth helpers for route modules
 - `src/decafclaw/web/auth.py` — Token-based auth, `decafclaw-token` CLI
 - `src/decafclaw/web/conversations.py` — Conversation index metadata
