@@ -8,7 +8,7 @@ DecafClaw supports the [Agent Skills](https://agentskills.io) open standard for 
 2. **Catalog**: skill names and descriptions (only) are injected into the system prompt. The agent does NOT see the names of tools provided by unactivated skills — progressive disclosure happens at the skill level, not the tool level.
 3. **Activation**: the agent calls `activate_skill("name")` when it needs a skill's tools.
 4. **Confirmation**: required only for workspace-tier skills (which the agent itself could have written). Trusted-tier skills (bundled / admin / extra) activate without a prompt — placement is the trust signal.
-5. **Loading**: native Python skills register structured tools; shell-based skills provide instructions for the `shell` tool. The skill body lands as the `activate_skill` tool result so the agent reads it before using the tools.
+5. **Loading**: native Python skills register structured tools; shell-based skills provide instructions for the `shell` tool. The composer renders every activated skill's body as a never-archived `<activated_skills>` block at the generation boundary, so the agent reads it before using the tools and compaction never has to preserve an activation turn (see [context composer](context-composer.md#activated-skills-block-1823)).
 
 ## Trust tiers
 

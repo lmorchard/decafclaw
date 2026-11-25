@@ -85,6 +85,72 @@ log = logging.getLogger(__name__)
 # archived under their internal role for accounting and dedupe.
 
 
+# Ceiling for the never-archived <activated_skills> block. Exceeding it means
+# too many skills are active at once; warn loudly rather than truncate,
+# because dropping a body while its tools stay callable leaves the model with
+# tools but not the instructions governing them (#1823).
+ACTIVATED_SKILLS_WARN_TOKENS = 20_000
+
+
+def render_activated_skills(ctx: "Context") -> tuple[dict, int, int] | None:
+    """Render activated skill bodies as one transient <activated_skills> block.
+
+    Never archived and never replayed (#1823): the block re-renders from
+    ``ctx.skills.activated`` each turn, so the conversation prefix through the
+    previous assistant turn stays cacheable and compaction never has to
+    preserve a skill-activation turn to keep the instructions alive.
+
+    Returns ``(message, tokens, skill_count)``, or None when nothing is active.
+    """
+    activated = ctx.skills.activated
+    if not activated:
+        return None
+    already_in_prompt = ctx.skills.body_in_prompt
+
+    from .skills import find_skill, index_skills, substitute_skill_placeholders
+
+    index = index_skills(ctx.config.discovered_skills)
+    blocks: list[str] = []
+    costs: list[tuple[str, int]] = []
+    for name in activated:
+        info = find_skill(index, name)
+        if info is None:
+            # Activated then removed from disk: there is no body left to
+            # render, though its tools may still be callable this turn.
+            continue
+        if info.always_loaded:
+            # Always-loaded bodies already live in the system prompt's
+            # <loaded_skills> section; rendering them again here would
+            # duplicate the body on every turn.
+            continue
+        if name in already_in_prompt:
+            # A user-invoked inline command or a schedule's required-skills
+            # block already carries this body as this turn's prompt.
+            continue
+        body = substitute_skill_placeholders(info.body, skill_dir=str(info.location.resolve()))
+        if not body.strip():
+            continue
+        cost = estimate_tokens(body)
+        costs.append((name, cost))
+        blocks.append(f'<skill name="{html.escape(name, quote=True)}">\n{body}\n</skill>')
+
+    if not blocks:
+        return None
+
+    body_total = sum(cost for _, cost in costs)
+    if body_total > ACTIVATED_SKILLS_WARN_TOKENS:
+        log.warning(
+            "Activated skills block is ~%d tokens (ceiling %d): %s. Bodies are "
+            "not truncated because their tools remain callable.",
+            body_total,
+            ACTIVATED_SKILLS_WARN_TOKENS,
+            ", ".join(f"{name} (~{cost} tokens)" for name, cost in costs),
+        )
+
+    content = "<activated_skills>\n" + "\n".join(blocks) + "\n</activated_skills>"
+    return {"role": "user", "content": content}, estimate_tokens(content), len(blocks)
+
+
 def _now() -> datetime:
     """Current naive local time — a seam so tests can patch the clock.
 
@@ -264,6 +330,23 @@ class ContextComposer:
         )
         sources.extend(hook_sources)
 
+        # -- Activated skill bodies (#1823) --
+        # Render before the fixed-token phase so the dynamic retrieval pool
+        # reserves room for the block; mounting happens at the generation
+        # boundary below. The block is never archived and re-renders from
+        # ctx.skills.activated each turn.
+        activated_block = render_activated_skills(ctx)
+        activated_msg = None
+        if activated_block is not None:
+            activated_msg, activated_tokens, activated_count = activated_block
+            sources.append(
+                SourceEntry(
+                    source="activated_skills",
+                    tokens_estimated=activated_tokens,
+                    items_included=activated_count,
+                )
+            )
+
         # -- Fixed-token phase (#1365) --
         # Charges everything mounted so far — system prompt, tools, the user
         # message, and the fixed PRE_COMPOSE contributions — plus archived
@@ -400,6 +483,13 @@ class ContextComposer:
                 log.warning("PRE_COMPOSE HEAD message has unsupported role %r; skipping", role)
 
         messages.extend(llm_history)
+
+        # -- Activated skill bodies (#1823) --
+        # Mounted at the generation boundary and never archived; the content
+        # and its source entry were computed before the fixed-token phase so
+        # the dynamic budget reserves room for it.
+        if activated_msg is not None:
+            messages.append(activated_msg)
 
         # -- PRE_COMPOSE EPILOGUE contributions (#1507) --
         # Mount after the user message, at the immediate generation boundary.

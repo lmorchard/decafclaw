@@ -67,7 +67,7 @@ The plural cap is 10 tasks per call. If you have more than 10 bookmarks, call `d
   "writes": [
     {
       "page": "agent/pages/bookmarks/example-slug",
-      "content": "---\ntags: [ingested, example]\nsummary: one-line summary of the page\nsources:\n  - url: https://example.com\n    date: 2026-05-12\n    added_by: linkding-ingest\n---\n\nBody synthesizing the source with [[wiki-links]].\n\n## Sources\n- https://example.com (2026-05-12)"
+      "content": "---\ntags: [ingested, example]\nsummary: one-line summary of the page\nsources:\n  - url: https://example.com\n    date: 2026-05-12\n    added_by: linkding-ingest\n---\n\nBody synthesizing the source with [[wiki-links]] (page names only — never a URL inside [[...]]).\n\n## Sources\n- [example.com](https://example.com) (2026-05-12)"
     }
   ],
   "notes": "one-line note about what you wrote or why you skipped"

@@ -226,12 +226,48 @@ def _resolve(
     return ResolvedModel(provider, model, timeout)
 
 
+def _warn_no_context_window(config: Any, mc: Any) -> None:
+    """Warn once per model when no window was discovered or defaulted.
+
+    Two messages on purpose: a Vertex miss is a hole in our family table
+    (we fix it), while an OpenAI-compatible miss is an upstream gateway
+    config gap (Otari's model map). Collapsing them makes the warning noise,
+    and noise gets ignored.
+    """
+    legacy_window = int(getattr(getattr(config, "llm", None), "context_window_size", 0) or 0)
+    if legacy_window > 0:
+        return  # the ladder resolves config.llm.context_window_size, not the proxy
+    proxy = int(getattr(getattr(config, "compaction", None), "max_tokens", 0) or 0)
+    provider_cfg = (getattr(config, "providers", None) or {}).get(mc.provider)
+    provider_type = getattr(provider_cfg, "type", "")
+    if provider_type == PROVIDER_VERTEX:
+        log.warning(
+            "Vertex model %r has no defaults entry and no configured window — using the %s proxy",
+            mc.model,
+            f"{proxy:,}",
+        )
+    else:
+        log.warning(
+            "Model %r (%s) reported no context window — using the %s proxy",
+            mc.model,
+            mc.provider,
+            f"{proxy:,}",
+        )
+
+
 async def ensure_model_context_window(config: Any, model_name: str | None = None) -> int:
-    """Get context window size for a model, querying provider API if not configured (0).
+    """Get context window size for a model, resolving in this order:
+
+    1. ``model_configs.context_window_size`` — always wins, so a stale table
+       entry can be overridden without a release.
+    2. provider ``get_model_info()`` — discovery where the gateway reports it.
+    3. provider ``default_context_window()`` — Vertex's family table.
+    4. ``effective_context_window`` — legacy config window, else the proxy.
 
     Failed lookups are negatively cached per (provider, model) until the
     provider registry is re-initialized on a config reload, so a model that
     becomes resolvable later is retried without a process restart (#1304).
+    A model that resolves nothing warns once per cache lifetime.
     """
     model_name = model_name or getattr(config, "default_model", "")
     if model_name and model_name in config.model_configs:
@@ -261,7 +297,20 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
                                 mc.context_window_size,
                             )
                             return mc.context_window_size
+                default_window = getattr(provider, "default_context_window", None)
+                if default_window is not None:
+                    window = default_window(mc.model)
+                    if window:
+                        mc.context_window_size = int(window)
+                        log.info(
+                            "Using provider defaults for context window of model %r (%r): %d",
+                            model_name,
+                            mc.model,
+                            mc.context_window_size,
+                        )
+                        return mc.context_window_size
                 _failed_model_info.add(cache_key)
+                _warn_no_context_window(config, mc)
             except Exception as e:
                 log.debug("Failed to auto-detect context window size for %r: %s", model_name, e)
                 _failed_model_info.add(cache_key)

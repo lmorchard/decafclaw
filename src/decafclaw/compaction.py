@@ -354,21 +354,6 @@ def _split_into_turns(messages: list[dict]) -> list[list[dict]]:
     return turns
 
 
-# Tool names whose results should be preserved verbatim during compaction.
-# Skill activation injects SKILL.md content as a tool result — summarizing
-# it away loses the skill's instructions for the rest of the conversation.
-PROTECTED_TOOL_NAMES = {"activate_skill"}
-
-
-def _turn_has_protected_tool(turn: list[dict]) -> bool:
-    """Check if a turn contains a tool call whose result should not be summarized."""
-    for msg in turn:
-        for tc in msg.get("tool_calls") or []:
-            if tc.get("function", {}).get("name") in PROTECTED_TOOL_NAMES:
-                return True
-    return False
-
-
 def flatten_messages(messages: list[dict]) -> str:
     """Flatten messages into a readable text format for the compaction LLM."""
     lines = []
@@ -403,6 +388,28 @@ def flatten_messages(messages: list[dict]) -> str:
         else:
             lines.append(f"{role}: {content}")
     return "\n".join(lines)
+
+
+def estimate_history_tokens(messages: list[dict]) -> int:
+    """Estimate the prompt size of preserved history, untruncated.
+
+    ``flatten_messages`` truncates every tool result to 500 chars because it
+    feeds the compaction summarizer. Using it to measure the rebuilt history
+    under-reported the post-compaction prompt by roughly 10x — 330k tokens
+    read as ~29k, a false ~10% meter reading (#1823). This walks the content
+    the next turn actually sends. The two jobs stay separate on purpose.
+    """
+    total = 0
+    for msg in messages:
+        role = msg.get("role")
+        if role in ("compaction", "model", "mode"):
+            continue
+        total += estimate_tokens(str(msg.get("content") or ""))
+        for tc in msg.get("tool_calls") or []:
+            function = tc.get("function") or {}
+            total += estimate_tokens(str(function.get("name") or ""))
+            total += estimate_tokens(str(function.get("arguments") or ""))
+    return total
 
 
 async def _single_summarize(ctx: "Context", config, flattened_text: str, prompt: str) -> str:
@@ -458,27 +465,18 @@ async def _chunked_summarize(ctx: "Context", config, turns: list[list[dict]], pr
     return combined
 
 
-def _partition_turns(turns: list[list[dict]], config) -> tuple[list[list[dict]], list[list[dict]], list[list[dict]]]:
-    """Partition turns into old, protected, and recent groups.
+def _partition_turns(turns: list[list[dict]], config) -> tuple[list[list[dict]], list[list[dict]]]:
+    """Partition turns into old and recent groups.
 
-    Old turns will be summarized. Protected turns contain tool calls
-    (e.g. activate_skill) whose results must survive compaction verbatim.
-    Recent turns are the most recent N turns preserved as-is.
+    Old turns will be summarized. Recent turns are the most recent N turns
+    preserved as-is.
 
-    Returns (old_turns, protected_turns, recent_turns).
+    Returns (old_turns, recent_turns).
     """
     preserve = config.compaction.preserve_turns
-    old_turns = []
-    protected_turns = []
-    for turn in turns[:-preserve]:
-        if _turn_has_protected_tool(turn):
-            protected_turns.append(turn)
-        else:
-            old_turns.append(turn)
+    old_turns = turns[:-preserve]
     recent_turns = turns[-preserve:]
-    if protected_turns:
-        log.info(f"Protecting {len(protected_turns)} skill activation turn(s) from compaction")
-    return old_turns, protected_turns, recent_turns
+    return old_turns, recent_turns
 
 
 class _CompactionMode:
@@ -535,19 +533,16 @@ def _determine_compaction_mode(
         # prev_old_count = prev_archive_len - prev_recent_count, but we don't
         # know prev_recent_count directly. However, the summary message in the
         # sidecar replaced everything before the recent window. The recent
-        # messages in the sidecar correspond to the last N messages of the
-        # archive at that time. We can count: the compacted sidecar had
+        # messages in the sidecar correspond to the last N messages
+        # of the archive at that time. We can count: the compacted sidecar had
         # (total_compacted - 1) recent messages covering archive positions
         # [prev_archive_len - (total_compacted - 1) : prev_archive_len].
-        # Note: the sidecar may also contain protected turns (e.g. skill
-        # activations) between the summary and recent messages — subtract
-        # those so we count only actual recent messages.
+        # Metadata records (model/mode/compaction) do not count.
         compacted = read_compacted_history(config, conv_id)
         if compacted:
             non_summary = compacted[1:]
             compacted_turns = _split_into_turns(non_summary)
-            protected_msg_count = sum(len(turn) for turn in compacted_turns if _turn_has_protected_tool(turn))
-            prev_recent_count = sum(len(turn) for turn in compacted_turns) - protected_msg_count
+            prev_recent_count = sum(len(turn) for turn in compacted_turns)
         else:
             prev_recent_count = 0
         prev_old_msg_count = prev_archive_len - prev_recent_count
@@ -585,14 +580,13 @@ def _determine_compaction_mode(
 def _rebuild_history(
     history: list,
     summary: str,
-    protected_messages: list[dict],
     recent_messages: list[dict],
     config,
     conv_id: str,
     *,
     slice_prefix: str = "",
 ) -> None:
-    """Clear history and replace with summary + protected + recent messages.
+    """Clear history and replace with summary + recent messages.
 
     Also persists the compacted history to the sidecar file.
 
@@ -607,7 +601,7 @@ def _rebuild_history(
         "content": f"{SUMMARY_PREFIX}{body}",
     }
 
-    rebuilt = [summary_msg, *protected_messages, *recent_messages]
+    rebuilt = [summary_msg, *recent_messages]
 
     # Persist the rebuilt list to the sidecar *before* swapping the live
     # history. If the write fails (raised, caught by compact_history's handler),
@@ -618,11 +612,7 @@ def _rebuild_history(
     history.clear()
     history.extend(rebuilt)
 
-    log.info(
-        f"Compaction complete: "
-        f"1 summary + {len(protected_messages)} protected + "
-        f"{len(recent_messages)} recent = {len(history)} total"
-    )
+    log.info(f"Compaction complete: 1 summary + {len(recent_messages)} recent = {len(history)} total")
 
 
 async def compact_history(ctx: "Context", history: list) -> bool:
@@ -657,12 +647,8 @@ async def compact_history(ctx: "Context", history: list) -> bool:
         log.info(f"Compaction skipped: only {len(turns)} turns, need >{preserve} to compact")
         return False
 
-    # Partition turns into old/protected/recent
-    old_turns, protected_turns, recent_turns = _partition_turns(turns, config)
-    if not old_turns:
-        log.info("Compaction skipped: all old turns are protected")
-        return False
-    protected_messages = [msg for turn in protected_turns for msg in turn]
+    # Partition turns into old and recent
+    old_turns, recent_turns = _partition_turns(turns, config)
     recent_messages = [msg for turn in recent_turns for msg in turn]
 
     # Determine compaction mode (incremental vs full)
@@ -688,7 +674,7 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     import time as _time
 
     before_messages = len(history)
-    history_tokens_before = estimate_tokens(flatten_messages(history))
+    history_tokens_before = estimate_history_tokens(history)
     compact_start_time = _time.monotonic()
     # #1005 — the context meter reads this as the post-compaction prompt
     # size. Set only on a successful compaction; a failed compaction leaves
@@ -769,18 +755,17 @@ async def compact_history(ctx: "Context", history: list) -> bool:
             else:
                 log.debug("Compaction response had no parseable slice; prose-only fallback")
 
-        # Rebuild history with summary + protected + recent
-        _rebuild_history(
-            history, clean_summary, protected_messages, recent_messages, config, conv_id, slice_prefix=slice_prefix
-        )
+        # Rebuild history with summary + recent
+        _rebuild_history(history, clean_summary, recent_messages, config, conv_id, slice_prefix=slice_prefix)
 
         # #1005 — the meter shows the prompt size of the last LLM call, which
         # by definition exceeded the compaction threshold (>100%) and is not
-        # corrected after compaction. Estimate the *post-compaction* history
-        # the same way the reload path does (websocket.py), and hand it to the
-        # turn's message_complete (via ctx.tokens.last_compaction_estimate)
-        # and the COMPACTION_DONE wire message (via the event below).
-        estimated_tokens_after = estimate_tokens(flatten_messages(history))
+        # corrected after compaction. Measure the *post-compaction* history
+        # the same way the reload path does (websocket.py), without the
+        # summarizer's 500-char truncation (#1823), and hand it to the turn's
+        # message_complete (via ctx.tokens.last_compaction_estimate) and the
+        # COMPACTION_DONE wire message (via the event below).
+        estimated_tokens_after = estimate_history_tokens(history)
         ctx.tokens.last_compaction_estimate = estimated_tokens_after
         if hasattr(ctx, "composer") and ctx.composer is not None:
             ctx.composer.reset_for_compaction()

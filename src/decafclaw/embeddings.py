@@ -156,6 +156,44 @@ def _init_schema(conn, config):
             embedding float[{dim}] distance_metric=cosine
         )
     """)
+    # Lexical branch of hybrid retrieval (#1816). rowid matches
+    # memory_embeddings.id so fused candidates join back to vector rows.
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_pages USING fts5(
+            file_path UNINDEXED,
+            title,
+            summary,
+            body,
+            tokenize = 'porter unicode61'
+        )
+    """)
+    _backfill_fts(conn)
+
+
+def _fts_title(file_path: str) -> str:
+    """Searchable title for an index row: the file stem."""
+    return Path(file_path).stem
+
+
+def _backfill_fts(conn) -> None:
+    """Populate ``fts_pages`` from existing rows when the index predates it.
+
+    Runs once per database: a non-empty FTS table means new writes maintain it
+    (index/delete share one transaction). Title is derived from the path and
+    summary stays empty — page summaries are already inside the composite
+    ``entry_text`` body.
+    """
+    count = conn.execute("SELECT COUNT(*) FROM fts_pages").fetchone()[0]
+    if count:
+        return
+    rows = conn.execute("SELECT id, file_path, entry_text FROM memory_embeddings").fetchall()
+    if not rows:
+        return
+    conn.executemany(
+        "INSERT INTO fts_pages(rowid, file_path, title, summary, body) VALUES (?, ?, ?, '', ?)",
+        [(row_id, file_path, _fts_title(file_path), text) for row_id, file_path, text in rows],
+    )
+    log.info("Backfilled %d FTS rows from existing embeddings", len(rows))
 
 
 def _migrate_legacy(conn):
@@ -365,9 +403,21 @@ def _set_model(config, conn):
 
 
 def index_entry_sync(
-    config, file_path: str, entry_text: str, embedding: list[float], source_type: str = "memory"
+    config,
+    file_path: str,
+    entry_text: str,
+    embedding: list[float],
+    source_type: str = "memory",
+    *,
+    title: str = "",
+    summary: str = "",
 ) -> bool:
     """Store an entry and its embedding in the index (sync).
+
+    Also writes the lexical ``fts_pages`` row so hybrid retrieval (#1816) can
+    match exact identifiers the dense vector misses. ``title`` defaults to the
+    file stem; ``summary`` is optional because page summaries already sit in
+    the composite ``entry_text``.
 
     Returns ``False`` without inserting when the vector cannot live in this
     index (dimension changed without a rebuild), so a partial reindex cannot
@@ -399,6 +449,10 @@ def index_entry_sync(
             conn.execute(
                 "INSERT INTO embeddings_vec(rowid, embedding) VALUES (?, ?)",
                 (cursor.lastrowid, sqlite_vec.serialize_float32(embedding)),
+            )
+            conn.execute(
+                "INSERT INTO fts_pages(rowid, file_path, title, summary, body) VALUES (?, ?, ?, ?, ?)",
+                (cursor.lastrowid, file_path, title or _fts_title(file_path), summary, entry_text),
             )
         conn.commit()
         return True
@@ -435,6 +489,7 @@ def delete_entries(config, file_path: str, source_type: str | None = None) -> in
                 (file_path,),
             )
         conn.executemany("DELETE FROM embeddings_vec WHERE rowid = ?", [(i,) for i in ids])
+        conn.executemany("DELETE FROM fts_pages WHERE rowid = ?", [(i,) for i in ids])
         conn.commit()
         return len(ids)
 
@@ -457,6 +512,7 @@ def delete_by_source_type(config, source_type: str) -> int:
             (source_type,),
         )
         conn.executemany("DELETE FROM embeddings_vec WHERE rowid = ?", [(i,) for i in ids])
+        conn.executemany("DELETE FROM fts_pages WHERE rowid = ?", [(i,) for i in ids])
         conn.commit()
         return len(ids)
 
@@ -483,7 +539,7 @@ def search_similar_sync(
 
         rows = conn.execute(
             """
-            SELECT m.entry_text, m.file_path, m.source_type, m.created_at, v.distance
+            SELECT m.id, m.entry_text, m.file_path, m.source_type, m.created_at, v.distance
             FROM (
                 SELECT rowid, distance
                 FROM embeddings_vec
@@ -500,13 +556,14 @@ def search_similar_sync(
         return []
 
     results = []
-    for entry_text, file_path, row_source_type, created_at, distance in rows:
+    for row_id, entry_text, file_path, row_source_type, created_at, distance in rows:
         if source_type and row_source_type != source_type:
             continue
         similarity = 1.0 - distance
         similarity *= _SOURCE_BOOSTS.get(row_source_type, 1.0)
         results.append(
             {
+                "id": row_id,
                 "entry_text": entry_text,
                 "file_path": file_path,
                 "similarity": similarity,
@@ -517,6 +574,72 @@ def search_similar_sync(
 
     results.sort(key=lambda x: x["similarity"], reverse=True)
     return results[:top_k]
+
+
+_FTS_QUERY_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+
+
+def _fts_match_query(query: str, *, max_terms: int = 32) -> str:
+    """Build a safe FTS5 MATCH expression from a natural-language query.
+
+    Punctuation in a user message is FTS5 syntax (quotes, ``-``, ``:``, ``*``),
+    so raw input would raise. Extract word/number tokens, dedupe, and join
+    quoted terms with OR: documents matching more terms rank higher under
+    bm25, while an exact identifier still matches on its own.
+    """
+    terms: list[str] = []
+    seen: set[str] = set()
+    for token in _FTS_QUERY_TOKEN_RE.findall(query):
+        token = token.lower()
+        if token in seen:
+            continue
+        seen.add(token)
+        terms.append(token)
+        if len(terms) >= max_terms:
+            break
+    return " OR ".join(f'"{term}"' for term in terms)
+
+
+def search_fts_sync(config, query: str, top_k: int = 20, source_type: str | None = None) -> list[dict]:
+    """Find the top K entries by FTS5 bm25 lexical match (sync).
+
+    The lexical half of hybrid retrieval (#1816): exact ports, hostnames,
+    issue numbers, and error strings match here even when their dense vector
+    is unremarkable. Returns rows keyed by ``id`` (matching
+    ``memory_embeddings.id``) with the raw ``bm25`` rank (lower is better).
+    """
+    match_query = _fts_match_query(query)
+    if not match_query:
+        return []
+    with _open_db(config) as conn:
+        rows = conn.execute(
+            """
+            SELECT m.id, m.entry_text, m.file_path, m.source_type, m.created_at,
+                   bm25(fts_pages) AS rank
+            FROM fts_pages
+            JOIN memory_embeddings m ON m.id = fts_pages.rowid
+            WHERE fts_pages MATCH ?
+            ORDER BY rank
+            LIMIT ?
+        """,
+            (match_query, top_k),
+        ).fetchall()
+
+    results = []
+    for row_id, entry_text, file_path, row_source_type, created_at, rank in rows:
+        if source_type and row_source_type != source_type:
+            continue
+        results.append(
+            {
+                "id": row_id,
+                "entry_text": entry_text,
+                "file_path": file_path,
+                "source_type": row_source_type,
+                "created_at": created_at,
+                "bm25": rank,
+            }
+        )
+    return results
 
 
 def find_similar_page_pairs(
@@ -595,11 +718,27 @@ def find_similar_page_pairs(
     return pairs, len(indexed)
 
 
-async def index_entry(config, file_path: str, entry_text: str, source_type: str = "memory"):
+async def index_entry(
+    config,
+    file_path: str,
+    entry_text: str,
+    source_type: str = "memory",
+    *,
+    title: str = "",
+    summary: str = "",
+):
     """Embed and index an entry (async)."""
     embedding = await embed_text(config, entry_text)
     if embedding:
-        index_entry_sync(config, file_path, entry_text, embedding, source_type=source_type)
+        index_entry_sync(
+            config,
+            file_path,
+            entry_text,
+            embedding,
+            source_type=source_type,
+            title=title,
+            summary=summary,
+        )
         log.debug(f"Indexed {source_type} entry from {file_path}")
 
 
@@ -681,9 +820,17 @@ async def _reindex_entries(entries, label, config, concurrency: int = 4):
             chunk = all_entries[start : start + chunk_size]
             texts = [text for _src_id, text, _st, _meta in chunk]
             vectors = await embed_texts(config, texts, concurrency=concurrency)
-            for (source_id, text, source_type, _meta), vector in zip(chunk, vectors):
+            for (source_id, text, source_type, meta), vector in zip(chunk, vectors):
                 if vector:
-                    index_entry_sync(config, source_id, text, vector, source_type=source_type)
+                    index_entry_sync(
+                        config,
+                        source_id,
+                        text,
+                        vector,
+                        source_type=source_type,
+                        title=meta.get("title", ""),
+                        summary=meta.get("summary", ""),
+                    )
             done = min(start + chunk_size, total)
             elapsed = time.monotonic() - t0
             print(_format_progress(done, total, elapsed, label))
@@ -692,16 +839,23 @@ async def _reindex_entries(entries, label, config, concurrency: int = 4):
     sem = asyncio.Semaphore(concurrency)
     done = 0
 
-    async def _embed_one(source_id, text, source_type):
+    async def _embed_one(source_id, text, source_type, meta):
         nonlocal done
         async with sem:
-            await index_entry(config, source_id, text, source_type)
+            await index_entry(
+                config,
+                source_id,
+                text,
+                source_type,
+                title=meta.get("title", ""),
+                summary=meta.get("summary", ""),
+            )
         done += 1
         if done % 10 == 0 or done == total:
             elapsed = time.monotonic() - t0
             print(_format_progress(done, total, elapsed, label))
 
-    tasks = [asyncio.create_task(_embed_one(src_id, text, st)) for src_id, text, st, _meta in all_entries]
+    tasks = [asyncio.create_task(_embed_one(src_id, text, st, meta)) for src_id, text, st, meta in all_entries]
     await asyncio.gather(*tasks)
     return total
 
@@ -722,7 +876,7 @@ def _iter_journal_entries(config):
                 continue
             entry = "## " + part if not part.startswith("## ") else part
             rel_path = str(filepath.relative_to(config.vault_root))
-            yield rel_path, entry, "journal", {}
+            yield rel_path, entry, "journal", {"title": filepath.stem}
 
 
 def _source_type_for_vault_path(config, filepath):
@@ -770,7 +924,16 @@ def _iter_vault_pages(config):
         embed_text = build_composite_text(metadata, body)
         rel_path = str(filepath.relative_to(vault))
         source_type = _source_type_for_vault_path(config, filepath)
-        yield rel_path, embed_text, source_type, {}
+        summary = metadata.get("summary") if isinstance(metadata, dict) else ""
+        yield (
+            rel_path,
+            embed_text,
+            source_type,
+            {
+                "title": filepath.stem,
+                "summary": str(summary) if summary else "",
+            },
+        )
 
 
 def iter_index_entries(config):
@@ -905,6 +1068,7 @@ def _delete_one_row(config, row_id: int) -> None:
     with _open_db(config) as conn:
         conn.execute("DELETE FROM memory_embeddings WHERE id = ?", (row_id,))
         conn.execute("DELETE FROM embeddings_vec WHERE rowid = ?", (row_id,))
+        conn.execute("DELETE FROM fts_pages WHERE rowid = ?", (row_id,))
         conn.commit()
 
 

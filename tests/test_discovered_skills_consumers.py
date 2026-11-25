@@ -108,6 +108,13 @@ REVIEWED_CONSUMERS: dict[tuple[str, str], str] = {
     "'always' grant plus a later rewrite of that skill's tools.py would "
     "re-import new code without a fresh confirmation. Pre-existing "
     "'always'-permission semantics, out of scope for #741.",
+    (
+        "context_composer.py",
+        "render_activated_skills",
+    ): "NO GRANT: renders the bodies of skills already in ctx.skills.activated. "
+    "Activation (and its confirmation gate) already happened; the body is the "
+    "instructions for tools the turn can already call — the same content "
+    "activate_skill used to return as its tool result (#1823).",
     # -- no grant: name/description only (catalog-equivalent) ------------------
     (
         "extensions/preempt_hints.py",

@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from ..history import without_provider_data
-from ..retry import MAX_RETRIES, RetryableError, cancellable_sleep
+from ..retry import MAX_RETRIES, RetryableError, cancellable_sleep, run_with_retries
 from ..stream_state import StreamState
 from ..types import (
     FINISH_REASON_CANCELLED,
@@ -20,7 +20,6 @@ from ..types import (
     FINISH_REASON_STOP,
     FINISH_REASON_TOOL_CALLS,
     DiscoveredModel,
-    LLMRetryExhaustedError,
     StreamCallback,
 )
 
@@ -97,6 +96,22 @@ def _parse_openrouter_capabilities(entry: dict, caps: dict) -> None:
         caps["context_window_size"] = ctx
 
 
+def _parse_context_window_field(entry: dict, caps: dict) -> None:
+    """Bare ``context_window`` shape emitted by some LiteLLM gateways.
+
+    Otari-local (``synobian:4100``) reports the limit under this key rather
+    than ``max_input_tokens`` or ``context_length``. Normalize by shape, not
+    by gateway identity, so a new OpenAI-compatible gateway works with no
+    code change. Lowest priority: only fills a window the richer shapes left
+    unset.
+    """
+    if "context_window_size" in caps:
+        return
+    ctx = _as_positive_int(entry.get("context_window"))
+    if ctx:
+        caps["context_window_size"] = ctx
+
+
 def _parse_azure_capabilities(entry: dict, caps: dict) -> None:
     """Azure OpenAI-style ``capabilities`` object (chat_completion flag)."""
     capabilities = entry.get("capabilities")
@@ -134,6 +149,7 @@ def parse_models_payload(payload: Any) -> list[DiscoveredModel]:
         caps: dict = {}
         _parse_litellm_capabilities(entry, caps)
         _parse_openrouter_capabilities(entry, caps)
+        _parse_context_window_field(entry, caps)
         _parse_azure_capabilities(entry, caps)
 
         # Positively non-chat (embedding, image, audio, realtime, legacy
@@ -169,7 +185,26 @@ class OpenAICompatProvider:
         timeout: int = 30,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
-        """Get model metadata (e.g. token limits), or None if unsupported."""
+        """Get model metadata (e.g. token limits), or None if unsupported.
+
+        Reads the same ``GET {base}/models`` listing ``discover_models`` uses
+        and normalizes the context window from whichever shape the gateway
+        emits (``max_input_tokens``, ``context_length``, or
+        ``context_window``). Returns ``None`` when the listing is reachable
+        but reports no window for ``model``; HTTP/network failures raise so
+        the caller can tell "unsupported" from "unreachable".
+        """
+        url = self._models_url()
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, headers=self._headers(), timeout=timeout)
+        resp.raise_for_status()
+        for entry in parse_models_payload(resp.json()):
+            if entry.id == model and entry.context_window_size:
+                return {"context_window_size": entry.context_window_size}
+        return None
+
+    def default_context_window(self, model: str) -> int | None:
+        """No provider defaults table — discovery is the only source here."""
         return None
 
     def _headers(self) -> dict[str, str]:
@@ -344,41 +379,13 @@ class OpenAICompatProvider:
 
         state = _StreamState(on_chunk)
 
-        for attempt in range(MAX_RETRIES + 1):
-            try:
-                await self._stream_one_attempt(
-                    url,
-                    body,
-                    timeout,
-                    cancel_event,
-                    state,
-                )
-                break  # Success
-            except RetryableError as e:
-                if attempt >= MAX_RETRIES:
-                    raise LLMRetryExhaustedError(
-                        f"LLM failed after {MAX_RETRIES} retries (status {e.status}): {e.body[:200]}",
-                        status=e.status,
-                        body=e.body,
-                        retry_after=e.retry_after,
-                    ) from e
-                delay = min(int(e.retry_after or 2**attempt), 30)
-                log.warning(
-                    "LLM %s (%d), retrying in %ds (attempt %d/%d): %s",
-                    "rate limited" if e.status == 429 else "server error",
-                    e.status,
-                    delay,
-                    attempt + 1,
-                    MAX_RETRIES,
-                    e.body[:200],
-                )
-                await cancellable_sleep(delay, cancel_event)
-            except Exception as e:
-                if not state.content_parts and not state.thinking_parts and not state.tool_calls_in_progress:
-                    raise
-                log.error("LLM streaming error (partial content kept): %s", e)
-                state.finish_reason = FINISH_REASON_ERROR
-                break
+        await run_with_retries(
+            lambda: self._stream_one_attempt(url, body, timeout, cancel_event, state),
+            has_output=lambda s: bool(s.content_parts or s.thinking_parts or s.tool_calls_in_progress),
+            state=state,
+            cancel_event=cancel_event,
+            on_partial_error=_mark_interrupted,
+        )
 
         return await state.finalize()
 
@@ -629,3 +636,8 @@ class _StreamState(StreamState):
             "usage": self.usage,
             "finish_reason": finish_reason,
         }
+
+
+def _mark_interrupted(state: _StreamState) -> None:
+    """Mark a partially-received stream as errored so finalize reports it (#1313)."""
+    state.finish_reason = FINISH_REASON_ERROR

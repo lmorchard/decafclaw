@@ -104,8 +104,9 @@ For each interesting item:
    write, seeding `sources:` with just this item. Don't backfill historical
    sources from the body.
 4. If no page exists: create a new page with full YAML frontmatter (shape
-   below), a body with `[[wiki-links]]`, and a `## Sources` section listing
-   this item.
+   below), a body with `[[wiki-links]]` (vault page names only — **never** a
+   URL inside `[[...]]`; write source links as `[label](url)` or plain text),
+   and a `## Sources` section listing this item.
 
 New-page frontmatter:
 
