@@ -319,13 +319,15 @@ Writes are fail-open: an inbox failure never changes the command's outcome. The 
 By default `shell` runs the command with a blocking call and a hard timeout (`shell.max_runtime_sec`, default 30s — the command's **total runtime limit**). An opt-in **foreground waiting budget** (`shell.foreground_wait_budget_sec`, default `None` = disabled) changes that: the command is started through the same managed runner as background jobs and awaited up to the budget.
 
 - **Finishes within the budget** → ordinary foreground result (same output shape as before). The job is dropped from the manager; no archive record, notification, or wake fires.
-- **Exceeds the budget** → the **same process** continues as a managed background job and the tool returns its handle (job ID, PID) with pointers to `shell_background_status` / `shell_background_stop`. The existing completion path (archive record + inbox notification + WAKE turn) fires exactly once when it exits. The agent no longer has to predict foreground vs background up front.
+- **Exceeds the budget** → the **same process** continues as a managed background job and the tool returns its handle (job ID, PID) with pointers to `shell_background_status` / `shell_background_stop`. The existing completion path (archive record + WAKE turn, plus an inbox notification only when the turn was unattended) fires exactly once when it exits. The agent no longer has to predict foreground vs background up front.
 
 Three distinct knobs, deliberately separate: the **wait budget** (how long to wait before handing off), the **total runtime limit** (`max_runtime_sec`, which becomes a handed-off job's `max_lifetime` and is enforced by the existing background-job expiry policy), and the **explicit-background lifetime** (`background.default_max_lifetime_sec`, default 3600s; raised from the old 600s hardcode in #1746).
 
 `shell_background_start` also takes `max_lifetime_sec` per call: a positive value overrides the configured default, and `0` disables expiry for a run whose duration cannot be bounded. The tool reports the resolved lifetime in its result. A job with expiry disabled still leaves the manager ten minutes after it finishes, so finished jobs do not accumulate. `cwd` is resolved against the workspace root before approval (the same rule as `shell`); outside, missing, or non-directory paths fail loudly instead of silently running somewhere else.
 
-When a job expires or is stopped, its partial stdout/stderr stay available: `shell_background_status` returns the buffered lines (or says "none captured before termination"), the completion record in the archive keeps the configured tails, and the inbox notification reports how many lines were captured. For a long validation run, start it with `shell_background_start` (not through a foreground `| tail` pipeline, which buffers until EOF and loses output when killed), then read the status or the completion record.
+When a job expires or is stopped, its partial stdout/stderr stay available: `shell_background_status` returns the buffered lines (or says "none captured before termination"), the completion record in the archive keeps the configured tails, and an unattended job's inbox notification reports how many lines were captured. For a long validation run, start it with `shell_background_start` (not through a foreground `| tail` pipeline, which buffers until EOF and loses output when killed), then read the status or the completion record.
+
+`shell_background_status` also takes `wait=N` (block until the job exits or the timeout expires), `cursor="auto"` (only output since this conversation's previous cursor read), `from_start=true` (re-read the whole buffer without advancing the cursor), and `tail_lines=N` (trim a running-job poll; default 20). The cursor is owned by the job, not the caller, so it survives compaction and new turns. A finished job returns everything unread; a cursor that fell behind the 500-line buffer reports the gap instead of returning a quietly incomplete delta (#1846).
 
 Approval happens **once, before process creation** (the usual `check_shell_approval()`); the handoff neither bypasses nor repeats it. Cancellation ownership: a turn cancelled **before** the handoff kills the process with the turn (nothing is left unmanaged, no completion sequence); a job **after** handoff is owned by the manager like any explicitly started background job — stopping it is `shell_background_stop` or expiry. Output collection stays bounded: foreground results are built from the same 500-line deques background jobs use. If the background runner is unavailable, `shell` fails open to the legacy blocking path with a warning.
 
@@ -421,19 +423,21 @@ See [Sub-Agent Delegation](delegation.md).
 
 ## LLM Models & Query (`tools/llm_tools.py`)
 
-Model discovery and one-shot completions against a named model — no tool schemas, no conversation history (#1258, #1444).
+Model discovery and completions against a named model — no tool schemas (#1258, #1444, #1820).
 
 | Tool | What it does |
 |------|--------------|
 | `llm_models` | List `config.model_configs` entries — the names `llm_query(model=...)` and `delegate_task(model=...)` accept — with provider, underlying model id, and active/default flags. Optional `provider` and `query` filters |
-| `llm_query` | Single-shot completion (or a batch of up to 25, concurrency 5) against a `config.model_configs` entry. For narrow text transformation — extraction, summarization, classification — especially against small local models |
+| `llm_query` | Completion (or a batch of up to 25, concurrency 5) against a `config.model_configs` entry, with an optional multi-turn history and per-call sampler overrides. For narrow text transformation — extraction, summarization, classification — especially against small local models |
 
 - `llm_models` is read-only and local: no network probe or remote provider ping. It reports the effective default model (#1211: catalog pointer when set, else `config.default_model`) and the conversation's active model; a stale active name that is no longer configured is not reported as active. `provider` matches the provider key (exact or case-insensitive substring); `query` matches the config name or underlying model id. Structured output lives on `ToolResult.data` as `{default_model, active_model, total, models: [{name, provider, model, is_default, is_active}]}`.
 - `llm_query` `model=""` inherits the conversation's active model; an unknown name is a hard error that lists configured models (no silent fallback).
+- `messages` supplies a real multi-turn history (`[{'role': 'system'|'user'|'assistant', 'content': '...'}]`); `prompt` is optional and appends a final user turn. `system` merges into a leading system message or is prepended. `messages` cannot be combined with a prompt list.
+- Per-call `temperature` (0.0–2.0), `top_p` (>0.0–1.0), `max_tokens`, and `stop` sequences override the model configuration for that call only. `openai-compat` sends `max_tokens`; `openai-responses` maps it to `max_output_tokens` and rejects `stop` (the API has no stop parameter); Vertex maps to `generationConfig`.
 - `return_schema` requests a fenced JSON block via prompt-level instruction; a compliant block parses to `ToolResult.data`. `strict=true` turns non-compliant output into an error with field-level feedback.
 - Each item runs under its own per-item timeout (default 60s); the tool opts out of the global watchdog. Usage accumulates into the turn's token counters, same as agent LLM calls.
 
-For a subtask that needs tools or multi-turn reasoning, use `delegate_task` instead.
+For a subtask that needs tools or its own context, use `delegate_task` instead.
 
 ## Skills (`tools/skill_tools.py`)
 

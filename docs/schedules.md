@@ -158,7 +158,7 @@ The scheduled-task preamble instructs the agent to end its turn with a short nar
 
 When the cycle was genuinely quiet (nothing notable happened, no changes made), the agent prefixes its summary with `HEARTBEAT_OK` on a leading line before the quiet-cycle note. The scheduler's `is_heartbeat_ok()` check picks up the marker and logs a tidy `Schedule 'name': HEARTBEAT_OK` line instead of the response preview. The narrative still gets archived in full so the newsletter has material to quote.
 
-The marker must **start** the response (leading whitespace is fine, case-insensitive, first 300 characters). As of #450 all response sentinels share one start-anchored matcher, `heartbeat.response_starts_with_sentinel` — a response that merely *mentions* `HEARTBEAT_OK` mid-text is not a quiet cycle. That matches what the preamble has always asked for, so no task wording needs to change.
+The marker must **start** the response (leading whitespace is fine, case-insensitive, first 300 characters). As of #450 all response sentinels share one start-anchored matcher, `sentinels.response_starts_with_sentinel` — a response that merely *mentions* `HEARTBEAT_OK` mid-text is not a quiet cycle. That matches what the preamble has always asked for, so no task wording needs to change.
 
 A task whose turn ended abnormally is never treated as quiet: `is_heartbeat_ok()` returns `False` if the response carries `[Agent reached max tool iterations` or `[loop-breaker] Stopped`, regardless of a stray `HEARTBEAT_OK` in a mid-turn preamble. See [heartbeat docs](heartbeat.md#heartbeat_ok).
 

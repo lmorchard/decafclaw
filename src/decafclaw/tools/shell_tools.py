@@ -1892,6 +1892,7 @@ async def _execute_command_with_handoff(ctx: "Context", command: str, cwd: str |
             config=ctx.config,
             conv_id=ctx.conv_id,
             event_bus=ctx.event_bus,
+            attended=not ctx.is_unattended,
             completion_tail_lines=ctx.config.background.default_completion_tail_lines,
             manager=ctx.manager,
             env=env,

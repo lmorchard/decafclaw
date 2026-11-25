@@ -114,6 +114,28 @@ chat-message .chat-event.turn-aborted {
   border-left-color: var(--pico-del-color, #e67e22);
 }
 
+chat-message .chat-event.wake-status {
+  display: block;
+}
+
+chat-message .chat-event.wake-status summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+chat-message .chat-event.wake-status summary::-webkit-details-marker {
+  display: none;
+}
+
+chat-message .chat-event.wake-status summary .icon {
+  margin-right: 0.35rem;
+}
+
+chat-message .chat-event.wake-status .detail {
+  margin-top: 0.35rem;
+  white-space: pre-wrap;
+}
+
 chat-message .chat-event .icon {
   font-size: 0.9rem;
 }

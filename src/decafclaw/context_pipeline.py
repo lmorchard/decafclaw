@@ -406,15 +406,16 @@ def account_history_tokens(history: list) -> tuple[int, int]:
 
 
 def _strip_archive_metadata(message: dict) -> dict:
-    """Drop archive-only provenance before a provider request (#1574).
+    """Drop archive-only metadata before a provider request (#1574, #1852).
 
     ``working_memory`` references ride on archived user rows for restart
-    dedupe. Providers never need them, and stricter endpoints reject unknown
-    message keys.
+    dedupe. ``suppress_user_message`` records a silent wake for replay. Neither
+    belongs to a provider message, and stricter endpoints reject unknown keys.
     """
-    if "working_memory" not in message:
+    archive_keys = {"working_memory", "suppress_user_message"}
+    if not archive_keys.intersection(message):
         return message
-    return {k: v for k, v in message.items() if k != "working_memory"}
+    return {k: v for k, v in message.items() if k not in archive_keys}
 
 
 def assemble_provider_history(combined: list, config: Any, ctx: "Context", active_tools: list[dict]):

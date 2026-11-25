@@ -12,21 +12,18 @@ from typing import Any
 import httpx
 
 from ..history import without_provider_data
-from ..retry import MAX_RETRIES, RetryableError, cancellable_sleep
+from ..retry import MAX_RETRIES, RetryableError, cancellable_sleep, run_with_retries
+from ..stream_state import StreamState
 from ..types import (
     FINISH_REASON_CANCELLED,
     FINISH_REASON_ERROR,
     FINISH_REASON_STOP,
     FINISH_REASON_TOOL_CALLS,
     DiscoveredModel,
-    LLMRetryExhaustedError,
     StreamCallback,
 )
 
 log = logging.getLogger(__name__)
-
-# Max SSE events kept for diagnostic dump on empty LLM responses
-_MAX_DIAGNOSTIC_EVENTS = 50
 
 # Backward-compat aliases: vertex.py and openai_responses.py still import the
 # private names from this module; #1312 (3.2) moves them to ..retry directly.
@@ -51,6 +48,26 @@ def _clean_messages(messages: list) -> list:
     return [{k: v for k, v in m.items() if k != "thinking"} for m in without_provider_data(messages)]
 
 
+def _sampler_body(
+    *,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
+    stop: list[str] | None = None,
+) -> dict[str, Any]:
+    """Map per-call sampler overrides to OpenAI chat-completions fields."""
+    body: dict[str, Any] = {}
+    if temperature is not None:
+        body["temperature"] = temperature
+    if top_p is not None:
+        body["top_p"] = top_p
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
+    if stop is not None:
+        body["stop"] = list(stop)
+    return body
+
+
 # ---------------------------------------------------------------------------
 # Model-listing payload parsing (#1211)
 # ---------------------------------------------------------------------------
@@ -58,10 +75,11 @@ def _clean_messages(messages: list) -> list:
 # ``GET {base}/models`` metadata quality varies wildly across gateways:
 # LiteLLM reports ``mode`` / ``supports_function_calling`` / ``max_input_tokens``,
 # OpenRouter reports ``architecture.modality`` / ``supported_parameters`` /
-# ``context_length``, Azure-style gateways report ``capabilities``, and
-# Ollama / vLLM / plain OpenAI return bare IDs. The parser normalizes the
-# known shapes and leaves everything else as unknown (None) — unknown is
-# never treated as capable.
+# ``context_length``, Azure-style gateways report ``capabilities``, some
+# LiteLLM deployments report a bare ``context_window``, and Ollama / vLLM /
+# plain OpenAI return bare IDs. The parser normalizes the known shapes and
+# leaves everything else as unknown (None) — unknown is never treated as
+# capable.
 
 
 def _as_positive_int(value: Any) -> int | None:
@@ -97,6 +115,25 @@ def _parse_openrouter_capabilities(entry: dict, caps: dict) -> None:
     ctx = _as_positive_int(entry.get("context_length"))
     if ctx:
         caps["context_window_size"] = ctx
+
+
+def _parse_context_window_field(entry: dict, caps: dict) -> None:
+    """Bare ``context_window`` shape emitted by some LiteLLM gateways.
+
+    Otari-local (``synobian:4100``) reports the limit under this key rather
+    than ``max_input_tokens`` or ``context_length``. Also accepts the value
+    nested under ``capabilities`` / ``model_info`` when a gateway wraps it.
+    Lowest priority: only fills a window the richer shapes left unset.
+    """
+    if "context_window_size" in caps:
+        return
+    for container in (entry, entry.get("capabilities"), entry.get("model_info")):
+        if not isinstance(container, dict):
+            continue
+        ctx = _as_positive_int(container.get("context_window"))
+        if ctx:
+            caps["context_window_size"] = ctx
+            return
 
 
 def _parse_azure_capabilities(entry: dict, caps: dict) -> None:
@@ -136,6 +173,7 @@ def parse_models_payload(payload: Any) -> list[DiscoveredModel]:
         caps: dict = {}
         _parse_litellm_capabilities(entry, caps)
         _parse_openrouter_capabilities(entry, caps)
+        _parse_context_window_field(entry, caps)
         _parse_azure_capabilities(entry, caps)
 
         # Positively non-chat (embedding, image, audio, realtime, legacy
@@ -157,6 +195,23 @@ def parse_models_payload(payload: Any) -> list[DiscoveredModel]:
     return result
 
 
+def _resolve_listed_model(models: list[DiscoveredModel], model: str) -> DiscoveredModel | None:
+    """Find the listing entry for ``model``, tolerating a prefix mismatch.
+
+    Config names and gateway ids can disagree: a config may use the bare
+    ``claude-haiku-4.5`` while the gateway indexes the prefixed
+    ``anthropic/claude-haiku-4.5``. Exact match wins. Then compare the final
+    path segment, accepting only an unambiguous match so two providers
+    serving the same bare id never resolve silently.
+    """
+    for entry in models:
+        if entry.id == model:
+            return entry
+    bare = model.rsplit("/", 1)[-1]
+    matches = [entry for entry in models if entry.id.rsplit("/", 1)[-1] == bare]
+    return matches[0] if len(matches) == 1 else None
+
+
 class OpenAICompatProvider:
     """Provider for OpenAI-compatible endpoints (LiteLLM, Ollama, vLLM, etc.)."""
 
@@ -171,7 +226,21 @@ class OpenAICompatProvider:
         timeout: int = 30,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
-        """Get model metadata (e.g. token limits), or None if unsupported."""
+        """Get model metadata (e.g. token limits), or None if unsupported.
+
+        Reuses ``discover_models`` — the same ``GET {base}/models`` listing
+        the catalog uses — so there is no second HTTP path to keep in sync.
+        Returns ``None`` when the listing is reachable but reports no window
+        for ``model``; HTTP/network failures raise so the caller can tell
+        "unsupported" from "unreachable".
+        """
+        entry = _resolve_listed_model(await self.discover_models(timeout=timeout), model)
+        if entry is None or not entry.context_window_size:
+            return None
+        return {"context_window_size": entry.context_window_size}
+
+    def default_context_window(self, model: str) -> int | None:
+        """No provider defaults table — discovery is the only source here."""
         return None
 
     def _headers(self) -> dict[str, str]:
@@ -237,8 +306,13 @@ class OpenAICompatProvider:
         on_chunk: StreamCallback | None = None,
         cancel_event: asyncio.Event | None = None,
         timeout: int = 300,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_tokens: int | None = None,
+        stop: list[str] | None = None,
         **kwargs,
     ) -> dict:
+        sampler = _sampler_body(temperature=temperature, top_p=top_p, max_tokens=max_tokens, stop=stop)
         if streaming:
             return await self._complete_streaming(
                 model,
@@ -247,12 +321,14 @@ class OpenAICompatProvider:
                 on_chunk=on_chunk,
                 cancel_event=cancel_event,
                 timeout=timeout,
+                sampler=sampler,
             )
         return await self._complete_nonstreaming(
             model,
             messages,
             tools=tools,
             timeout=timeout,
+            sampler=sampler,
         )
 
     async def _complete_nonstreaming(
@@ -262,9 +338,12 @@ class OpenAICompatProvider:
         *,
         tools=None,
         timeout=300,
+        sampler: dict[str, Any] | None = None,
     ) -> dict:
         url = self._completions_url()
         body: dict = {"model": model, "messages": _clean_messages(messages)}
+        if sampler:
+            body.update(sampler)
         if tools:
             body["tools"] = tools
 
@@ -329,6 +408,7 @@ class OpenAICompatProvider:
         on_chunk=None,
         cancel_event=None,
         timeout=300,
+        sampler: dict[str, Any] | None = None,
     ) -> dict:
         url = self._completions_url()
         body: dict = {
@@ -337,6 +417,8 @@ class OpenAICompatProvider:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if sampler:
+            body.update(sampler)
         if tools:
             body["tools"] = tools
 
@@ -346,41 +428,13 @@ class OpenAICompatProvider:
 
         state = _StreamState(on_chunk)
 
-        for attempt in range(MAX_RETRIES + 1):
-            try:
-                await self._stream_one_attempt(
-                    url,
-                    body,
-                    timeout,
-                    cancel_event,
-                    state,
-                )
-                break  # Success
-            except RetryableError as e:
-                if attempt >= MAX_RETRIES:
-                    raise LLMRetryExhaustedError(
-                        f"LLM failed after {MAX_RETRIES} retries (status {e.status}): {e.body[:200]}",
-                        status=e.status,
-                        body=e.body,
-                        retry_after=e.retry_after,
-                    ) from e
-                delay = min(int(e.retry_after or 2**attempt), 30)
-                log.warning(
-                    "LLM %s (%d), retrying in %ds (attempt %d/%d): %s",
-                    "rate limited" if e.status == 429 else "server error",
-                    e.status,
-                    delay,
-                    attempt + 1,
-                    MAX_RETRIES,
-                    e.body[:200],
-                )
-                await cancellable_sleep(delay, cancel_event)
-            except Exception as e:
-                if not state.content_parts and not state.thinking_parts and not state.tool_calls_in_progress:
-                    raise
-                log.error("LLM streaming error (partial content kept): %s", e)
-                state.finish_reason = FINISH_REASON_ERROR
-                break
+        await run_with_retries(
+            lambda: self._stream_one_attempt(url, body, timeout, cancel_event, state),
+            has_output=lambda s: bool(s.content_parts or s.thinking_parts or s.tool_calls_in_progress),
+            state=state,
+            cancel_event=cancel_event,
+            on_partial_error=_mark_interrupted,
+        )
 
         return await state.finalize()
 
@@ -491,23 +545,19 @@ def _cached_tokens(usage: dict | None) -> int:
     return details.get("cached_tokens", 0) or 0
 
 
-class _StreamState:
-    """Accumulates streaming state across SSE events."""
+class _StreamState(StreamState):
+    """Accumulates OpenAI-compatible streaming state across SSE events.
+
+    Shared callback/diagnostic behavior comes from :class:`StreamState`
+    (#1316); this subclass adds the OpenAI chunk-normalization path.
+    """
 
     def __init__(self, on_chunk: StreamCallback | None = None):
-        self.on_chunk = on_chunk
+        super().__init__(on_chunk)
         self.content_parts: list[str] = []
         self.thinking_parts: list[str] = []
         self.tool_calls_in_progress: dict = {}
-        self.usage: dict | None = None
-        self.finish_reason: str | None = None
         self.saw_done: bool = False
-        self._all_events: list = []
-
-    def record_event(self, chunk: dict):
-        self._all_events.append(chunk)
-        if len(self._all_events) > _MAX_DIAGNOSTIC_EVENTS:
-            self._all_events.pop(0)
 
     async def process_chunk(self, chunk: dict):
         """Process a single parsed SSE chunk."""
@@ -536,13 +586,13 @@ class _StreamState:
         thinking = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking")
         if thinking:
             self.thinking_parts.append(thinking)
-            await self._emit("thinking", thinking)
+            await self.emit("thinking", thinking)
 
         # Text content
         text = delta.get("content")
         if text:
             self.content_parts.append(text)
-            await self._emit("text", text)
+            await self.emit("text", text)
         # Tool calls
         tc_deltas = delta.get("tool_calls")
         if tc_deltas:
@@ -564,7 +614,7 @@ class _StreamState:
                     },
                 }
                 if func.get("name"):
-                    await self._emit(
+                    await self.emit(
                         "tool_call_start",
                         {
                             "index": idx,
@@ -575,7 +625,7 @@ class _StreamState:
                 args_delta = func.get("arguments", "")
                 if args_delta:
                     self.tool_calls_in_progress[idx]["function"]["arguments"] += args_delta
-                    await self._emit(
+                    await self.emit(
                         "tool_call_delta",
                         {
                             "index": idx,
@@ -592,7 +642,7 @@ class _StreamState:
         if self.tool_calls_in_progress:
             tool_calls = [self.tool_calls_in_progress[i] for i in sorted(self.tool_calls_in_progress.keys())]
             for idx, tc in enumerate(tool_calls):
-                await self._emit(
+                await self.emit(
                     "tool_call_end",
                     {
                         "index": idx,
@@ -610,7 +660,7 @@ class _StreamState:
             elif content or thinking or self.tool_calls_in_progress:
                 finish_reason = FINISH_REASON_ERROR
 
-        await self._emit("done", {"usage": self.usage})
+        await self.emit("done", {"usage": self.usage})
 
         if self.usage:
             log.debug(
@@ -625,13 +675,7 @@ class _StreamState:
             finish_reason,
         )
 
-        if not content and not thinking and not self.tool_calls_in_progress and self._all_events:
-            log.warning(
-                "LLM returned empty — full SSE event dump (%d events):",
-                len(self._all_events),
-            )
-            for i, evt in enumerate(self._all_events):
-                log.warning("  event[%d]: %s", i, json.dumps(evt)[:500])
+        self._log_empty_dump(content=content, thinking=thinking, tool_calls=self.tool_calls_in_progress)
 
         return {
             "content": content,
@@ -642,9 +686,7 @@ class _StreamState:
             "finish_reason": finish_reason,
         }
 
-    async def _emit(self, chunk_type: str, data):
-        if self.on_chunk:
-            try:
-                await self.on_chunk(chunk_type, data)
-            except Exception as e:
-                log.debug("Stream chunk callback error: %s", e)
+
+def _mark_interrupted(state: _StreamState) -> None:
+    """Mark a partially-received stream as errored so finalize reports it (#1313)."""
+    state.finish_reason = FINISH_REASON_ERROR

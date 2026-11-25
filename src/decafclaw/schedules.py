@@ -529,7 +529,7 @@ _SCHEDULE_ESCAPE_HATCH_TOOLS = frozenset({"tool_search", "activate_skill"})
 # A scheduled response starting with this suppresses notification delivery — no
 # inbox entry, so no channel delivers either (every adapter subscribes to the
 # notification). Start-anchored like every other sentinel; see
-# heartbeat.response_starts_with_sentinel.
+# sentinels.response_starts_with_sentinel.
 #
 # Inert unless a task's own body asks for it. Deliberately NOT added to
 # build_task_preamble: telling every scheduled task to consider suppressing
@@ -898,6 +898,9 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask, conv
                     except Exception as e:
                         log.error(f"Failed to activate skill '{skill_name}' for task '{task.name}': {e}")
                         ctx.skills.activation_denials.append(skill_name)
+                    # The task prompt carries this skill's body in
+                    # <loaded_skills>; skip it in <activated_skills> (#1823).
+                    ctx.skills.body_in_prompt.add(skill_name)
 
     try:
         if task.required_servers:

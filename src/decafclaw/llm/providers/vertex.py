@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from ..embed import post_embedding
 from ..types import (
     FINISH_REASON_ERROR,
     FINISH_REASON_LENGTH,
@@ -43,6 +44,32 @@ _VERTEX_STATIC_MODELS: list[tuple[str, str, bool]] = [
     ("gemini-4-argon", "Google", True),  # retires 2027-10-13
 ]
 _GEMINI_CONTEXT_WINDOW = 1_048_576
+
+# Vertex's aiplatform metadata endpoint reports no token limits (verified
+# 2026-11-25 across v1/v1beta1, publishers/google/models paths, @default,
+# :getModel, and project-scoped variants — all return name/versionId/
+# launchStage only). generativelanguage has inputTokenLimit but refuses
+# service accounts. Google's model docs declare every Gemini 2.5 / 3 / 4
+# model at 1M. Update when a family with a different window appears; the
+# resolver warns loudly on a miss.
+_VERTEX_CONTEXT_WINDOWS: dict[str, int] = {
+    "gemini-4": 1_048_576,
+    "gemini-3": 1_048_576,
+    "gemini-2.5": 1_048_576,
+}
+
+
+def _vertex_default_context_window(model: str) -> int | None:
+    """Longest-prefix match on the model id.
+
+    ``gemini-3.8-flash``, ``gemini-3.1-pro-preview``, and ``gemini-4-argon``
+    all resolve without a per-model entry.
+    """
+    best = ""
+    for family in _VERTEX_CONTEXT_WINDOWS:
+        if model.startswith(family) and len(family) > len(best):
+            best = family
+    return _VERTEX_CONTEXT_WINDOWS[best] if best else None
 
 
 class VertexProvider:
@@ -110,8 +137,13 @@ class VertexProvider:
         on_chunk: StreamCallback | None = None,
         cancel_event: asyncio.Event | None = None,
         timeout: int = 300,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_tokens: int | None = None,
+        stop: list[str] | None = None,
         **kwargs,
     ) -> dict:
+        generation_config = _generation_config(temperature=temperature, top_p=top_p, max_tokens=max_tokens, stop=stop)
         if streaming:
             return await self._complete_streaming(
                 model,
@@ -120,12 +152,14 @@ class VertexProvider:
                 on_chunk=on_chunk,
                 cancel_event=cancel_event,
                 timeout=timeout,
+                generation_config=generation_config,
             )
         return await self._complete_nonstreaming(
             model,
             messages,
             tools=tools,
             timeout=timeout,
+            generation_config=generation_config,
         )
 
     async def _complete_nonstreaming(
@@ -135,9 +169,10 @@ class VertexProvider:
         *,
         tools=None,
         timeout=300,
+        generation_config: dict | None = None,
     ) -> dict:
         url = f"{self._base_url(model)}:generateContent"
-        body = _build_request_body(messages, tools)
+        body = _build_request_body(messages, tools, generation_config=generation_config)
 
         log.debug("Vertex request: model=%s, messages=%d, tools=%d", model, len(messages), len(tools) if tools else 0)
         log.debug("Vertex request body: %s", json.dumps(body)[:2000])
@@ -164,9 +199,10 @@ class VertexProvider:
         on_chunk=None,
         cancel_event=None,
         timeout=300,
+        generation_config: dict | None = None,
     ) -> dict:
         url = f"{self._base_url(model)}:streamGenerateContent?alt=sse"
-        body = _build_request_body(messages, tools)
+        body = _build_request_body(messages, tools, generation_config=generation_config)
 
         log.debug(
             "Vertex streaming request: model=%s, messages=%d, tools=%d",
@@ -268,36 +304,14 @@ class VertexProvider:
         url = f"{self._base_url(model)}:predict"
         body = {"instances": [{"content": text}]}
 
-        max_retries = 3
-        for attempt in range(max_retries + 1):
-            try:
-                async with httpx.AsyncClient() as client:
-                    resp = await client.post(
-                        url,
-                        json=body,
-                        headers=await self._headers(),
-                        timeout=timeout,
-                    )
-                if resp.status_code == 429 and attempt < max_retries:
-                    delay = 2**attempt
-                    log.warning(
-                        "Vertex embedding rate limited, retrying in %ds (attempt %d/%d)",
-                        delay,
-                        attempt + 1,
-                        max_retries,
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-                return data["predictions"][0]["embeddings"]["values"]
-            except httpx.HTTPStatusError as e:
-                log.error("Vertex embedding failed: %s", e)
-                return None
-            except Exception as e:
-                log.error("Vertex embedding failed: %s", e)
-                return None
-        return None
+        return await post_embedding(
+            url=url,
+            body=body,
+            headers=self._headers,
+            extract=_extract_vertex_embedding,
+            timeout=timeout,
+            log_label="Vertex embedding",
+        )
 
     async def get_model_info(
         self,
@@ -306,19 +320,18 @@ class VertexProvider:
         timeout: int = 30,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
-        url = self._base_url(model)
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    url,
-                    headers=await self._headers(),
-                    timeout=timeout,
-                )
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception as e:
-            log.debug("Failed to get model info for %s from Vertex: %s", model, e)
+        """Vertex publishes no token limits in any reachable endpoint.
+
+        Returning ``None`` (the Protocol's "unsupported" value) is the
+        contract. The old implementation GET a URL that 404s, which the
+        resolver negatively cached as a failure. ``default_context_window``
+        supplies the family fallback.
+        """
         return None
+
+    def default_context_window(self, model: str) -> int | None:
+        """Family-keyed fallback for a provider that will not report a limit."""
+        return _vertex_default_context_window(model)
 
     async def discover_models(self, *, timeout: int = 30) -> list[DiscoveredModel]:
         """Return the curated static Gemini list (#1211).
@@ -338,6 +351,65 @@ class VertexProvider:
             )
             for model_id, owned_by, confirmed in _VERTEX_STATIC_MODELS
         ]
+
+
+# ---------------------------------------------------------------------------
+# Translation helpers (shared by the streaming and non-streaming paths; the
+# thought-signature helper is also used when building request bodies)
+# ---------------------------------------------------------------------------
+
+
+def _finish_reason(raw: Any) -> str | None:
+    """Map a Gemini ``finishReason`` to the internal finish reason.
+
+    ``MAX_TOKENS`` and ``STOP`` map to their canonical values; any other
+    non-empty value is lower-cased and passed through. An absent or empty
+    reason maps to ``None`` so callers can keep a previously seen value.
+    """
+    if raw == "MAX_TOKENS":
+        return FINISH_REASON_LENGTH
+    elif raw == "STOP":
+        return FINISH_REASON_STOP
+    elif raw:
+        return raw.lower()
+    else:
+        return None
+
+
+def _thought_signature(outer: dict, inner: dict) -> str | None:
+    """Resolve a thought signature from an outer dict and its nested call.
+
+    Gemini has reported the signature in both camel and snake case, on either
+    the outer dict (a content part or a tool call) or the nested call
+    (functionCall / function). Check all four spellings: outer before inner,
+    camel before snake.
+    """
+    return (
+        outer.get("thoughtSignature")
+        or outer.get("thought_signature")
+        or inner.get("thoughtSignature")
+        or inner.get("thought_signature")
+    )
+
+
+def _tool_call_from_fc(fc: dict) -> dict:
+    """Build an internal tool-call dict from a Gemini ``functionCall``.
+
+    Carries the thought signature (if present) onto the tool call so it can
+    be echoed back on the next request.
+    """
+    tc = {
+        "id": f"call_{uuid.uuid4().hex[:12]}",
+        "type": "function",
+        "function": {
+            "name": fc.get("name", ""),
+            "arguments": json.dumps(fc.get("args", {})),
+        },
+    }
+    sig = fc.get("thought_signature") or fc.get("thoughtSignature")
+    if sig:
+        tc["thought_signature"] = sig
+    return tc
 
 
 # ---------------------------------------------------------------------------
@@ -383,13 +455,10 @@ class _VertexStreamState:
             return
         self.candidates_seen += 1
 
-        raw_reason = candidates[0].get("finishReason")
-        if raw_reason == "MAX_TOKENS":
-            self.finish_reason = FINISH_REASON_LENGTH
-        elif raw_reason == "STOP":
-            self.finish_reason = FINISH_REASON_STOP
-        elif raw_reason:
-            self.finish_reason = raw_reason.lower()
+        # A chunk without a finishReason must not clobber an earlier one.
+        mapped = _finish_reason(candidates[0].get("finishReason"))
+        if mapped is not None:
+            self.finish_reason = mapped
 
         parts = candidates[0].get("content", {}).get("parts", [])
 
@@ -404,12 +473,7 @@ class _VertexStreamState:
                 chunk_text += part["text"]
             elif "functionCall" in part:
                 fc = dict(part["functionCall"])
-                sig = (
-                    part.get("thoughtSignature")
-                    or part.get("thought_signature")
-                    or fc.get("thoughtSignature")
-                    or fc.get("thought_signature")
-                )
+                sig = _thought_signature(part, fc)
                 if sig:
                     fc["thought_signature"] = sig
                 chunk_tool_calls.append(fc)
@@ -437,20 +501,7 @@ class _VertexStreamState:
         thinking = "".join(self.all_thinking_parts) or None
         tool_calls = None
         if self.all_tool_calls:
-            tool_calls = []
-            for fc in self.all_tool_calls:
-                tc = {
-                    "id": f"call_{uuid.uuid4().hex[:12]}",
-                    "type": "function",
-                    "function": {
-                        "name": fc.get("name", ""),
-                        "arguments": json.dumps(fc.get("args", {})),
-                    },
-                }
-                sig = fc.get("thought_signature") or fc.get("thoughtSignature")
-                if sig:
-                    tc["thought_signature"] = sig
-                tool_calls.append(tc)
+            tool_calls = [_tool_call_from_fc(fc) for fc in self.all_tool_calls]
 
         finish_reason = self.finish_reason
         if finish_reason is None:
@@ -812,9 +863,30 @@ def _content_to_parts(content) -> list[dict]:
     return parts
 
 
+def _generation_config(
+    *,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
+    stop: list[str] | None = None,
+) -> dict:
+    """Map per-call sampler overrides to Gemini generationConfig fields."""
+    config: dict = {}
+    if temperature is not None:
+        config["temperature"] = temperature
+    if top_p is not None:
+        config["topP"] = top_p
+    if max_tokens is not None:
+        config["maxOutputTokens"] = max_tokens
+    if stop is not None:
+        config["stopSequences"] = list(stop)
+    return config
+
+
 def _build_request_body(
     messages: list[dict],
     tools: list[dict] | None = None,
+    generation_config: dict | None = None,
 ) -> dict:
     """Translate OpenAI-format messages to Gemini request body."""
     contents = []
@@ -853,13 +925,8 @@ def _build_request_body(
                     args = json.loads(func.get("arguments", "{}"))
                 except json.JSONDecodeError:
                     args = {}
-                part = {"functionCall": {"name": name, "args": args}}
-                sig = (
-                    tc.get("thought_signature")
-                    or tc.get("thoughtSignature")
-                    or func.get("thought_signature")
-                    or func.get("thoughtSignature")
-                )
+                part: dict[str, Any] = {"functionCall": {"name": name, "args": args}}
+                sig = _thought_signature(tc, func)
                 if sig:
                     part["thoughtSignature"] = sig
                 parts.append(part)
@@ -900,6 +967,9 @@ def _build_request_body(
 
     body: dict = {"contents": contents}
 
+    if generation_config:
+        body["generationConfig"] = generation_config
+
     if system_parts:
         body["systemInstruction"] = {"parts": system_parts}
 
@@ -922,6 +992,15 @@ def _build_request_body(
     return body
 
 
+def _extract_vertex_embedding(data: dict) -> list[float]:
+    """Pull the vector out of a ``:predict`` response.
+
+    Raises (KeyError/IndexError) when the shape is unexpected; the shared
+    transport treats that as a failure and returns ``None``.
+    """
+    return data["predictions"][0]["embeddings"]["values"]
+
+
 def _parse_response(data: dict) -> dict:
     """Translate Gemini response to internal format."""
     candidates = data.get("candidates", [])
@@ -934,15 +1013,7 @@ def _parse_response(data: dict) -> dict:
             "finish_reason": FINISH_REASON_ERROR,
         }
 
-    raw_reason = candidates[0].get("finishReason")
-    if raw_reason == "MAX_TOKENS":
-        finish_reason = FINISH_REASON_LENGTH
-    elif raw_reason == "STOP":
-        finish_reason = FINISH_REASON_STOP
-    elif raw_reason:
-        finish_reason = raw_reason.lower()
-    else:
-        finish_reason = None
+    finish_reason = _finish_reason(candidates[0].get("finishReason"))
 
     parts = candidates[0].get("content", {}).get("parts", [])
 
@@ -956,24 +1027,11 @@ def _parse_response(data: dict) -> dict:
         elif "text" in part:
             text_parts.append(part["text"])
         elif "functionCall" in part:
-            fc = part["functionCall"]
-            sig = (
-                part.get("thoughtSignature")
-                or part.get("thought_signature")
-                or fc.get("thoughtSignature")
-                or fc.get("thought_signature")
-            )
-            tc = {
-                "id": f"call_{uuid.uuid4().hex[:12]}",
-                "type": "function",
-                "function": {
-                    "name": fc.get("name", ""),
-                    "arguments": json.dumps(fc.get("args", {})),
-                },
-            }
+            fc = dict(part["functionCall"])
+            sig = _thought_signature(part, fc)
             if sig:
-                tc["thought_signature"] = sig
-            tool_calls.append(tc)
+                fc["thought_signature"] = sig
+            tool_calls.append(_tool_call_from_fc(fc))
 
     return {
         "content": "".join(text_parts) or None,

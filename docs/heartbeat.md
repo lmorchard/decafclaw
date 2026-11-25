@@ -75,7 +75,7 @@ Each `##` section gets its own agent turn with fresh history. This means:
 
 ## HEARTBEAT_OK
 
-If a section has nothing to report, the agent should respond with `HEARTBEAT_OK`. The marker must **start** the response — leading whitespace is fine, matching is case-insensitive, and only the first 300 characters are scanned. Since [#450](https://github.com/lmorchard/decafclaw/issues/450) every response sentinel shares one start-anchored matcher, `heartbeat.response_starts_with_sentinel`, so a response that merely *mentions* `HEARTBEAT_OK` mid-text is not a quiet section. When `HEARTBEAT_SUPPRESS_OK` is `true` (default):
+If a section has nothing to report, the agent should respond with `HEARTBEAT_OK`. The marker must **start** the response — leading whitespace is fine, matching is case-insensitive, and only the first 300 characters are scanned. Since [#450](https://github.com/lmorchard/decafclaw/issues/450) every response sentinel shares one start-anchored matcher, `sentinels.response_starts_with_sentinel`, so a response that merely *mentions* `HEARTBEAT_OK` mid-text is not a quiet section. When `HEARTBEAT_SUPPRESS_OK` is `true` (default):
 
 - OK sections show as `✅ Title — OK` in the thread (compact)
 - Non-OK sections show the full response

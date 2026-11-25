@@ -280,6 +280,167 @@ class TestStructuredOutput:
 
 
 @pytest.mark.scripted_provider
+class TestMessages:
+    @pytest.mark.asyncio
+    async def test_history_preserved_without_prompt(self, ctx, provider):
+        """A messages history is sent as-is; prompt is optional."""
+        provider.extend(ScriptedResponse.text("reply"))
+        history = [
+            {"role": "user", "content": "Who are you?"},
+            {"role": "assistant", "content": "Korrine."},
+            {"role": "user", "content": "Continue."},
+        ]
+
+        result = await tool_llm_query(ctx, messages=history, model=MODEL_NAME)
+
+        assert result.text == "reply"
+        assert provider.requests[0].messages == history
+
+    @pytest.mark.asyncio
+    async def test_prompt_appends_final_user_turn(self, ctx, provider):
+        """prompt with messages is appended after the supplied history."""
+        provider.extend(ScriptedResponse.text("ok"))
+        history = [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}]
+
+        await tool_llm_query(ctx, messages=history, prompt="Next line", model=MODEL_NAME)
+
+        assert provider.requests[0].messages == [*history, {"role": "user", "content": "Next line"}]
+
+    @pytest.mark.asyncio
+    async def test_system_merges_into_leading_system_message(self, ctx, provider):
+        """system text joins an existing leading system message, system first."""
+        provider.extend(ScriptedResponse.text("ok"))
+        history = [{"role": "system", "content": "Speak as Korrine."}, {"role": "user", "content": "Hi"}]
+
+        await tool_llm_query(ctx, messages=history, system="Keep replies short.", model=MODEL_NAME)
+
+        messages = provider.requests[0].messages
+        assert [m["role"] for m in messages] == ["system", "user"]
+        assert messages[0]["content"] == "Keep replies short.\n\nSpeak as Korrine."
+        assert messages[1]["content"] == "Hi"
+
+    @pytest.mark.asyncio
+    async def test_system_prepended_when_history_has_no_system(self, ctx, provider):
+        provider.extend(ScriptedResponse.text("ok"))
+        history = [{"role": "user", "content": "Hi"}]
+
+        await tool_llm_query(ctx, messages=history, system="Be terse.", model=MODEL_NAME)
+
+        assert provider.requests[0].messages == [
+            {"role": "system", "content": "Be terse."},
+            {"role": "user", "content": "Hi"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_schema_instruction_appends_to_history_system(self, ctx, provider):
+        """The structured-output addendum joins the history's system message
+        instead of replacing it or inserting a second system turn."""
+        provider.extend(ScriptedResponse.text('```json\n{"title": "T"}\n```'))
+        history = [{"role": "system", "content": "Be terse."}, {"role": "user", "content": "Title?"}]
+
+        result = await tool_llm_query(ctx, messages=history, model=MODEL_NAME, return_schema={"title": "string"})
+
+        assert result.data == {"title": "T"}
+        messages = provider.requests[0].messages
+        assert [m["role"] for m in messages] == ["system", "user"]
+        assert messages[0]["content"].startswith("Be terse.")
+        assert '"title"' in messages[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_messages_with_prompt_list_rejected(self, ctx, provider):
+        result = await tool_llm_query(ctx, prompt=["a", "b"], messages=[{"role": "user", "content": "x"}])
+
+        assert "messages cannot be combined with a prompt list" in result.text
+        assert provider.requests == []
+
+    @pytest.mark.asyncio
+    async def test_prompt_and_messages_both_absent_rejected(self, ctx, provider):
+        result = await tool_llm_query(ctx)
+
+        assert "prompt or messages is required" in result.text
+        assert provider.requests == []
+
+    @pytest.mark.parametrize(
+        ("history", "needle"),
+        [
+            ([], "non-empty list"),
+            (["nope"], "messages[0] must be an object"),
+            ([{"role": "tool", "content": "x"}], "messages[0].role"),
+            ([{"role": "user", "content": "x", "name": "y"}], "unsupported keys: name"),
+            ([{"role": "user", "content": ""}], "messages[0].content"),
+            ([{"role": "user", "content": "ok"}, {"role": "assistant", "content": 42}], "messages[1].content"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_invalid_history_rejected(self, ctx, provider, history, needle):
+        result = await tool_llm_query(ctx, messages=history, model=MODEL_NAME)
+
+        assert needle in result.text
+        assert provider.requests == []
+
+
+@pytest.mark.scripted_provider
+class TestSamplerOverrides:
+    @pytest.mark.asyncio
+    async def test_overrides_reach_provider(self, ctx, provider):
+        provider.extend(ScriptedResponse.text("ok"))
+        stop = ["\nUser:", "\nKorrine:"]
+
+        await tool_llm_query(
+            ctx,
+            prompt="p",
+            model=MODEL_NAME,
+            temperature=0.85,
+            top_p=0.9,
+            max_tokens=256,
+            stop=stop,
+        )
+
+        assert provider.requests[0].options == {
+            "temperature": 0.85,
+            "top_p": 0.9,
+            "max_tokens": 256,
+            "stop": stop,
+        }
+
+    @pytest.mark.asyncio
+    async def test_absent_overrides_send_nothing(self, ctx, provider):
+        provider.extend(ScriptedResponse.text("ok"))
+
+        await tool_llm_query(ctx, prompt="p", model=MODEL_NAME)
+
+        assert provider.requests[0].options == {}
+
+    @pytest.mark.asyncio
+    async def test_overrides_apply_to_every_batch_item(self, ctx, provider):
+        provider.extend([ScriptedResponse.text("one"), ScriptedResponse.text("two")])
+
+        await tool_llm_query(ctx, prompt=["a", "b"], model=MODEL_NAME, temperature=0.2)
+
+        assert [req.options for req in provider.requests] == [{"temperature": 0.2}, {"temperature": 0.2}]
+
+    @pytest.mark.parametrize(
+        ("kwargs", "needle"),
+        [
+            ({"temperature": 2.5}, "temperature"),
+            ({"temperature": True}, "temperature"),
+            ({"top_p": 0}, "top_p"),
+            ({"top_p": 1.5}, "top_p"),
+            ({"max_tokens": 0}, "max_tokens"),
+            ({"max_tokens": 1.5}, "max_tokens"),
+            ({"stop": "END"}, "stop"),
+            ({"stop": [""]}, "stop"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_invalid_override_rejected(self, ctx, provider, kwargs, needle):
+        result = await tool_llm_query(ctx, prompt="p", model=MODEL_NAME, **kwargs)
+
+        assert needle in result.text
+        assert provider.requests == []
+
+
+@pytest.mark.scripted_provider
 class TestValidation:
     @pytest.mark.asyncio
     async def test_nonpositive_timeout_rejected(self, ctx, provider):

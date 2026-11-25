@@ -9,6 +9,7 @@ import pytest
 
 from decafclaw.config import load_sub_config
 from decafclaw.context import TaskMode
+from decafclaw.context_composer import render_activated_skills
 from decafclaw.media import ToolResult
 from decafclaw.schedules import _render_required_skill_bodies
 from decafclaw.skills import (
@@ -1103,7 +1104,7 @@ async def test_activate_with_always_permission(ctx, tmp_path):
     _save_permission(ctx.config, skill.name, {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name=skill.name)
-    assert "Instructions here." in _text(result)
+    assert f"Activated skill '{skill.name}'." in _text(result)
     assert skill.name in ctx.skills.activated
 
 
@@ -1117,7 +1118,7 @@ async def test_activate_with_auto_approve_skips_confirmation(ctx, tmp_path):
     # If confirmation were requested, this would hang (no handler wired
     # on this test ctx). Successful activation proves it was skipped.
     result = await tool_activate_skill(ctx, name=skill.name)
-    assert "Instructions here." in _text(result)
+    assert f"Activated skill '{skill.name}'." in _text(result)
     assert skill.name in ctx.skills.activated
 
 
@@ -1143,7 +1144,7 @@ async def test_activate_trusted_admin_tier_bypasses_confirmation(ctx, tmp_path):
     # No permission record, no auto_approve flag — only the trust tier
     # should allow activation to proceed.
     result = await tool_activate_skill(ctx, name=skill.name)
-    assert "Instructions here." in _text(result)
+    assert f"Activated skill '{skill.name}'." in _text(result)
     assert skill.name in ctx.skills.activated
 
 
@@ -1153,7 +1154,7 @@ async def test_activate_trusted_extra_tier_bypasses_confirmation(ctx, tmp_path):
     skill = _make_skill_info(tmp_path, trust_tier="extra")
     ctx.config.discovered_skills = [skill]
     result = await tool_activate_skill(ctx, name=skill.name)
-    assert "Instructions here." in _text(result)
+    assert f"Activated skill '{skill.name}'." in _text(result)
     assert skill.name in ctx.skills.activated
 
 
@@ -1206,7 +1207,7 @@ async def test_workspace_skill_still_requires_confirmation(
 
 @pytest.mark.asyncio
 async def test_activate_substitutes_skill_dir_in_body(ctx, tmp_path):
-    """`activate_skill` substitutes `$SKILL_DIR` in the body with the
+    """The composer's activated-skills block substitutes `$SKILL_DIR` with the
     skill's actual location.
 
     Without this, a skill body containing `$SKILL_DIR/fetch.sh` is
@@ -1226,11 +1227,15 @@ async def test_activate_substitutes_skill_dir_in_body(ctx, tmp_path):
     _save_permission(ctx.config, skill.name, {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name=skill.name)
-    text = _text(result)
-    assert "$SKILL_DIR" not in text
+    assert f"Activated skill '{skill.name}'." in _text(result)
+
+    rendered = render_activated_skills(ctx)
+    assert rendered is not None
+    block = rendered[0]["content"]
+    assert "$SKILL_DIR" not in block
     # The substitution uses .resolve() to match the command/schedule paths
     # so the body always carries an absolute path regardless of data_home.
-    assert f"Run: {skill.location.resolve()}/fetch.sh" in text
+    assert f"Run: {skill.location.resolve()}/fetch.sh" in block
 
 
 # -- substitute_skill_placeholders ---------------------------------------------
@@ -1277,9 +1282,10 @@ class TestSubstituteSkillPlaceholders:
 
 @pytest.mark.asyncio
 async def test_all_three_entry_points_expand_identically(ctx, config, tmp_path):
-    """The command path, skill activation, and the schedule's required-skill
-    renderer must expand `$SKILL_DIR`/`$ARGUMENTS`/positional placeholders
-    identically — they all route through `substitute_skill_placeholders`.
+    """The command path, the composer's activated-skills block, and the
+    schedule's required-skill renderer must expand
+    `$SKILL_DIR`/`$ARGUMENTS`/positional placeholders identically — they all
+    route through `substitute_skill_placeholders`.
 
     Regression guard: before centralization, activation and the schedule
     renderer only substituted `$SKILL_DIR` (leaving `$ARGUMENTS` literal)
@@ -1297,12 +1303,16 @@ async def test_all_three_entry_points_expand_identically(ctx, config, tmp_path):
     # Entry point 1: the helper itself (the command path calls this).
     assert substitute_skill_placeholders(body, arguments="", skill_dir=dir_str) == expected
 
-    # Entry point 2: skill activation.
+    # Entry point 2: the composer's activated-skills block.
     skill = SkillInfo(name="demo", description="Demo", location=skill_dir, body=body, trust_tier="bundled")
     ctx.config.discovered_skills = [skill]
     activated = await activate_skill_internal(ctx, skill)
-    assert isinstance(activated, str), f"expected body text, got {type(activated).__name__}"
-    assert activated == expected
+    assert isinstance(activated, str)
+    rendered_block = render_activated_skills(ctx)
+    assert rendered_block is not None
+    block = rendered_block[0]["content"]
+    inner = block.split('<skill name="demo">\n', 1)[1].rsplit("\n</skill>", 1)[0]
+    assert inner == expected
 
     # Entry point 3: the schedule's required-skill renderer.
     config.discovered_skills = [skill]
@@ -1353,7 +1363,8 @@ async def test_activate_native_skill(ctx, tmp_path):
     _save_permission(ctx.config, "native-skill", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name="native-skill")
-    assert "Native instructions." in _text(result)
+    assert "Activated skill 'native-skill'." in _text(result)
+    assert "Native instructions." not in _text(result)
     assert "native_test" in _text(result)
     assert "native_test" in ctx.tools.extra
     assert len(ctx.tools.extra_definitions) == 1
@@ -1383,7 +1394,8 @@ async def test_activate_shadowed_skill_with_inherited_tools(ctx, tmp_path):
     _save_permission(ctx.config, "inherited-skill", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name="inherited-skill")
-    assert "Overridden instructions." in _text(result)
+    assert "Activated skill 'inherited-skill'." in _text(result)
+    assert "Overridden instructions." not in _text(result)
     assert "inherited_test" in _text(result)
     assert "inherited_test" in ctx.tools.extra
     assert len(ctx.tools.extra_definitions) == 1

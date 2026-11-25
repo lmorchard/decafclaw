@@ -16,8 +16,8 @@ from decafclaw.compaction import (
     _extract_previous_summary,
     _run_memory_sweep,
     _split_into_turns,
-    _turn_has_protected_tool,
     compact_history,
+    estimate_history_tokens,
     estimate_tokens,
     flatten_messages,
 )
@@ -117,6 +117,18 @@ class TestFlattenMessages:
         assert "..." in result
         assert len(result) < 1000
 
+    def test_wake_sentinel_never_reaches_the_summary(self):
+        messages = [
+            {"role": "wake_trigger", "content": "reply with BACKGROUND_WAKE_OK to remain silent"},
+            {"role": "assistant", "content": "BACKGROUND_WAKE_OK — log rotation completed."},
+            {"role": "assistant", "content": "", "suppress_user_message": True},
+        ]
+        result = flatten_messages(messages)
+        assert "BACKGROUND_WAKE_OK" not in result
+        assert "wake_trigger" not in result
+        assert "log rotation completed." in result
+        assert "Assistant: [silent wake]" in result
+
     def test_truncates_long_vault_retrieval_and_references(self):
         messages = [
             {"role": "vault_retrieval", "content": "v" * 1000},
@@ -132,6 +144,30 @@ class TestEstimateTokens:
         assert estimate_tokens("1234") == 1
         assert estimate_tokens("12345678") == 2
         assert estimate_tokens("") == 0
+
+
+class TestEstimateHistoryTokens:
+    def test_does_not_truncate_tool_results(self):
+        """The meter must see preserved tool output, not the summarizer's
+        500-char preview (#1823)."""
+        messages = [{"role": "tool", "tool_call_id": "tc1", "content": "x" * 40_000}]
+        assert estimate_history_tokens(messages) >= 10_000
+        assert estimate_history_tokens(messages) > estimate_tokens(flatten_messages(messages)) * 10
+
+    def test_counts_tool_call_arguments(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "tc1", "function": {"name": "shell", "arguments": '{"command": "' + "y" * 4000 + '"}'}}
+                ],
+            }
+        ]
+        assert estimate_history_tokens(messages) >= 1000
+
+    def test_skips_metadata_roles(self):
+        assert estimate_history_tokens([{"role": "model", "content": "gemini-4-argon"}]) == 0
 
 
 class TestCompactHistory:
@@ -247,8 +283,9 @@ class TestCompactHistory:
         assert len(end) == 1
         assert end[0]["success"] is True
         # The estimate is computed over the rebuilt history (the actual
-        # prompt size the next turn would send), not the old last_prompt.
-        expected = estimate_tokens(flatten_messages(history))
+        # prompt size the next turn would send), not the old last_prompt and
+        # not the summarizer's truncated view (#1823).
+        expected = estimate_history_tokens(history)
         assert end[0]["estimated_tokens_after"] == expected
         # Authoritative meter figure threaded through to message_complete.
         assert ctx.tokens.last_compaction_estimate == expected
@@ -561,59 +598,16 @@ class TestCompactHistory:
         assert result is False
 
 
-class TestTurnHasProtectedTool:
-    def test_detects_activate_skill(self):
-        turn = [
-            {"role": "user", "content": "activate tabstack"},
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {"id": "tc1", "function": {"name": "activate_skill", "arguments": '{"name": "tabstack"}'}}
-                ],
-            },
-            {"role": "tool", "tool_call_id": "tc1", "content": "skill body here"},
-        ]
-        assert _turn_has_protected_tool(turn) is True
-
-    def test_ignores_regular_tools(self):
-        turn = [
-            {"role": "user", "content": "run ls"},
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{"id": "tc1", "function": {"name": "shell", "arguments": '{"command": "ls"}'}}],
-            },
-            {"role": "tool", "tool_call_id": "tc1", "content": "file1.txt"},
-        ]
-        assert _turn_has_protected_tool(turn) is False
-
-    def test_handles_none_tool_calls(self):
-        """tool_calls: None is a valid LLM response shape — should not crash."""
-        turn = [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi", "tool_calls": None},
-        ]
-        assert _turn_has_protected_tool(turn) is False
-
-    def test_handles_no_tool_calls(self):
-        turn = [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi"},
-        ]
-        assert _turn_has_protected_tool(turn) is False
-
-
-class TestSkillProtectionDuringCompaction:
+class TestSkillActivationTurnsCompact:
     @pytest.fixture
-    def archive_with_skill(self, config):
-        """Create an archive with a skill activation in turn 1 (of 8)."""
+    def archive_with_mixed_turn(self, config):
+        """Turn 1 activates a skill and then produces heavy unrelated output."""
         conv_id = "test-conv"
         # Turn 0: regular
         append_message(config, conv_id, {"role": "user", "content": "hello"})
         append_message(config, conv_id, {"role": "assistant", "content": "hi"})
-        # Turn 1: skill activation
-        append_message(config, conv_id, {"role": "user", "content": "activate tabstack"})
+        # Turn 1: activate_skill followed by a large shell result
+        append_message(config, conv_id, {"role": "user", "content": "activate tabstack and run the suite"})
         append_message(
             config,
             conv_id,
@@ -631,7 +625,7 @@ class TestSkillProtectionDuringCompaction:
             {
                 "role": "tool",
                 "tool_call_id": "tc1",
-                "content": "# Tabstack Skill\nFull skill body with instructions...",
+                "content": "Activated skill 'tabstack'.",
             },
         )
         append_message(
@@ -639,9 +633,20 @@ class TestSkillProtectionDuringCompaction:
             conv_id,
             {
                 "role": "assistant",
-                "content": "Tabstack is now active.",
+                "content": None,
+                "tool_calls": [{"id": "tc2", "function": {"name": "shell", "arguments": '{"command": "make test"}'}}],
             },
         )
+        append_message(
+            config,
+            conv_id,
+            {
+                "role": "tool",
+                "tool_call_id": "tc2",
+                "content": "UNRELATED TOOL OUTPUT " * 2000,
+            },
+        )
+        append_message(config, conv_id, {"role": "assistant", "content": "Tests passed."})
         # Turns 2-7: regular
         for i in range(2, 8):
             append_message(config, conv_id, {"role": "user", "content": f"message {i}"})
@@ -649,8 +654,9 @@ class TestSkillProtectionDuringCompaction:
         return conv_id
 
     @pytest.mark.asyncio
-    async def test_skill_turn_preserved(self, ctx, archive_with_skill):
-        """Skill activation turn should survive compaction."""
+    async def test_activate_skill_turn_is_summarized(self, ctx, archive_with_mixed_turn):
+        """A turn that called activate_skill no longer protects its unrelated
+        tool output from compaction (#1823-A)."""
         ctx.config.compaction.preserve_turns = 5
         history = [{"role": "user", "content": "placeholder"}]
 
@@ -665,15 +671,40 @@ class TestSkillProtectionDuringCompaction:
             result = await compact_history(ctx, history)
 
         assert result is True
-        # History should be: summary + protected skill turn + 5 recent turns
         assert history[0]["content"].startswith(SUMMARY_PREFIX)
-        # Find the skill content in the protected messages
-        skill_content = [m for m in history if (m.get("content") or "").startswith("# Tabstack Skill")]
-        assert len(skill_content) == 1, "Skill body should be preserved verbatim"
+        # Only the summary plus the five recent turns (10 messages) survive.
+        assert len(history) == 11
+        # Neither the activation ack nor the unrelated shell output survives.
+        assert not any("UNRELATED TOOL OUTPUT" in (m.get("content") or "") for m in history)
+        assert not any("Activated skill" in (m.get("content") or "") for m in history)
 
     @pytest.mark.asyncio
-    async def test_all_old_turns_protected_skips(self, ctx, config):
-        """If every old turn is a skill activation, compaction should skip."""
+    async def test_mixed_turn_shrinks_the_transcript(self, ctx, archive_with_mixed_turn):
+        """The old protected-turn path left the heavy output in place, so the
+        next turn breached the threshold again (#1823)."""
+        from decafclaw.archive import read_archive
+
+        ctx.config.compaction.preserve_turns = 5
+        history = [{"role": "user", "content": "placeholder"}]
+        before = estimate_history_tokens(read_archive(ctx.config, "test-conv"))
+
+        mock_response = {
+            "content": "Summary of earlier conversation.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        assert estimate_history_tokens(history) < before // 2
+
+    @pytest.mark.asyncio
+    async def test_skill_only_old_turns_still_compact(self, ctx, config):
+        """The removed "all old turns are protected" early return made this a
+        no-op. A skill-activation turn is now ordinary summarizable history."""
         conv_id = "test-conv"
         # Turn 0: skill activation
         append_message(config, conv_id, {"role": "user", "content": "activate tabstack"})
@@ -694,7 +725,7 @@ class TestSkillProtectionDuringCompaction:
             {
                 "role": "tool",
                 "tool_call_id": "tc1",
-                "content": "skill body",
+                "content": "Activated skill 'tabstack'.",
             },
         )
         append_message(config, conv_id, {"role": "assistant", "content": "activated"})
@@ -706,8 +737,17 @@ class TestSkillProtectionDuringCompaction:
         ctx.config.compaction.preserve_turns = 5
         history = [{"role": "user", "content": "placeholder"}]
 
-        result = await compact_history(ctx, history)
-        assert result is False
+        mock_response = {
+            "content": "Summary of the activation turn.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        assert history[0]["content"].startswith(SUMMARY_PREFIX)
 
 
 class TestMemorySweep:

@@ -819,6 +819,13 @@ def load_config() -> Config:
             "show_in_ui": "VAULT_RETRIEVAL_SHOW_IN_UI",
             "mode": "VAULT_RETRIEVAL_MODE",
             "headline_summary_max_chars": "VAULT_RETRIEVAL_HEADLINE_SUMMARY_MAX_CHARS",
+            "tapered_top_n_detailed": "VAULT_RETRIEVAL_TAPERED_TOP_N_DETAILED",
+            "tapered_summary_max_chars": "VAULT_RETRIEVAL_TAPERED_SUMMARY_MAX_CHARS",
+            "hybrid_enabled": "VAULT_RETRIEVAL_HYBRID_ENABLED",
+            "rrf_k": "VAULT_RETRIEVAL_RRF_K",
+            "fts_weight": "VAULT_RETRIEVAL_FTS_WEIGHT",
+            "vector_weight": "VAULT_RETRIEVAL_VECTOR_WEIGHT",
+            "hybrid_candidates": "VAULT_RETRIEVAL_HYBRID_CANDIDATES",
         },
     )
 

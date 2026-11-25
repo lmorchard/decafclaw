@@ -71,6 +71,17 @@ def test_tool_result_falls_back_when_name_missing():
     assert "### Tool result: (unknown)" in out
 
 
+def test_silent_wake_renders_a_status_row_without_the_sentinel():
+    msgs = [
+        {"role": "wake_trigger", "content": "reply with BACKGROUND_WAKE_OK to remain silent"},
+        {"role": "assistant", "content": "BACKGROUND_WAKE_OK — log rotation completed."},
+    ]
+    out = render_markdown(msgs, "c1")
+    assert "BACKGROUND_WAKE_OK" not in out
+    assert "◇ wake · silent" in out
+    assert "log rotation completed." in out
+
+
 def test_skipped_roles_do_not_appear():
     msgs = [
         {"role": "system", "content": "system prompt"},

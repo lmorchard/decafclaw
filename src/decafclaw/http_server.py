@@ -42,7 +42,10 @@ from .skills.vault._events import (
 from .tags import collect_all_tags
 from .web.bookmarks import KINDS_BY_TARGET, BookmarkStore, validate_bookmark_path
 from .web.http_auth import _authenticated, _get_username_or_401
+from .web.notification_routes import notification_router
 from .web.schedule_routes import schedule_router
+from .web.terminal_routes import terminal_router
+from .web.widget_routes import widget_router
 from .web.workspace_paths import (
     PathContainmentError,
     resolve_contained,
@@ -50,13 +53,6 @@ from .web.workspace_paths import (
 from .web.workspace_routes import workspace_router
 
 log = logging.getLogger(__name__)
-
-_SAFE_CONV_ID_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
-
-
-def _is_safe_conv_id(conv_id: str) -> bool:
-    return bool(conv_id and _SAFE_CONV_ID_RE.match(conv_id))
-
 
 _CONFIG_FILES = [
     {"name": "SOUL.md", "path": "SOUL.md", "description": "Core identity prompt", "scope": "admin"},
@@ -1763,96 +1759,8 @@ async def rename_conv_folder(request: Request, path: str) -> JSONResponse:
 
 
 # -- Notification routes ------------------------------------------------------
-# Phase 1: single-user. Inbox + read-state live in the agent workspace,
-# not partitioned by authenticated user. All authenticated callers see
-# the same records. Multi-user partitioning is tracked in docs/notifications.md
-# "Coming in Phase 2+". Do not expose across tenants until partitioning lands.
-
-
-class NotificationResponse(BaseModel):
-    id: str
-    timestamp: str
-    category: str
-    title: str
-    priority: str
-    body: str
-    link: str | None
-    conv_id: str | None
-    read: bool
-
-
-class NotificationListResponse(BaseModel):
-    records: list[NotificationResponse]
-    has_more: bool
-
-
-class NotificationCountResponse(BaseModel):
-    count: int
-
-
-class NotificationReadResponse(BaseModel):
-    ok: bool
-
-
-async def list_notifications(request: Request) -> JSONResponse:
-    """Return inbox records newest first, with a joined ``read`` bool."""
-    if not _get_username_or_401(request):
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    from . import notifications as notifs
-
-    config = request.app.state.config
-    try:
-        limit = int(request.query_params.get("limit", "20"))
-    except (TypeError, ValueError):
-        return JSONResponse({"error": "limit must be an integer"}, status_code=400)
-    if limit <= 0 or limit > 200:
-        return JSONResponse({"error": "limit must be in [1, 200]"}, status_code=400)
-    before = request.query_params.get("before") or None
-    records, has_more = notifs.read_inbox(config, limit=limit, before=before)
-    read_ids = notifs.get_read_ids(config)
-    return JSONResponse(
-        {
-            "records": [{**r.to_dict(), "read": r.id in read_ids} for r in records],
-            "has_more": has_more,
-        }
-    )
-
-
-async def notifications_unread_count(request: Request) -> JSONResponse:
-    """Return ``{"count": N}`` — called frequently, stays cheap."""
-    if not _get_username_or_401(request):
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    from . import notifications as notifs
-
-    return JSONResponse({"count": notifs.unread_count(request.app.state.config)})
-
-
-async def notifications_mark_read(request: Request, id: str) -> JSONResponse:
-    """Mark a single notification read. Idempotent."""
-    if not _get_username_or_401(request):
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    from . import notifications as notifs
-
-    config = request.app.state.config
-    event_bus = request.app.state.event_bus
-    record_id = id
-    if not record_id:
-        return JSONResponse({"error": "id required"}, status_code=400)
-    await notifs.mark_read(config, record_id, event_bus=event_bus)
-    return JSONResponse({"ok": True})
-
-
-async def notifications_mark_all_read(request: Request) -> JSONResponse:
-    """Mark all currently-visible notifications read."""
-    if not _get_username_or_401(request):
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    from . import notifications as notifs
-
-    await notifs.mark_all_read(
-        request.app.state.config,
-        event_bus=request.app.state.event_bus,
-    )
-    return JSONResponse({"ok": True})
+# The notifications resource's models, handlers, and router live in
+# web/notification_routes.py; create_app aggregates its routes.
 
 
 # -- Workspace routes ---------------------------------------------------------
@@ -2781,349 +2689,8 @@ async def ws_chat(websocket):
     )
 
 
-async def ws_terminal(websocket):
-    """WebSocket entry point — defers to the gateway in `web/websocket.py`."""
-    from .web.websocket import websocket_terminal
-
-    state = websocket.app.state
-    await websocket_terminal(websocket, state.config, state.terminal_registry)
-
-
-# -- Widget routes ------------------------------------------------------------
-
-
-class WidgetDescriptorResponse(BaseModel):
-    name: str
-    tier: str
-    description: str
-    modes: list[str]
-    accepts_input: bool
-    data_schema: dict[str, JsonValue]
-    js_url: str
-
-
-class WidgetCatalogResponse(BaseModel):
-    widgets: list[WidgetDescriptorResponse]
-
-
-async def list_widgets(request: Request) -> JSONResponse:
-    """Return the widget catalog with cache-busted js URLs."""
-    if not _get_username_or_401(request):
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    from .widgets import get_widget_registry
-
-    registry = get_widget_registry()
-    if registry is None:
-        return JSONResponse({"widgets": []})
-    out = []
-    for d in registry.list():
-        out.append(
-            {
-                "name": d.name,
-                "tier": d.tier,
-                "description": d.description,
-                "modes": d.modes,
-                "accepts_input": d.accepts_input,
-                "data_schema": d.data_schema,
-                "js_url": (f"/widgets/{d.tier}/{d.name}/widget.js?v={int(d.mtime * 1000)}"),
-            }
-        )
-    return JSONResponse({"widgets": out})
-
-
-@_authenticated
-async def serve_widget_js(request: Request, username: str):
-    """Serve widget.js for a registered widget.
-
-    Tier in the URL must match the widget's actual tier so bundled and
-    admin widgets of the same name don't leak across paths. The resolved
-    js path is also confirmed to live under the expected tier root so a
-    symlinked widget.js can't expose arbitrary files.
-    """
-    from .widgets import get_widget_registry
-
-    tier = request.path_params.get("tier", "")
-    name = request.path_params.get("name", "")
-    if tier not in ("bundled", "admin"):
-        return JSONResponse({"error": "unknown tier"}, status_code=404)
-    registry = get_widget_registry()
-    if registry is None:
-        return JSONResponse({"error": "registry unavailable"}, status_code=404)
-    desc = registry.get(name)
-    if desc is None or desc.tier != tier:
-        return JSONResponse({"error": "widget not found"}, status_code=404)
-    try:
-        resolved = desc.js_path.resolve(strict=True)
-    except (OSError, RuntimeError):
-        return JSONResponse({"error": "widget not found"}, status_code=404)
-    try:
-        resolved.relative_to(desc.tier_root)
-    except ValueError:
-        log.warning("widget %r resolves to %s outside tier root %s — refusing", name, resolved, desc.tier_root)
-        return JSONResponse({"error": "widget not found"}, status_code=404)
-    return FileResponse(
-        str(resolved), media_type="application/javascript", headers={"X-Content-Type-Options": "nosniff"}
-    )
-
-
-# -- Canvas routes ------------------------------------------------------------
-
-
-class CanvasTabResponse(BaseModel):
-    id: str
-    label: str
-    widget_type: str
-    data: dict[str, JsonValue]
-    # Durable content handle for artifact-backed tabs (#1253).
-    artifact_id: str | None = None
-
-
-class CanvasStateResponse(BaseModel):
-    schema_version: int
-    active_tab: str | None
-    next_tab_id: int
-    tabs: list[CanvasTabResponse]
-
-
-# Schema-only inputs: handlers retain legacy JSON parsing and status codes.
-class CanvasNewTabRequest(BaseModel):
-    widget_type: str
-    data: dict[str, object]
-    label: str | None = None
-    background: bool = False
-
-
-class CanvasTabRequest(BaseModel):
-    tab_id: str
-
-
-class CanvasNewTabResponse(BaseModel):
-    ok: Literal[True]
-    tab_id: str
-
-
-class CanvasMutationResponse(BaseModel):
-    ok: Literal[True]
-
-
-def _user_owns_conv(config, conv_id: str, username: str) -> bool:
-    """Authorization gate for canvas routes — caller must own the conv."""
-    from .web.conversations import ConversationIndex
-
-    index = ConversationIndex(config)
-    conv = index.get(conv_id)
-    return bool(conv and conv.user_id == username)
-
-
-async def get_canvas_state(request: Request, conv_id: str) -> JSONResponse:
-    """Load current canvas state for a conversation."""
-    from . import canvas as canvas_mod
-
-    config = request.app.state.config
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    state = canvas_mod.read_canvas_state(config, conv_id)
-    return JSONResponse(state)
-
-
-class StickyResponse(BaseModel):
-    widget_type: str | None
-    data: dict[str, object] | None
-
-
-async def get_sticky_state(request: Request, conv_id: str) -> StickyResponse | JSONResponse:
-    """Load current sticky-slot state for a conversation (reload recovery)."""
-    from . import sticky as sticky_mod
-
-    config = request.app.state.config
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    state = sticky_mod.read_sticky_state(config, conv_id)
-    return StickyResponse(
-        widget_type=state.get("widget_type"),
-        data=state.get("data"),
-    )
-
-
-class StickySetRequest(BaseModel):
-    widget_type: str
-    data: dict[str, object]
-
-
-async def post_sticky_state(request: Request, conv_id: str) -> JSONResponse:
-    """Pin a widget into the conversation's sticky slot. Backs external
-    progress updates (e.g. long-running scripts posting live status)."""
-    from . import sticky as sticky_mod
-
-    config = request.app.state.config
-    manager = request.app.state.manager
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    try:
-        body = await request.json()
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
-    widget_type = body.get("widget_type")
-    data = body.get("data")
-    if not isinstance(widget_type, str) or not widget_type:
-        return JSONResponse({"error": "widget_type must be a non-empty string"}, status_code=400)
-    if not isinstance(data, dict):
-        return JSONResponse({"error": "data must be a JSON object"}, status_code=400)
-    emit = manager.emit if manager else None
-    result = await sticky_mod.set_sticky(config, conv_id, widget_type, data, emit=emit)
-    if not result.ok:
-        return JSONResponse({"error": result.error}, status_code=400)
-    return JSONResponse({"ok": True})
-
-
-async def delete_sticky_state(request: Request, conv_id: str) -> JSONResponse:
-    """Clear the conversation's sticky slot."""
-    from . import sticky as sticky_mod
-
-    config = request.app.state.config
-    manager = request.app.state.manager
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    emit = manager.emit if manager else None
-    result = await sticky_mod.clear_sticky(config, conv_id, emit=emit)
-    if not result.ok:
-        return JSONResponse({"error": result.error}, status_code=500)
-    return JSONResponse({"ok": True})
-
-
-async def post_canvas_new_tab(request: Request, conv_id: str) -> JSONResponse:
-    """Create a new canvas tab. Backs the inline 'Open in Canvas' button."""
-    from . import canvas as canvas_mod
-
-    config = request.app.state.config
-    manager = request.app.state.manager
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    try:
-        body = await request.json()
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
-    widget_type = body.get("widget_type", "")
-    data = body.get("data") or {}
-    label = body.get("label")
-    background = bool(body.get("background", False))
-    emit = manager.emit if manager else None
-    result = await canvas_mod.new_tab(
-        config,
-        conv_id,
-        widget_type,
-        data,
-        label=label,
-        emit=emit,
-        enforce_agent_createable=False,
-        background=background,
-    )
-    if not result.ok:
-        return JSONResponse({"error": result.error}, status_code=400)
-    return JSONResponse({"ok": True, "tab_id": result.tab_id})
-
-
-async def post_canvas_active_tab(request: Request, conv_id: str) -> JSONResponse:
-    """Set the active tab via user click in the panel."""
-    from . import canvas as canvas_mod
-
-    config = request.app.state.config
-    manager = request.app.state.manager
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    try:
-        body = await request.json()
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
-    tab_id = body.get("tab_id", "")
-    emit = manager.emit if manager else None
-    result = await canvas_mod.set_active_tab(config, conv_id, tab_id, emit=emit)
-    if not result.ok:
-        return JSONResponse({"error": result.error}, status_code=400)
-    return JSONResponse({"ok": True})
-
-
-async def post_canvas_close_tab(request: Request, conv_id: str) -> JSONResponse:
-    """Close a tab via user [×] click."""
-    from . import canvas as canvas_mod
-
-    config = request.app.state.config
-    manager = request.app.state.manager
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    try:
-        body = await request.json()
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
-    tab_id = body.get("tab_id", "")
-    emit = manager.emit if manager else None
-    result = await canvas_mod.close_tab(
-        config, conv_id, tab_id, emit=emit, registry=request.app.state.terminal_registry
-    )
-    if not result.ok:
-        return JSONResponse({"error": result.error}, status_code=400)
-    return JSONResponse({"ok": True})
-
-
-@_authenticated
-async def get_canvas_page(request: Request, username: str):
-    """Serve the standalone canvas HTML (bare or tab-locked URL)."""
-    from starlette.responses import Response
-
-    config = request.app.state.config
-    conv_id = request.path_params.get("conv_id", "")
-    tab_id = request.path_params.get("tab_id", "")  # may be empty for bare URL
-    if not _is_safe_conv_id(conv_id):
-        return Response("Invalid conversation id", status_code=400)
-    if tab_id and not _is_safe_conv_id(tab_id):
-        return Response("Invalid tab id", status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return Response("Not found", status_code=404)
-    html_path = Path(__file__).parent / "web" / "static" / "canvas-page.html"
-    return Response(html_path.read_text(), media_type="text/html")
+# The terminal resource's route lives in web/terminal_routes.py; create_app
+# aggregates it. Its gateway is the same `web/websocket.py` module as ws_chat.
 
 
 class ModelListResponse(BaseModel):
@@ -3576,42 +3143,11 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             methods=["POST"],
             response_model=ConversationLifecycleResponse,
         ),
-        APIRoute(
-            "/api/notifications",
-            list_notifications,
-            methods=["GET"],
-            response_model=NotificationListResponse,
-            # Schema-only queries preserve legacy parsing and 400 responses.
-            openapi_extra={
-                "parameters": [
-                    {
-                        "name": "limit",
-                        "in": "query",
-                        "required": False,
-                        "schema": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
-                    },
-                    {"name": "before", "in": "query", "required": False, "schema": {"type": "string"}},
-                ]
-            },
-        ),
-        APIRoute(
-            "/api/notifications/unread-count",
-            notifications_unread_count,
-            methods=["GET"],
-            response_model=NotificationCountResponse,
-        ),
-        APIRoute(
-            "/api/notifications/read-all",
-            notifications_mark_all_read,
-            methods=["POST"],
-            response_model=NotificationReadResponse,
-        ),
-        APIRoute(
-            "/api/notifications/{id}/read",
-            notifications_mark_read,
-            methods=["POST"],
-            response_model=NotificationReadResponse,
-        ),
+        # The notifications resource's routes live in web/notification_routes.py.
+        # Its router registers them in their historical order — registration
+        # order is part of the contract: the generated OpenAPI spec lists paths
+        # in that order.
+        *notification_router.routes,
         APIRoute(
             "/api/upload/{conv_id}",
             handle_upload,
@@ -3970,62 +3506,15 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         # Legacy /api/wiki/* aliases — vault handlers under the old name.
         APIRoute("/api/wiki", vault_list, methods=["GET"]),
         APIRoute("/api/wiki/{page:path}", vault_read, methods=["GET"]),
-        APIRoute("/api/widgets", list_widgets, methods=["GET"], response_model=WidgetCatalogResponse),
-        APIRoute("/widgets/{tier}/{name}/widget.js", serve_widget_js, methods=["GET"]),
-        APIRoute("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"], response_model=CanvasStateResponse),
-        APIRoute("/api/sticky/{conv_id}", get_sticky_state, methods=["GET"], response_model=StickyResponse),
-        APIRoute(
-            "/api/sticky/{conv_id}",
-            post_sticky_state,
-            methods=["POST"],
-            openapi_extra={
-                "requestBody": {
-                    "required": True,
-                    "content": {"application/json": {"schema": StickySetRequest.model_json_schema()}},
-                }
-            },
-        ),
-        APIRoute("/api/sticky/{conv_id}", delete_sticky_state, methods=["DELETE"]),
-        APIRoute(
-            "/api/canvas/{conv_id}/new_tab",
-            post_canvas_new_tab,
-            methods=["POST"],
-            response_model=CanvasNewTabResponse,
-            openapi_extra={
-                "requestBody": {
-                    "required": True,
-                    "content": {"application/json": {"schema": CanvasNewTabRequest.model_json_schema()}},
-                }
-            },
-        ),
-        APIRoute(
-            "/api/canvas/{conv_id}/active_tab",
-            post_canvas_active_tab,
-            methods=["POST"],
-            response_model=CanvasMutationResponse,
-            openapi_extra={
-                "requestBody": {
-                    "required": True,
-                    "content": {"application/json": {"schema": CanvasTabRequest.model_json_schema()}},
-                }
-            },
-        ),
-        APIRoute(
-            "/api/canvas/{conv_id}/close_tab",
-            post_canvas_close_tab,
-            methods=["POST"],
-            response_model=CanvasMutationResponse,
-            openapi_extra={
-                "requestBody": {
-                    "required": True,
-                    "content": {"application/json": {"schema": CanvasTabRequest.model_json_schema()}},
-                }
-            },
-        ),
-        APIRoute("/canvas/{conv_id}", get_canvas_page, methods=["GET"]),
-        APIRoute("/canvas/{conv_id}/{tab_id}", get_canvas_page, methods=["GET"]),
+        # The widget/canvas/sticky resource's routes live in web/widget_routes.py.
+        # Its router registers them in their historical order — registration
+        # order is part of the contract: the generated OpenAPI spec lists paths
+        # in that order.
+        *widget_router.routes,
         WebSocketRoute("/ws/chat", ws_chat),
-        WebSocketRoute("/ws/terminal/{conv_id}/{tab_id}", ws_terminal),
+        # The terminal resource's route lives in web/terminal_routes.py; its
+        # router registers it in its historical position.
+        *terminal_router.routes,
     ]
 
     # Static file serving for web UI

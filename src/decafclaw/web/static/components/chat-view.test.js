@@ -288,6 +288,26 @@ describe('chat-view context provenance preference (#1563)', () => {
     expect(el.querySelector('.thinking-indicator')).toBeTruthy();
   });
 
+  it('renders an empty silent wake row instead of dropping it (#1852)', async () => {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'conv-1',
+      currentMessages: [{ role: 'assistant', content: '', suppress_user_message: true }],
+      streamingText: '',
+      streamingThinking: '',
+      streamingProvenance: {},
+      isBusy: false,
+      toolStatus: null,
+      pendingConfirms: [],
+      hasMore: false,
+    });
+    const el = await mount(store);
+
+    const row = el.querySelector('chat-message');
+    expect(row).toBeTruthy();
+    expect(row?.suppressUserMessage).toBe(true);
+    expect(row?.querySelector('.wake-status')).toBeTruthy();
+  });
+
   it('renders streaming provenance once text starts streaming (#1563)', async () => {
     const store = Object.assign(new EventTarget(), {
       currentConvId: 'conv-1',

@@ -37,6 +37,24 @@ def test_restore_history_archive_only(config):
     assert result == messages
 
 
+def test_restore_history_normalizes_legacy_silent_wake(config):
+    """Mattermost thread-fork history reads the normalized row, not the marker (#1852)."""
+    messages = [
+        {"role": "wake_trigger", "content": "reply with BACKGROUND_WAKE_OK", "timestamp": "2026-01-01T00:00:00"},
+        {
+            "role": "assistant",
+            "content": "BACKGROUND_WAKE_OK — log rotation completed.",
+            "timestamp": "2026-01-01T00:00:01",
+        },
+    ]
+    _write_jsonl(_conv_dir(config) / CONV_ID / "archive.jsonl", messages)
+
+    result = restore_history(config, CONV_ID)
+    assert result is not None
+    assert result[1]["content"] == "log rotation completed."
+    assert result[1]["suppress_user_message"] is True
+
+
 def test_restore_history_compacted_only(config):
     """Returns compacted history when sidecar exists, even if archive also exists."""
     archive_msgs = [

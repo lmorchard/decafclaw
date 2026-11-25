@@ -27,6 +27,7 @@ export class ChatMessage extends LitElement {
     isError: { type: Boolean, attribute: false },
     timedOut: { type: Boolean, attribute: false },
     timeoutSec: { type: Number, attribute: false },
+    suppressUserMessage: { type: Boolean, attribute: false },
   };
 
   createRenderRoot() { return this; }
@@ -62,6 +63,7 @@ export class ChatMessage extends LitElement {
     this.timedOut = false;
     /** @type {number|null} */
     this.timeoutSec = null;
+    this.suppressUserMessage = false;
   }
 
   connectedCallback() {
@@ -188,6 +190,18 @@ export class ChatMessage extends LitElement {
         .provenance=${this.provenance}
         .streaming=${this.streaming}
       ></thinking-message>`;
+    }
+
+    if (this.role === 'assistant' && this.suppressUserMessage) {
+      return html`
+        <details class="chat-event wake-status">
+          <summary>
+            <span class="icon">◇</span>
+            <span class="title">wake · silent</span>
+          </summary>
+          ${this.content ? html`<div class="detail">${this.content}</div>` : ''}
+        </details>
+      `;
     }
 
     if (this.role === 'assistant' && this.toolCalls?.length) {

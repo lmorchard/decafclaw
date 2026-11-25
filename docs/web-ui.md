@@ -74,6 +74,13 @@ thinking row when a turn has thinking, otherwise the assistant row. The wire
 format is unchanged: `message_complete.thinking` and archived
 `assistant.thinking` still carry the text.
 
+**Silent wake rows (#1852).** A wake turn that ends with
+`BACKGROUND_WAKE_OK` is hidden live, but its archived assistant row carries
+`suppress_user_message: true` and a sentinel-stripped body. History reload
+renders it as a collapsed `◇ wake · silent` status row (expandable to the body)
+instead of dropping the turn or showing the raw marker. The same archived flag
+drives the export renderer and keeps the marker out of compaction summaries.
+
 **Turn provenance capsules (#1563).** Passive context a turn ingests during
 `PRE_COMPOSE` — recalled memory facts, recent journal entries, proactive vault
 retrieval, and scratchpad notes — renders as a compact capsule row directly
@@ -875,6 +882,9 @@ See [Configuration Reference](config.md#http) for the full `http` config group.
 - `src/decafclaw/http_server.py` — HTTP server, WebSocket endpoint; aggregates the per-resource route modules and still hosts routes not yet extracted
 - `src/decafclaw/web/workspace_routes.py` — Workspace (Files tab) route module: models + handlers + router
 - `src/decafclaw/web/schedule_routes.py` — Schedules route module: models + handlers + router
+- `src/decafclaw/web/notification_routes.py` — Notifications (inbox) route module: models + handlers + router
+- `src/decafclaw/web/terminal_routes.py` — Terminal route module: the `/ws/terminal/{conv_id}/{tab_id}` WebSocket entry point + router
+- `src/decafclaw/web/widget_routes.py` — Widget/canvas/sticky route module: models + handlers + router
 - `src/decafclaw/web/http_auth.py` — Shared auth helpers for route modules
 - `src/decafclaw/web/auth.py` — Token-based auth, `decafclaw-token` CLI
 - `src/decafclaw/web/conversations.py` — Conversation index metadata

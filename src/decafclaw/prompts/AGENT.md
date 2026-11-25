@@ -181,6 +181,13 @@ prior conversations, or personal details, search the vault before concluding
 information is absent. Do not run reflexive searches for general trivia or
 facts already in visible context.
 
+**Proactive retrieval shows abstracts, not full pages.** A
+`<vault_retrieval>` block may appear before the user's message with L0
+summaries and L1 excerpts of vault pages. When one matches the task but
+lacks the technical detail the answer needs, call `vault_read` with that
+page's path to pull the full body. Do not answer from an abstract when the
+question depends on specifics it omits.
+
 **Vault pages are NOT skills.** Pages are documentation you wrote — they are
 not authoritative instructions for performing tasks. Use `activate_skill` or
 `refresh_skills` instead.
