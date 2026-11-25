@@ -3,7 +3,7 @@
 import logging
 import re
 
-from .embeddings import embed_text, search_similar_sync
+from .embeddings import embed_text, search_fts_sync, search_similar_sync
 from .util import estimate_tokens
 
 log = logging.getLogger(__name__)
@@ -22,6 +22,66 @@ SOURCE_LABELS = {
     "memory": "Memory",
     "conversation": "Conversation",
 }
+
+
+def _result_key(result: dict) -> tuple:
+    """Identity used to merge the dense and lexical candidate lists."""
+    row_id = result.get("id")
+    if row_id is not None:
+        return ("id", row_id)
+    return ("path", result.get("file_path", ""), result.get("entry_text", ""))
+
+
+def _reciprocal_rank_fusion(
+    vector_results: list[dict],
+    lexical_results: list[dict],
+    *,
+    k: int = 60,
+    vector_weight: float = 1.0,
+    fts_weight: float = 1.0,
+) -> list[dict]:
+    """Fuse dense and lexical rankings with reciprocal rank fusion (#1816).
+
+    ``RRF(d) = vector_weight / (k + rank_vector) + fts_weight / (k + rank_fts)``.
+    A document ranked highly by both branches outranks one ranked highly by
+    only one. Each fused row carries ``rrf_score`` (raw), ``rrf_score_normalized``
+    (0.5..1.0, used as composite relevance downstream), and the per-branch
+    ordinal ranks. Rows are merged by ``id`` when present, else by
+    ``(file_path, entry_text)``.
+    """
+    smoothing = max(0, int(k))
+    vector_weight = max(0.0, float(vector_weight))
+    fts_weight = max(0.0, float(fts_weight))
+    merged: dict[tuple, dict] = {}
+
+    def add(result: dict, rank: int, weight: float, branch: str) -> None:
+        key = _result_key(result)
+        entry = merged.get(key)
+        if entry is None:
+            entry = dict(result)
+            entry["rrf_score"] = 0.0
+            entry["vector_rank"] = None
+            entry["fts_rank"] = None
+            merged[key] = entry
+        entry["rrf_score"] += weight / (smoothing + rank)
+        if branch == "vector":
+            entry["vector_rank"] = rank
+        else:
+            entry["fts_rank"] = rank
+            for field in ("id", "entry_text", "file_path", "source_type", "created_at"):
+                if entry.get(field) in (None, "") and result.get(field) not in (None, ""):
+                    entry[field] = result[field]
+
+    for rank, result in enumerate(vector_results, start=1):
+        add(result, rank, vector_weight, "vector")
+    for rank, result in enumerate(lexical_results, start=1):
+        add(result, rank, fts_weight, "fts")
+
+    max_raw = (vector_weight + fts_weight) / (smoothing + 1)
+    for entry in merged.values():
+        ratio = entry["rrf_score"] / max_raw if max_raw > 0 else 0.0
+        entry["rrf_score_normalized"] = min(1.0, 0.5 + 0.5 * ratio)
+    return sorted(merged.values(), key=lambda item: item["rrf_score"], reverse=True)
 
 
 async def retrieve_memory_context(config, user_message: str) -> list[dict]:
@@ -44,13 +104,34 @@ async def retrieve_memory_context(config, user_message: str) -> list[dict]:
 
         # Search all source types, fetch extra to allow for threshold filtering.
         # Over-fetch to allow for deduplication and token budget filtering.
-        results = search_similar_sync(config, query_embedding, top_k=mc.max_results * 2)
+        # Hybrid retrieval gives each branch the same candidate depth (#1816).
+        branch_k = mc.max_results * 2
+        if mc.hybrid_enabled:
+            branch_k = max(branch_k, mc.hybrid_candidates)
+        vector_results = search_similar_sync(config, query_embedding, top_k=branch_k)
 
         # Exclude legacy conversation embeddings — they add noise (see #133)
-        results = [r for r in results if r.get("source_type") != "conversation"]
+        vector_results = [r for r in vector_results if r.get("source_type") != "conversation"]
 
         # Filter by similarity threshold
-        results = [r for r in results if r["similarity"] >= mc.similarity_threshold]
+        vector_results = [r for r in vector_results if r["similarity"] >= mc.similarity_threshold]
+
+        results = vector_results
+        if mc.hybrid_enabled:
+            lexical_results: list[dict] = []
+            try:
+                lexical_results = search_fts_sync(config, user_message, top_k=branch_k)
+            except Exception:
+                log.warning("FTS retrieval failed; using dense results only", exc_info=True)
+            lexical_results = [r for r in lexical_results if r.get("source_type") != "conversation"]
+            if lexical_results:
+                results = _reciprocal_rank_fusion(
+                    vector_results,
+                    lexical_results,
+                    k=mc.rrf_k,
+                    vector_weight=mc.vector_weight,
+                    fts_weight=mc.fts_weight,
+                )
 
         # Trim to max_results
         results = results[: mc.max_results]
@@ -124,7 +205,7 @@ def _enrich_results(config, results: list[dict]) -> list[dict]:
                     # retrieval mode — see #301.
                     if source_type in ("page", "user"):
                         text = full_path.read_text()
-                        metadata, _ = parse_frontmatter(text)
+                        metadata, body = parse_frontmatter(text)
                         if metadata:
                             result["importance"] = get_frontmatter_field(
                                 metadata,
@@ -134,6 +215,9 @@ def _enrich_results(config, results: list[dict]) -> list[dict]:
                             summary = get_frontmatter_field(metadata, "summary", "")
                             if summary:
                                 result["summary"] = str(summary)
+                        excerpt = _extract_tapered_excerpt(body)
+                        if excerpt:
+                            result["l1_excerpt"] = excerpt
         except Exception:
             log.warning("Failed to enrich result %s", result.get("file_path", "?"), exc_info=True)
 
@@ -215,10 +299,12 @@ def _expand_graph_links(
                 mtime = os.path.getmtime(linked_path)
                 modified_at = datetime.fromtimestamp(mtime).isoformat()
                 entry_text = build_composite_text(metadata, body)
+                l1_excerpt = _extract_tapered_excerpt(body)
             except Exception:
                 importance = 0.5
                 modified_at = ""
                 entry_text = linked_text
+                l1_excerpt = ""
 
             expanded.append(
                 {
@@ -229,6 +315,7 @@ def _expand_graph_links(
                     "linked_from": parent_page,
                     "importance": importance,
                     "modified_at": modified_at,
+                    "l1_excerpt": l1_excerpt,
                 }
             )
             added_count += 1
@@ -290,6 +377,142 @@ def format_memory_headlines(
             f"- [{label}] {path} · {summary} · score {score:.2f}",
         )
     return "\n".join(lines)
+
+
+TAPERED_BANNER = (
+    "[Automatically retrieved context — L0 summaries and L1 abstracts, not from the user. "
+    "Call vault_read with a page path to read the full L2 body.]"
+)
+
+# `> tl;dr: ...` or `> **TL;DR:** ...` blockquote opener.
+_TLDR_RE = re.compile(
+    r"^\s*>\s*(?:\*\*)?tl;?dr\s*(?:\*\*)?\s*[:—–-]?\s*(?:\*\*)?\s*(.*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Named overview sections worth treating as an L1 abstract when no tl;dr exists.
+_TAPERED_SECTION_NAMES = ("Standing Model", "Operating Consensus", "Overview", "Summary")
+
+
+def _clip_abstract(text: str, max_chars: int) -> str:
+    """Collapse whitespace and truncate an abstract to ``max_chars``."""
+    cleaned = " ".join(text.split())
+    if max_chars > 0 and len(cleaned) > max_chars:
+        return cleaned[:max_chars].rstrip() + "…"
+    return cleaned
+
+
+def _extract_tapered_excerpt(text: str, *, max_chars: int = 600) -> str:
+    """Extract an L1 abstract from a page body (#1815).
+
+    Order: a ``> tl;dr:`` blockquote, then a named overview section
+    (``## Standing Model``, ``## Operating Consensus``, ``## Overview``,
+    ``## Summary``), then the first non-heading paragraph. Returns "" when
+    the text carries nothing useful.
+    """
+    if not text:
+        return ""
+    body = text
+    if body.startswith("---"):
+        end = body.find("\n---", 3)
+        if end > 0:
+            body = body[end + 4 :]
+    body = body.strip()
+    if not body:
+        return ""
+
+    match = _TLDR_RE.search(body)
+    if match:
+        lines = [match.group(1).strip()]
+        continuation = body[match.end() :].splitlines()
+        if continuation and not continuation[0].strip():
+            continuation = continuation[1:]
+        for line in continuation:
+            stripped = line.strip()
+            if not stripped.startswith(">"):
+                break
+            lines.append(stripped.lstrip(">").strip())
+        excerpt = _clip_abstract(" ".join(line for line in lines if line), max_chars)
+        if excerpt:
+            return excerpt
+
+    for name in _TAPERED_SECTION_NAMES:
+        heading = re.compile(rf"^##+\s+{re.escape(name)}\s*$", re.IGNORECASE | re.MULTILINE)
+        heading_match = heading.search(body)
+        if not heading_match:
+            continue
+        rest = body[heading_match.end() :]
+        next_heading = re.search(r"^##+\s+", rest, re.MULTILINE)
+        section = rest[: next_heading.start()] if next_heading else rest
+        excerpt = _clip_abstract(section, max_chars)
+        if excerpt:
+            return excerpt
+
+    for block in re.split(r"\n\s*\n", body):
+        block = block.strip()
+        if not block or block.startswith("#"):
+            continue
+        excerpt = _clip_abstract(block, max_chars)
+        if excerpt:
+            return excerpt
+    return ""
+
+
+def format_memory_tapered(
+    results: list[dict],
+    *,
+    top_n_detailed: int = 1,
+    max_summary_chars: int = 140,
+    max_excerpt_chars: int = 600,
+) -> str:
+    """Render retrieval results as tapered L0/L1 abstracts (#1815).
+
+    The top ``top_n_detailed`` candidates get their frontmatter ``summary``
+    (L0) plus a short body abstract (L1). Trailing candidates collapse to one
+    headline line each (L0 only). The banner tells the agent the full L2 body
+    is available through ``vault_read``.
+
+    Returns "" on empty input.
+    """
+    if not results:
+        return ""
+    detailed_count = max(0, int(top_n_detailed))
+    parts: list[str] = [TAPERED_BANNER]
+    for r in results[:detailed_count]:
+        label = SOURCE_LABELS.get(r.get("source_type", ""), r.get("source_type", "?"))
+        path = r.get("file_path", "")
+        score = r.get("composite_score", r.get("similarity", 0))
+        header = (
+            f"--- [{label}] [[{path}]] (score: {score:.2f}) ---" if path else f"--- [{label}] (score: {score:.2f}) ---"
+        )
+        block = [header]
+        summary = r.get("summary") or ""
+        if summary:
+            block.append(f"Summary: {_clip_abstract(str(summary), max_summary_chars)}")
+        excerpt = r.get("l1_excerpt") or _extract_tapered_excerpt(
+            r.get("entry_text", ""),
+            max_chars=max_excerpt_chars,
+        )
+        if excerpt:
+            block.append(excerpt)
+        parts.append("\n".join(block))
+
+    trailing = results[detailed_count:]
+    if trailing:
+        lines = ["More matches (L0 only):"]
+        for r in trailing:
+            label = SOURCE_LABELS.get(r.get("source_type", ""), r.get("source_type", "?"))
+            path = r.get("file_path", "")
+            summary = r.get("summary") or _excerpt_for_headline(
+                r.get("entry_text", ""),
+                max_summary_chars,
+            )
+            if max_summary_chars > 0 and len(summary) > max_summary_chars:
+                summary = summary[:max_summary_chars].rstrip() + "…"
+            score = r.get("composite_score", r.get("similarity", 0))
+            lines.append(f"- [{label}] {path} · {summary} · score {score:.2f}")
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
 
 
 def _excerpt_for_headline(text: str, max_chars: int) -> str:

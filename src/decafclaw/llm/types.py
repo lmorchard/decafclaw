@@ -113,6 +113,15 @@ class Provider(Protocol):
         """Get model metadata (e.g. token limits), or None if unsupported."""
         return None
 
+    def default_context_window(self, model: str) -> int | None:
+        """Provider-maintained fallback window when discovery reports none.
+
+        For providers that publish no machine-readable limit (Vertex). A
+        configured ``model_configs.context_window_size`` still wins; this is
+        consulted only after ``get_model_info`` returns nothing.
+        """
+        return None
+
 
 @dataclass
 class DiscoveredModel:

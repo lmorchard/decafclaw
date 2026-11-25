@@ -43,6 +43,29 @@ _SCORE_PRECISION = 6
 @dataclass
 class SkillConfig:
     dry_run: bool = False
+    # Vault folders whose pages are machine-generated rather than curated.
+    # They are excluded from graph metrics, broken-link scanning, and
+    # importance scoring: linking them would be inventing structure for
+    # content nobody authored, and they skew every count they appear in
+    # (notifications/ alone was 216 pages at 69% isolate).
+    excluded_folders: tuple[str, ...] = ("notifications", "kindle")
+
+
+_DEFAULT_EXCLUDED_FOLDERS = ("notifications", "kindle")
+
+
+def _excluded_folders() -> tuple[str, ...]:
+    """Agent-pages-relative folder prefixes that are out of scope for gardening."""
+    configured = getattr(_skill_config, "excluded_folders", None)
+    return tuple(configured) if configured is not None else _DEFAULT_EXCLUDED_FOLDERS
+
+
+def _is_excluded(rel: str) -> bool:
+    """True when a vault-relative page path falls under an excluded folder."""
+    parts = rel.split("/")
+    # Compare only the folder portion beneath agent/pages/.
+    folders = parts[2:-1] if len(parts) > 3 and parts[0] == "agent" and parts[1] == "pages" else parts[:-1]
+    return any(folder in _excluded_folders() for folder in folders)
 
 
 _skill_config = SkillConfig()
@@ -54,12 +77,22 @@ def init(config, skill_config: SkillConfig):
 
 
 def _iter_importance_candidates(config) -> list[tuple[str, Path]]:
-    """List (vault-relative POSIX path, Path) for every scoreable agent page."""
+    """List (vault-relative POSIX path, Path) for every scoreable agent page.
+
+    Pages under an excluded folder (machine-generated content — see
+    ``SkillConfig.excluded_folders``) are omitted, so they never participate in
+    importance scoring, graph metrics, or broken-link scanning.
+    """
     pages_dir = config.vault_agent_pages_dir
     if not pages_dir.is_dir():
         return []
     vault = config.vault_root
-    return [(path.relative_to(vault).as_posix(), path) for path in sorted(pages_dir.rglob("*.md"))]
+    return [
+        (rel, path)
+        for path in sorted(pages_dir.rglob("*.md"))
+        for rel in (path.relative_to(vault).as_posix(),)
+        if not _is_excluded(rel)
+    ]
 
 
 def _clamp01(value: float) -> float:

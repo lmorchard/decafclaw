@@ -21,6 +21,7 @@ from decafclaw.util import estimate_tokens
 RETRIEVE_PATCH = "decafclaw.extensions.vault_retrieval.retrieve_memory_context"
 FORMAT_PATCH = "decafclaw.extensions.vault_retrieval.format_memory_context"
 HEADLINES_PATCH = "decafclaw.extensions.vault_retrieval.format_memory_headlines"
+TAPERED_PATCH = "decafclaw.extensions.vault_retrieval.format_memory_tapered"
 
 
 def _ext(ctx) -> VaultRetrievalExtension:
@@ -102,6 +103,18 @@ class TestContribution:
                 }
             ]
         }
+
+    async def test_hybrid_candidate_survives_composite_threshold(self, ctx):
+        ctx.config.relevance.min_composite_score = 0.65
+        candidate = _candidate("pages/exact.md", similarity=0.31, rrf_score_normalized=0.75)
+        with (
+            patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=[candidate]),
+            patch(FORMAT_PATCH, return_value="formatted"),
+        ):
+            contribution = await _hook(ctx)
+
+        assert contribution.source_entry.items_included == 1
+        assert contribution.messages[0]["file_paths"] == ["pages/exact.md"]
 
     async def test_no_candidates_yields_skipped_entry(self, ctx):
         with patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=[]):
@@ -241,6 +254,7 @@ class TestRetrievalModes:
     def test_enum_values_match_wire_strings(self):
         assert RetrievalMode.ALWAYS == "always"
         assert RetrievalMode.HEADLINES == "headlines"
+        assert RetrievalMode.TAPERED == "tapered"
         assert RetrievalMode.ON_DEMAND == "on_demand"
 
     async def test_always_emits_full_body(self, ctx):
@@ -263,6 +277,57 @@ class TestRetrievalModes:
         headlines.assert_called_once()
         assert contribution.messages[0]["content"] == "headlines block"
         assert contribution.source_entry.details["mode"] is RetrievalMode.HEADLINES
+
+    async def test_tapered_emits_abstracts_and_headlines(self, ctx):
+        ctx.config.vault_retrieval.mode = RetrievalMode.TAPERED
+        ctx.config.relevance.min_composite_score = 0.0
+        candidates = [
+            _candidate("pages/first.md", summary="First summary", l1_excerpt="First abstract."),
+            _candidate("pages/second.md", summary="Second summary"),
+        ]
+        with patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=candidates):
+            contribution = await _hook(ctx)
+
+        content = contribution.messages[0]["content"]
+        assert "First abstract." in content
+        assert "More matches (L0 only)" in content
+        assert "Second summary" in content
+        assert contribution.source_entry.details["mode"] is RetrievalMode.TAPERED
+
+    async def test_tapered_options_control_formatter(self, ctx):
+        ctx.config.vault_retrieval.mode = RetrievalMode.TAPERED
+        ctx.config.relevance.min_composite_score = 0.0
+        ext = VaultRetrievalExtension(
+            {"top_n_detailed": 2, "headline_summary_max_chars": 80},
+            ctx.config,
+        )
+        with (
+            patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=[_candidate()]),
+            patch(TAPERED_PATCH, return_value="tapered block") as tapered,
+        ):
+            contribution = await _hook(ctx, ext=ext)
+
+        assert contribution.messages[0]["content"] == "tapered block"
+        tapered.assert_called_once()
+        assert tapered.call_args.kwargs["top_n_detailed"] == 2
+        assert tapered.call_args.kwargs["max_summary_chars"] == 80
+
+    async def test_tapered_token_budget_trims_before_formatting(self, ctx):
+        ctx.config.vault_retrieval.mode = RetrievalMode.TAPERED
+        ctx.config.relevance.min_composite_score = 0.0
+        candidates = [
+            _candidate("pages/first.md", entry_text="first entry"),
+            _candidate("pages/second.md", entry_text="second entry " * 50),
+        ]
+        ctx.composer.dynamic_token_budget = estimate_tokens("first entry") + 1
+        with (
+            patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=candidates),
+            patch(TAPERED_PATCH, return_value="tapered") as tapered,
+        ):
+            await _hook(ctx)
+
+        passed = tapered.call_args.args[0]
+        assert [r["file_path"] for r in passed] == ["pages/first.md"]
 
     async def test_on_demand_skips_retrieval(self, ctx):
         ctx.config.vault_retrieval.mode = RetrievalMode.ON_DEMAND
@@ -392,6 +457,32 @@ class TestScoring:
     def test_missing_modified_at_defaults_recency(self, config):
         scored = score_candidates([{"similarity": 0.5, "importance": 0.5}], config)
         assert scored[0]["recency"] == 0.5
+
+    def test_hybrid_rrf_order_is_authoritative(self, config):
+        scored = score_candidates(
+            [
+                _candidate("pages/lexical.md", similarity=0.31, rrf_score_normalized=0.75),
+                _candidate("pages/dense.md", similarity=0.95, rrf_score_normalized=0.60),
+            ],
+            config,
+        )
+
+        assert [c["file_path"] for c in scored] == ["pages/lexical.md", "pages/dense.md"]
+        assert scored[0]["composite_score"] == pytest.approx(0.75)
+
+    def test_hybrid_recency_breaks_rrf_ties(self, config):
+        now = datetime.now()
+        recent = (now - timedelta(hours=1)).isoformat()
+        old = (now - timedelta(hours=1000)).isoformat()
+        scored = score_candidates(
+            [
+                _candidate("pages/old.md", modified_at=old, rrf_score_normalized=0.7),
+                _candidate("pages/new.md", modified_at=recent, rrf_score_normalized=0.7),
+            ],
+            config,
+        )
+
+        assert scored[0]["file_path"] == "pages/new.md"
 
 
 class TestComposerIntegration:

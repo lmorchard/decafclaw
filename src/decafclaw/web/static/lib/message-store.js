@@ -148,29 +148,37 @@ export class MessageStore {
     switch (msg.type) {
       case MESSAGE_TYPES.CONV_HISTORY:
         if (msg.conv_id === currentConvId) {
-          const existing = new Set(this.#currentMessages.map(m => m.timestamp));
-          const newMsgs = (msg.messages || []).filter(
-            /** @param {ChatMessage} m */ (m) => !existing.has(m.timestamp)
-              && m.role !== 'wake_trigger'  // synthetic wake prompts are not user messages
-          ).map(/** @param {ChatMessage} m */ (m) => {
-            // Map background_event archive records to a renderable form
-            if (m.role === 'background_event') {
-              return { role: 'background_event', record: m, timestamp: m.timestamp };
-            }
-            if (m.role === 'compaction') {
-              return {
-                role: 'compaction',
-                content: m.content,
-                record: m.data || m.record || null,
-                timestamp: m.timestamp,
-              };
-            }
-            return m;
-          });
+          // Dedupe by row identity and position, not by timestamp string.
+          // Live rows carry client-side millisecond ISO strings while
+          // archived rows carry server-side microsecond strings (and a
+          // different clock source), so Set.has() never matched and a
+          // refetched page was prepended as duplicate bubbles (#1823).
+          const incoming = (msg.messages || [])
+            .filter(
+              /** @param {ChatMessage} m */ (m) => m.role !== 'wake_trigger' // synthetic wake prompts are not user messages
+            )
+            .map(/** @param {ChatMessage} m */ (m) => {
+              // Map background_event archive records to a renderable form
+              if (m.role === 'background_event') {
+                return { role: 'background_event', record: m, timestamp: m.timestamp };
+              }
+              if (m.role === 'compaction') {
+                return {
+                  role: 'compaction',
+                  content: m.content,
+                  record: m.data || m.record || null,
+                  timestamp: m.timestamp,
+                };
+              }
+              return m;
+            });
           /** @type {ChatMessage[]} */
           const split = [];
-          for (const m of newMsgs) split.push(...this.#splitThinking(m));
-          this.#currentMessages = [...this.#mergeToolMessages(split), ...this.#currentMessages];
+          for (const m of incoming) split.push(...this.#splitThinking(m));
+          const rendered = this.#mergeToolMessages(split);
+          const overlap = this.#overlapWithCurrent(rendered);
+          const fresh = overlap > 0 ? rendered.slice(0, rendered.length - overlap) : rendered;
+          this.#currentMessages = [...fresh, ...this.#currentMessages];
           this.#hasMore = msg.has_more;
         }
         return true;
@@ -337,6 +345,47 @@ export class MessageStore {
     delete rest.provenance;
     delete rest.recalled_facts;
     return [thought, rest];
+  }
+
+  /**
+   * Identity for history dedupe: role + stable tool id + content.
+   * Timestamps are deliberately excluded — client milliseconds and server
+   * microseconds never compare equal (#1823).
+   * @param {ChatMessage} m
+   * @returns {string}
+   */
+  #rowKey(m) {
+    return `${m.role}\u0000${m.tool_call_id || ''}\u0000${m.content || ''}`;
+  }
+
+  /**
+   * Longest suffix of `rendered` already present as a contiguous run in the
+   * current transcript. A refetched page repeats the newest archived rows at
+   * its tail; removing that suffix before prepending avoids duplicate
+   * bubbles. The run must reach the end of the current list or include a
+   * stable tool id, so an older page whose last row merely repeats an earlier
+   * message is not dropped (#1823).
+   * @param {ChatMessage[]} rendered
+   * @returns {number}
+   */
+  #overlapWithCurrent(rendered) {
+    const current = this.#currentMessages;
+    if (!rendered.length || !current.length) return 0;
+    const renderedKeys = rendered.map((m) => this.#rowKey(m));
+    const currentKeys = current.map((m) => this.#rowKey(m));
+    const max = Math.min(renderedKeys.length, currentKeys.length);
+    for (let k = max; k > 0; k -= 1) {
+      const suffixStart = renderedKeys.length - k;
+      for (let start = 0; start + k <= currentKeys.length; start += 1) {
+        let i = 0;
+        while (i < k && renderedKeys[suffixStart + i] === currentKeys[start + i]) i += 1;
+        if (i !== k) continue;
+        const endsAtCurrent = start + k === currentKeys.length;
+        const hasStableId = rendered.slice(suffixStart).some((m) => Boolean(m.tool_call_id));
+        if (endsAtCurrent || hasStableId) return k;
+      }
+    }
+    return 0;
   }
 
   /**

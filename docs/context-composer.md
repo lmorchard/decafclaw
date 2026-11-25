@@ -182,6 +182,38 @@ Not every injection is ephemeral. Explicit `@` references and pre-emptive
 discovery hints stay in `TAIL`/`EPILOGUE` because they are tied to the user's
 request and remain useful when the turn is replayed.
 
+#### Activated skills block (#1823)
+
+Every on-demand skill in `ctx.skills.activated` contributes its body to one
+`<activated_skills>` message mounted after the current user message and before
+the `EPILOGUE` hints. Always-loaded skills are skipped: their bodies already
+live in the system prompt's `<loaded_skills>` section. The block looks like:
+
+```
+<activated_skills>
+<skill name="tabstack">…</skill>
+<skill name="vault">…</skill>
+</activated_skills>
+```
+
+Like `WORKING_MEMORY`, the block is never archived, appended to live history,
+or summarized by compaction. It re-renders from the activation set each turn,
+and `restore_skills` rebuilds that set from the sidecar after a reconnect. The
+conversation prefix through the previous assistant turn therefore stays
+cacheable across activations.
+
+Before #1823 the body was the `activate_skill` tool result. Compaction then had
+to protect any turn that called `activate_skill` to keep the instructions
+alive, which preserved every unrelated tool output in the same turn (hundreds
+of messages, ~250k tokens). That protection is gone: skill-activation turns are
+ordinary summarizable history now. `activate_skill` returns a short ack (name,
+new tools, warnings) instead.
+
+If the rendered bodies exceed `ACTIVATED_SKILLS_WARN_TOKENS` (20k), the
+composer logs a warning naming each skill and its token cost. It does not
+truncate or count-cap: dropping a body while its tools stay callable leaves the
+model with tools but not the instructions governing them.
+
 ### Token budget
 
 - `context_window_size` on the model config is the hard upper bound
@@ -192,7 +224,7 @@ request and remain useful when the turn is replayed.
 
 #### History accounting
 
-`compose()` treats the input `history` list as read-only during all token-budget and diagnostics calculation. Fresh-this-turn injections (`vault_references`, the `WORKING_MEMORY` bundle from `recent_journal`, `vault_retrieval`, `ScratchpadNotesExtension`, recalled facts, and the `[Context: ...]` line — and `PRE_COMPOSE` DELTA/TAIL/EPILOGUE contributions — plus the current user message) are each tracked via their own `SourceEntry` (`wiki_entry`, `memory_entry`, contribution `source_entry`, `user_msg_entry`). `PRE_COMPOSE` HEAD contributions and the `WORKING_MEMORY` bundle are not archived and therefore are not part of `history` accounting. The `history` source entry counts everything archived from prior turns, including messages whose role is in `ROLE_REMAP` (auto-injected role messages archived from earlier turns) — they're sent to the LLM after remap, so they count.
+`compose()` treats the input `history` list as read-only during all token-budget and diagnostics calculation. Fresh-this-turn injections (`vault_references`, the `WORKING_MEMORY` bundle from `recent_journal`, `vault_retrieval`, `ScratchpadNotesExtension`, recalled facts, and the `[Context: ...]` line — and `PRE_COMPOSE` DELTA/TAIL/EPILOGUE contributions — plus the current user message) are each tracked via their own `SourceEntry` (`wiki_entry`, `memory_entry`, contribution `source_entry`, `user_msg_entry`). `PRE_COMPOSE` HEAD contributions, the `WORKING_MEMORY` bundle, and the `<activated_skills>` block are not archived and therefore are not part of `history` accounting. The `history` source entry counts everything archived from prior turns, including messages whose role is in `ROLE_REMAP` (auto-injected role messages archived from earlier turns) — they're sent to the LLM after remap, so they count.
 
 `ROLE_REMAP` also covers two turn-closure markers (both remapped to `user`): `cancel_marker`, written when a user cancels a turn, and `turn_aborted`, written when a turn aborts via an unexpected exception. See [Cancelled turns](conversations.md#cancelled-turns) and [Aborted turns](conversations.md#aborted-turns-unexpected-exceptions) for producer-side details. The remap is what guarantees each marker reaches the LLM at the right position regardless of provider (Vertex collapses `system`-role messages into `systemInstruction`).
 
@@ -288,8 +320,8 @@ Before each interactive turn, the default-on [`VaultRetrievalExtension`](extensi
 ### How it works
 
 1. Embeds the user's current message
-2. Runs semantic search across all indexed content (vault pages, journal, conversation)
-3. Scores candidates by relevance and orders ties by structural importance (see [Scoring](#scoring) below)
+2. Runs two retrieval branches and fuses them with reciprocal rank fusion (#1816): dense cosine search across all indexed content (vault pages, journal), and an FTS5 bm25 lexical search over the same rows. Exact ports, hostnames, issue numbers, and error strings match lexically even when their vector is unremarkable.
+3. Scores candidates by relevance and orders ties by structural importance (see [Scoring](#scoring) below). Fused candidates keep their RRF order; recency and importance break ties.
 4. Follows `[[wiki-links]]` one hop from top hits to expand the candidate pool
 5. Fills remaining token budget with top-scoring candidates
 6. Injects matching entries inside that turn's `<working_memory>` block, after the user message
@@ -317,8 +349,13 @@ Legacy settings live under the `vault_retrieval` section in `config.json`; `exte
 | `max_results` | int | `5` | Maximum number of entries to inject |
 | `max_tokens` | int | `4000` | Token budget ceiling for injected context |
 | `show_in_ui` | bool | `true` | Show retrieval indicator in chat UI |
+| `hybrid_enabled` | bool | `true` | Fuse the dense and FTS5 lexical branches with RRF (#1816) |
+| `rrf_k` | int | `60` | RRF smoothing constant |
+| `fts_weight` | float | `1.0` | Weight of the lexical branch in RRF |
+| `vector_weight` | float | `1.0` | Weight of the dense branch in RRF |
+| `hybrid_candidates` | int | `20` | Per-branch candidate depth before fusion |
 
-Environment variable prefix: `MEMORY_CONTEXT_` (e.g., `MEMORY_CONTEXT_ENABLED=false`). The config section was renamed from `memory_context` to `vault_retrieval`, but the env-var prefix was left unchanged for backward compatibility.
+Environment variable prefix: `MEMORY_CONTEXT_` (e.g., `MEMORY_CONTEXT_ENABLED=false`). The config section was renamed from `memory_context` to `vault_retrieval`, but the env-var prefix was left unchanged for backward compatibility. The `VAULT_RETRIEVAL_*` aliases cover every field.
 
 ### Requirements
 
@@ -352,6 +389,13 @@ Both factors are normalized to [0, 1]. The two weights are renormalized over
 their own sum, so the `min_composite_score` threshold keeps comparable meaning
 after importance was removed from the threshold-bearing sum (#1713).
 
+When hybrid retrieval fuses a candidate (#1816), its `composite_score` is the
+normalized RRF value (0.5–1.0) instead. Re-scoring by cosine similarity would
+undo the lexical boost, so the fused order is authoritative and the sort key
+becomes `(composite_score, importance, recency)`. Candidates that appear in
+only one branch score 0.75 at rank 1; a document ranked highly by both
+approaches 1.0.
+
 ### Factors
 
 | Factor | Source | Description |
@@ -379,7 +423,7 @@ after importance was removed from the threshold-bearing sum (#1713).
 
 ### Wiki-link graph expansion
 
-After embedding search returns top-k results, the system follows `[[wiki-links]]` one hop from each hit:
+After retrieval (dense, lexical, or their fusion) returns top-k results, the system follows `[[wiki-links]]` one hop from each hit:
 
 1. Parse `[[PageName]]` links from top hit content
 2. Resolve each link against the vault
@@ -487,6 +531,7 @@ By default, every interactive turn auto-injects scored full-body candidates from
 |---|---|---|
 | `always` (default) | Full bodies of scored candidates | Back-compat; deployments with small vaults or where the cost of a stray `vault_read` round-trip outweighs the inject cost. |
 | `headlines` | One compact line per candidate (`file_path · summary · score`); no full bodies | Larger vaults where most retrieved candidates aren't actually consulted. The agent sees a directory of available pages and pulls full bodies via `vault_read` only when warranted. |
+| `tapered` | L0 frontmatter `summary` + L1 body abstract (a `> tl;dr:` blockquote or named overview section) for the top candidates; L0 headlines for the rest | Middle ground: enough technical grounding to answer from the abstract, while keeping a page's full body one `vault_read` away. |
 | `on_demand` | Nothing | Aggressive just-in-time strategy: skip auto-retrieval entirely, let the agent drive via `vault_search` / `vault_read`. |
 
 `@[[Page]]` mentions inject regardless of mode (those are user-driven explicit references, not auto-retrieval).
@@ -494,6 +539,8 @@ By default, every interactive turn auto-injects scored full-body candidates from
 **Empty result sets** (no candidates, all suppressed because already-injected, or all below `relevance.min_composite_score`) emit a `SourceEntry` with `mode` and `injection_skipped: true` so the context inspector can show retrieval ran but didn't inject. When the cause is already-injected suppression, the entry also records `drop_reason: "already_injected"`, the suppressed count, `candidates_considered`, and the token budget that was evaluated.
 
 **Headlines format** uses each result's `summary` frontmatter field when present, falls back to a truncated body excerpt. Configurable cap via `vault_retrieval.headline_summary_max_chars` (default 120).
+
+**Tapered format** (#1815) renders the top `vault_retrieval.tapered_top_n_detailed` (default 1) candidates as a header with score and wikilink, the L0 frontmatter `summary`, and an L1 abstract extracted from the body — a `> tl;dr:` blockquote first, then a `## Standing Model` / `## Operating Consensus` / `## Overview` / `## Summary` section, then the first paragraph. Remaining candidates render as headlines. `vault_retrieval.tapered_summary_max_chars` (default 140) caps headline summaries; the extension also accepts `top_n_detailed` and `headline_summary_max_chars` as options. The injected banner tells the agent to call `vault_read` for the full L2 body.
 
 **Unknown mode values** in config log a warning and fall back to `RetrievalMode.ALWAYS` (`_resolve_retrieval_mode` coerces the configured value to the enum, so JSON-loaded strings and members behave identically).
 

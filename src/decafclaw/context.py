@@ -129,6 +129,12 @@ class SkillState:
 
     activated: dict[str, str] = field(default_factory=dict)
     data: dict[str, Any] = field(default_factory=dict)
+    # Skill names whose bodies are already part of this turn's prompt — a
+    # user-invoked inline command body, or a schedule's required-skills
+    # <loaded_skills> block. The composer skips these in <activated_skills>
+    # so the body is not sent twice (#1823). Per-turn: a fresh turn context
+    # starts empty, and command/schedule setup fills it.
+    body_in_prompt: set[str] = field(default_factory=set)
     # Skill names surfaced for this turn by pre-emptive keyword matching
     # against the raw user message only (#1049 — no history, no injected
     # context). Skills already in `activated` (including always-loaded) are

@@ -27,6 +27,7 @@ def apply_command_ctx(target_ctx, cmd_ctx) -> None:
     target_ctx.tools.preapproved = cmd_ctx.tools.preapproved
     target_ctx.tools.preapproved_shell_patterns = cmd_ctx.tools.preapproved_shell_patterns
     target_ctx.skills.activated = cmd_ctx.skills.activated
+    target_ctx.skills.body_in_prompt = set(cmd_ctx.skills.body_in_prompt)
     target_ctx.tools.extra.update(cmd_ctx.tools.extra)
     target_ctx.tools.extra_definitions.extend(cmd_ctx.tools.extra_definitions)
     target_ctx.skip_vault_retrieval = cmd_ctx.skip_vault_retrieval
@@ -453,5 +454,8 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> C
         )
         return CommandResult(mode="fork", text=text, skill=skill)
 
-    # Inline mode: return the substituted body as the user message
+    # Inline mode: return the substituted body as the user message. The body
+    # is already in this turn's prompt, so the composer must not render it
+    # again in <activated_skills> (#1823).
+    ctx.skills.body_in_prompt.add(skill.name)
     return CommandResult(mode="inline", text=body, skill=skill)

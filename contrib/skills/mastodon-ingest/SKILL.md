@@ -67,7 +67,7 @@ For each interesting post:
 1. `vault_search` to find existing relevant pages.
 2. If a page exists with existing frontmatter: `vault_read` it, revise with new context. PRESERVE the existing frontmatter as-is. If this post has a URL, APPEND a new entry to the `sources:` list for it (don't modify earlier entries — they record when each source was first added); if there's no URL, leave `sources:` as-is. Either way, append the post to the body `## Sources` section. `vault_write` the updated page.
 3. If a page exists WITHOUT frontmatter: add a full frontmatter block on this write. If this post has a URL, seed `sources:` with just this post; otherwise omit the `sources:` key. Don't backfill historical sources from the body `## Sources` section.
-4. If no page exists: create a new page with a cross-platform safe title (no `:`, `?`, `*`, `"`, `<`, `>`, `|`; replace colons with `" - "`), full YAML frontmatter (see shape below), a body with `[[wiki-links]]`, and a `## Sources` section listing this post.
+4. If no page exists: create a new page with a cross-platform safe title (no `:`, `?`, `*`, `"`, `<`, `>`, `|`; replace colons with `" - "`), full YAML frontmatter (see shape below), a body with `[[wiki-links]]` (vault page names only — **never** a URL inside `[[...]]`; write source links as `[label](url)` or plain text), and a `## Sources` section listing this post.
 
 New-page frontmatter:
 
@@ -85,6 +85,14 @@ sources:
 `sources:` is a YAML list of objects keyed by URL — the list exists for revalidation tooling, which needs a URL to refetch. If the post has no URL, OMIT the `sources:` key entirely from the frontmatter (or leave any existing list unchanged) and just note the source in the body `## Sources` section.
 
 In the `## Sources` section, note the Mastodon post date and include the post URL if available.
+
+**URLs are never wiki-links.** `[[...]]` is reserved for vault page names — a URL inside it can never resolve and shows up in the broken-link audit. Write source URLs as plain text or a markdown link:
+
+- Correct: `- 2026-04-10 ([post](https://masto.hackers.town/@lmorchard/116382362988178531))`
+- Correct: `- https://masto.hackers.town/@lmorchard/116382362988178531 (2026-04-10)`
+- **Wrong:** `[[https://masto.hackers.town/@lmorchard/116382362988178531]]`
+
+"Add `[[wiki-links]]` to the body" means link *related vault pages by name*, not the source URL.
 
 ## Step 4: Finish
 

@@ -44,6 +44,32 @@ _VERTEX_STATIC_MODELS: list[tuple[str, str, bool]] = [
 ]
 _GEMINI_CONTEXT_WINDOW = 1_048_576
 
+# Vertex's aiplatform metadata endpoint reports no token limits (verified
+# 2026-11-25 across v1/v1beta1, publishers/google/models paths, @default,
+# :getModel, and project-scoped variants — all return name/versionId/
+# launchStage only). generativelanguage has inputTokenLimit but refuses
+# service accounts. Google's model docs declare every Gemini 3 / 4 model at
+# 1M. Update when a family with a different window appears; the resolver
+# warns loudly on a miss.
+_VERTEX_CONTEXT_WINDOWS: dict[str, int] = {
+    "gemini-4": 1_048_576,
+    "gemini-3": 1_048_576,
+    "gemini-2.5": 1_048_576,
+}
+
+
+def _vertex_default_context_window(model: str) -> int | None:
+    """Longest-prefix match on the model id.
+
+    ``gemini-3.8-flash``, ``gemini-3.1-pro-preview``, and ``gemini-4-argon``
+    all resolve without a per-model entry.
+    """
+    best = ""
+    for family in _VERTEX_CONTEXT_WINDOWS:
+        if model.startswith(family) and len(family) > len(best):
+            best = family
+    return _VERTEX_CONTEXT_WINDOWS[best] if best else None
+
 
 class VertexProvider:
     """Provider for Google Vertex AI Gemini models.
@@ -306,19 +332,18 @@ class VertexProvider:
         timeout: int = 30,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
-        url = self._base_url(model)
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    url,
-                    headers=await self._headers(),
-                    timeout=timeout,
-                )
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception as e:
-            log.debug("Failed to get model info for %s from Vertex: %s", model, e)
+        """Vertex publishes no token limits in any reachable endpoint.
+
+        Returning ``None`` (the Protocol's "unsupported" value) is the
+        contract. The old implementation GET a URL that 404s, which the
+        resolver negatively cached as a failure. ``default_context_window``
+        supplies the family fallback.
+        """
         return None
+
+    def default_context_window(self, model: str) -> int | None:
+        """Family-keyed fallback for a provider that will not report a limit."""
+        return _vertex_default_context_window(model)
 
     async def discover_models(self, *, timeout: int = 30) -> list[DiscoveredModel]:
         """Return the curated static Gemini list (#1211).
