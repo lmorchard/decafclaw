@@ -149,8 +149,8 @@ def read_env_labels(labels: Dict[str, str]) -> Tuple[Optional[str], Optional[int
     env_id = labels.get(LABEL_ENV_ID) or labels.get(LEGACY_LABEL_ENV_ID) or None
     raw_expires = labels.get(LABEL_EXPIRES_AT) or labels.get(LEGACY_LABEL_EXPIRES_AT)
     try:
-        expires_at = int(raw_expires) if raw_expires else None
-    except ValueError:
+        expires_at = int(float(raw_expires)) if raw_expires else None
+    except (TypeError, ValueError):
         expires_at = None
     return env_id, expires_at
 
@@ -341,10 +341,13 @@ def _reservation_from_labels(
         created_at = float(labels.get(LABEL_CREATED_AT) or labels.get(LEGACY_LABEL_CREATED_AT, 0.0))
     except ValueError:
         created_at = 0.0
+    raw_ttl = labels.get(LABEL_TTL_SECONDS) or labels.get(LEGACY_LABEL_TTL_SECONDS)
     try:
-        ttl_seconds = int(labels.get(LABEL_TTL_SECONDS) or labels[LEGACY_LABEL_TTL_SECONDS])
+        ttl_seconds = int(raw_ttl) if raw_ttl else 0
     except (TypeError, ValueError):
-        ttl_seconds = int(expires_at - created_at) if created_at else 0
+        ttl_seconds = 0
+    if not ttl_seconds and created_at:
+        ttl_seconds = int(expires_at - created_at)
     return EnvReservation(
         env_id=env_id,
         host=host_name,
@@ -1909,6 +1912,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sc.add_argument("--no-wake", dest="wake", action="store_false", help="Do not fire Wake-on-LAN packets")
 
     return parser
+
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)

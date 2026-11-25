@@ -303,7 +303,40 @@ def test_env_destroy_json_and_failure(tmp_path, leases_file, capsys):
 def test_reap_json(tmp_path, leases_file, capsys):
     cfg = _write_fleet(tmp_path / "fleet.json")
     sc.save_leases({"old": _lease("old", expires_at=1.0), "new": _lease("new")})
-    with patch.object(sc, "run_ssh"):
+    rows = [
+        {
+            "Names": ["scavenger-env-old"],
+            "Image": "alpine",
+            "Labels": {
+                "scavenger.env_id": "old",
+                "scavenger.expires_at": "1",
+                "scavenger.created_at": "100",
+                "scavenger.ttl_seconds": "60",
+            },
+        },
+        {
+            "Names": ["scavenger-env-new"],
+            "Image": "alpine",
+            "Labels": {
+                "scavenger.env_id": "new",
+                "scavenger.expires_at": str(10**11),
+                "scavenger.created_at": "100",
+                "scavenger.ttl_seconds": "60",
+            },
+        },
+    ]
+    listing = (
+        "---CONTAINERS---\n"
+        + "\n".join(json.dumps(row) for row in rows)
+        + "\n---VOLUMES---\n\n---NATIVE---\n\n---END---\n"
+    )
+
+    def fake_ssh(alias, command, timeout=15, capture=True):
+        if "---CONTAINERS---" in command:
+            return subprocess.CompletedProcess([], 0, listing, "")
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    with patch.object(sc, "run_ssh", side_effect=fake_ssh):
         code, out, _ = run_cli(capsys, "--config", cfg, "reap", "--json")
     assert code == 0
     assert json.loads(out) == {"reaped": ["old"]}
