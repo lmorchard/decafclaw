@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .archive import read_archive, read_compacted_history, write_compacted_history
+from .archive import parse_timestamp, read_archive, read_compacted_history, write_compacted_history
 from .compaction_decisions import (
     format_slice,
     load_slice,
@@ -519,9 +519,15 @@ def _determine_compaction_mode(
         # Find how many archive messages existed at the time of the last
         # compaction by finding the boundary using the last compacted timestamp.
         # Everything in the archive up to that timestamp was covered.
+        #
+        # Parse before comparing (#1829): the archive mixes naive-local and
+        # UTC-offset stamps, and a string compare stops at the wrong row —
+        # which silently changes which turns count as "newly old".
+        prev_boundary = parse_timestamp(prev_last_ts)
         prev_archive_len = 0
         for i, msg in enumerate(archive):
-            if msg.get("timestamp", "") <= prev_last_ts:
+            ts = parse_timestamp(msg.get("timestamp"))
+            if ts is not None and prev_boundary is not None and ts <= prev_boundary:
                 prev_archive_len = i + 1
             else:
                 break

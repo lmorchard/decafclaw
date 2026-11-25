@@ -323,8 +323,17 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         "vault_retrieval",
         "vault_references",
     }
+    # Rendered rows that are *history*, not *conversation*. Shell approvals
+    # are transient bookkeeping for a decision already reflected in the tool
+    # row below it; background events are job-completion cards. Both crowd
+    # out real turns from a 50-row page — an overnight run can push every
+    # user and assistant message off the first page (#1829). They still
+    # render when they legitimately fall inside the window; they just no
+    # longer consume the budget that decides how far back the window goes.
+    _BUDGET_EXEMPT_ROLES = {"shell_approval", "background_event"}
 
     # Read archive once and reuse for history, token estimation, and model scan
+    from ..archive import parse_timestamp as _parse_ts
     from ..archive import read_archive as _read_archive
     from ..archive import read_compacted_history
 
@@ -345,19 +354,49 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         # the compaction boundary, so newer archive rows are the turns after
         # it. Only the first row is the summary — a real user message that
         # happens to start with the prefix must stay visible.
-        last_ts = max((m.get("timestamp", "") for m in compacted), default="")
-        newer = [m for m in all_msgs if m.get("timestamp", "") > last_ts]
+        #
+        # Compare parsed instants, never raw strings (#1829). Archives mix
+        # naive-local stamps (pre-#1829 writes) with UTC-offset stamps
+        # (background events, confirmation requests), and lexicographic
+        # order across those shapes is wrong by the host's UTC offset — so
+        # every turn typed after a late-evening compaction compared as
+        # "older than the boundary" and vanished from the transcript.
+        boundary = max(
+            (ts for ts in (_parse_ts(m.get("timestamp")) for m in compacted) if ts is not None),
+            default=None,
+        )
+        newer = []
+        for m in all_msgs:
+            ts = _parse_ts(m.get("timestamp"))
+            if ts is not None and boundary is not None and ts > boundary:
+                newer.append(m)
         working = [*compacted, *newer]
         summary = compacted[0]
         is_summary = summary.get("role") == "user" and str(summary.get("content") or "").startswith(SUMMARY_PREFIX)
         display_msgs = [m for m in working if not (is_summary and m is summary)]
 
-    # Paginate: filter by timestamp, take last N
+    # Paginate: filter by timestamp, take last N. The cursor is an opaque
+    # string handed back by the client from a row it already rendered, so a
+    # raw string compare is correct for *equality of shape* only when both
+    # sides came from the same writer. Parse both sides instead.
     filtered = display_msgs
     if before:
-        filtered = [m for m in display_msgs if m.get("timestamp", "") < before]
-    has_more = len(filtered) > limit
-    messages = filtered[-limit:] if has_more else filtered
+        cursor = _parse_ts(before)
+        if cursor is not None:
+            filtered = [m for m in display_msgs if (_parse_ts(m.get("timestamp")) or cursor) < cursor]
+
+    # Count only conversation rows toward `limit`; budget-exempt rows ride
+    # along once the window start is chosen. Walking backwards means the
+    # page always ends at the newest row and extends far enough back to
+    # include `limit` real messages, however many job cards sit in between.
+    start = len(filtered)
+    budget = 0
+    while start > 0 and budget < limit:
+        start -= 1
+        if filtered[start].get("role") not in _BUDGET_EXEMPT_ROLES:
+            budget += 1
+    has_more = start > 0
+    messages = filtered[start:]
 
     # Pair resolved widget confirmations with their tool records so the
     # frontend can show submitted input widgets on reload.
