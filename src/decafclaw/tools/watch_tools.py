@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from ..file_watches import WATCH_EVENTS, FileWatchManager, display_watch_path
 from ..media import ToolResult, WidgetRequest
 from ..secret_policy import is_refused
-from ..web.workspace_paths import PathContainmentError, resolve_contained
+from ..web.workspace_paths import PathContainmentError, resolve_contained, workspace_allowed_roots
 from .schedule_tools import _is_disallowed_task_mode
 
 if TYPE_CHECKING:
@@ -31,7 +31,12 @@ def _resolve_watch_path(ctx: "Context", path: str):
     if not path or not str(path).strip():
         return None, ToolResult(text="[error: path is required]", data={"error": "missing_path"})
     try:
-        target = resolve_contained(ctx.config.workspace_path, str(path).strip(), label="the workspace")
+        target = resolve_contained(
+            ctx.config.workspace_path,
+            str(path).strip(),
+            label="the workspace",
+            allow_roots=workspace_allowed_roots(ctx.config),
+        )
     except PathContainmentError:
         target = None
     if target is None:

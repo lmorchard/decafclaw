@@ -23,7 +23,7 @@ from ..skills import (
     is_discoverable_skill_dir,
     validate_skill_md,
 )
-from ..web.workspace_paths import PathContainmentError, resolve_contained
+from ..web.workspace_paths import PathContainmentError, resolve_contained, workspace_allowed_roots
 from .confirmation import request_confirmation
 
 if TYPE_CHECKING:
@@ -1103,7 +1103,9 @@ def tool_skill_validate(ctx: "Context", path: str) -> ToolResult:
     """Pre-flight validate a single workspace skill directory."""
     log.info(f"[tool:skill_validate] {path}")
     try:
-        target = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        target = resolve_contained(
+            ctx.config.workspace_path, path, label="the workspace", allow_roots=workspace_allowed_roots(ctx.config)
+        )
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
 
