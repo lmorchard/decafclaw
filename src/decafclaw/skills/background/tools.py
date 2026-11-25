@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _OUTPUT_BUFFER_SIZE = 500
+_DEFAULT_RUNNING_TAIL_LINES = 20  # a running-job poll shows the recent tail, not all 500 lines
 _DEFAULT_MAX_LIFETIME = 600  # 10 minutes
 _STOP_GRACE_PERIOD = 2  # seconds between SIGTERM and SIGKILL
 _STICKY_THROTTLE_SEC = 0.5  # min interval between sticky-slot progress updates
@@ -76,6 +77,17 @@ class BackgroundJob:
     max_lifetime: float = _DEFAULT_MAX_LIFETIME
     stdout_buffer: deque = field(default_factory=lambda: deque(maxlen=_OUTPUT_BUFFER_SIZE))
     stderr_buffer: deque = field(default_factory=lambda: deque(maxlen=_OUTPUT_BUFFER_SIZE))
+    # Absolute line counts survive buffer eviction, so an incremental read can
+    # tell "no new output" from "the lines you missed scrolled out" (#1846).
+    stdout_total_lines: int = 0
+    stderr_total_lines: int = 0
+    # Server-owned cursor for shell_background_status(cursor="auto"). The caller
+    # never carries position state; it lives with the per-conversation job.
+    cursor_stdout: int = 0
+    cursor_stderr: int = 0
+    # Set exactly once when the job leaves RUNNING, so a blocking status read
+    # wakes on completion instead of polling.
+    done_event: asyncio.Event = field(default_factory=asyncio.Event)
     reader_task: asyncio.Task | None = None
     exit_code: int | None = None
     status: JobStatus = JobStatus.RUNNING
@@ -151,7 +163,7 @@ async def _read_stream(
 async def _run_reader(job: BackgroundJob) -> None:
     """Read stdout/stderr until process exits, then capture exit code."""
     cancelled = False
-    stdout_hook, stderr_hook = _sticky_stream_hooks(job)
+    stdout_hook, stderr_hook = _stream_hooks(job)
     try:
         await asyncio.gather(
             _read_stream(job.process.stdout, job.stdout_buffer, on_line=stdout_hook),
@@ -426,6 +438,30 @@ def _sticky_line_hook(job: BackgroundJob) -> Callable[[str], Awaitable[None]] | 
     return stdout_hook
 
 
+def _stream_hooks(
+    job: BackgroundJob,
+) -> tuple[Callable[[str], Awaitable[None]], Callable[[str], Awaitable[None]]]:
+    """Count every line and, when pin_sticky is on, forward it to the sticky hook.
+
+    The counters always run: incremental status reads need an absolute
+    position even when nothing is pinned (#1846).
+    """
+    sticky_stdout, sticky_stderr = _sticky_stream_hooks(job)
+
+    def _counting(stream: str, sticky: Callable[[str], Awaitable[None]] | None) -> Callable[[str], Awaitable[None]]:
+        async def on_line(line: str) -> None:
+            if stream == "stdout":
+                job.stdout_total_lines += 1
+            else:
+                job.stderr_total_lines += 1
+            if sticky is not None:
+                await sticky(line)
+
+        return on_line
+
+    return _counting("stdout", sticky_stdout), _counting("stderr", sticky_stderr)
+
+
 async def _finalize_job(job: BackgroundJob) -> None:
     """Run the post-exit sequence: append archive record, finalize the sticky
     slot, emit inbox notification, enqueue a wake turn. Called EXACTLY ONCE
@@ -434,6 +470,9 @@ async def _finalize_job(job: BackgroundJob) -> None:
     if job.finalized:
         return
     job.finalized = True
+    # Unblock any shell_background_status(wait=...) caller before the slower
+    # archive/notification/wake sequence.
+    job.done_event.set()
 
     # Deterministically release the subprocess transport now that the process
     # has exited, while the event loop is still alive. asyncio otherwise only
@@ -508,6 +547,74 @@ def _tail_clamped(lines: deque, n: int, max_bytes: int = 4096) -> str:
     return s
 
 
+def _output_window(
+    buffer: deque,
+    total: int,
+    *,
+    cursor: int | None,
+    from_start: bool,
+    tail_lines: int | None,
+) -> tuple[list[str], int, int, bool]:
+    """Select the output lines for one status read (#1846).
+
+    Returns ``(lines, next_cursor, gap_lines, buffer_truncated)``.
+
+    - ``cursor is None``: full/default read; ``tail_lines`` may trim it.
+    - ``from_start``: explicit re-read of everything still buffered; the cursor
+      is not advanced.
+    - otherwise: incremental read from ``cursor``. If that position has left
+      the 500-line buffer, return the whole buffer and report the gap — never
+      silently drop output.
+    """
+    buffered = list(buffer)
+    available_start = max(0, total - len(buffered))
+    if from_start or cursor is None:
+        lines = buffered
+        if tail_lines is not None:
+            lines = lines[-tail_lines:] if tail_lines else []
+        return lines, cursor if cursor is not None else total, 0, total > len(buffered)
+
+    gap = max(0, available_start - cursor) + max(0, cursor - total)
+    if gap:
+        return buffered, total, gap, False
+    return buffered[cursor - available_start :], total, 0, False
+
+
+def _window_notes(
+    label: str,
+    lines: list[str],
+    total: int,
+    gap_lines: int,
+    buffer_truncated: bool,
+    *,
+    status: JobStatus,
+    cursor_mode: bool,
+    tail_applied: bool,
+) -> list[str]:
+    """Explain anything a status read is not showing, so it is never quietly partial."""
+    notes: list[str] = []
+    if gap_lines:
+        notes.append(
+            f"{label} cursor gap: {gap_lines} line(s) were not shown because they left "
+            f"the {_OUTPUT_BUFFER_SIZE}-line buffer."
+        )
+    if buffer_truncated and not tail_applied:
+        notes.append(
+            f"{label}: showing the last {len(lines)} of {total} captured line(s); "
+            f"older lines left the {_OUTPUT_BUFFER_SIZE}-line buffer."
+        )
+    if cursor_mode and not lines and total > 0:
+        if status == JobStatus.RUNNING:
+            notes.append(f"{label}: no new output since the last cursor read.")
+        else:
+            notes.append(
+                f"{label}: cursor caught up; no unread output. Use from_start=true to re-read the buffered output."
+            )
+    elif tail_applied and len(lines) < total:
+        notes.append(f"{label}: showing the last {len(lines)} of {total} captured line(s) while the job runs.")
+    return notes
+
+
 def build_background_event_record(
     *,
     job_id: str,
@@ -557,6 +664,7 @@ def format_status_text(
     stdout: str,
     stderr: str,
     kill_note: str | None = None,
+    captured_output: bool = False,
 ) -> str:
     """Render a background-job status as markdown text.
 
@@ -565,7 +673,9 @@ def format_status_text(
     woken agent sees the same format).
 
     ``kill_note`` lets a caller forward a note persisted on the archive record;
-    when omitted it is derived from ``exit_code``.
+    when omitted it is derived from ``exit_code``. ``captured_output`` says the
+    job produced lines that this particular view omitted (a caught-up cursor),
+    so the "none captured before termination" fallback must not fire.
     """
     parts = [f"**Job `{job_id}`** — {status}"]
     parts.append(f"- **Command:** `{command}`")
@@ -587,7 +697,12 @@ def format_status_text(
         parts.append(f"**stdout:**\n```\n{stdout}\n```")
     if stderr:
         parts.append(f"**stderr:**\n```\n{stderr}\n```")
-    if not stdout and not stderr and status not in (JobStatus.COMPLETED.value, JobStatus.RUNNING.value):
+    if (
+        not stdout
+        and not stderr
+        and not captured_output
+        and status not in (JobStatus.COMPLETED.value, JobStatus.RUNNING.value)
+    ):
         # A killed or failed run with no captured lines is not a clean
         # "no output" success; say so explicitly (#1746).
         parts.append("- **Output:** none captured before termination")
@@ -943,9 +1058,41 @@ async def tool_shell_background_start(
     )
 
 
-async def tool_shell_background_status(ctx: "Context", job_id: str) -> ToolResult:
-    """Check the status of a background job and get recent output."""
-    log.info(f"[tool:shell_background_status] job_id={job_id}")
+async def tool_shell_background_status(
+    ctx: "Context",
+    job_id: str,
+    wait: float = 0.0,
+    cursor: str = "",
+    from_start: bool = False,
+    tail_lines: int | None = None,
+) -> ToolResult:
+    """Check a background job, optionally blocking and/or reading incrementally.
+
+    ``wait`` blocks up to that many seconds until the job leaves RUNNING.
+    ``cursor="auto"`` returns only stdout/stderr lines since this
+    conversation's previous cursor read; the cursor lives on the job, so the
+    caller never carries position state. ``from_start=true`` re-reads the whole
+    buffer and leaves the cursor untouched. ``tail_lines`` trims a running-job
+    read (default 20); a finished job always returns everything unread.
+    """
+    log.info(
+        f"[tool:shell_background_status] job_id={job_id} wait={wait} "
+        f"cursor={cursor!r} from_start={from_start} tail_lines={tail_lines}"
+    )
+    if wait < 0:
+        return ToolResult(text="[error: wait must be >= 0]", data={"status": "error"})
+    if cursor not in ("", "auto"):
+        return ToolResult(
+            text="[error: cursor must be empty or 'auto']",
+            data={"status": "error"},
+        )
+    if cursor and from_start:
+        return ToolResult(
+            text="[error: cursor and from_start are mutually exclusive]",
+            data={"status": "error"},
+        )
+    if tail_lines is not None and tail_lines < 0:
+        return ToolResult(text="[error: tail_lines must be >= 0]", data={"status": "error"})
 
     manager = _get_job_manager(ctx)
     await manager.cleanup_expired()
@@ -957,6 +1104,15 @@ async def tool_shell_background_status(ctx: "Context", job_id: str) -> ToolResul
             data={"status": "error"},
         )
 
+    wait_timed_out = False
+    if wait > 0 and job.status == JobStatus.RUNNING:
+        try:
+            await asyncio.wait_for(job.done_event.wait(), timeout=wait)
+        except asyncio.TimeoutError:
+            # Completion may have landed as the timeout fired; report the
+            # actual state rather than a stale timeout.
+            wait_timed_out = job.status == JobStatus.RUNNING
+
     now = time.monotonic()
     elapsed_ms = int((now - job.started_at) * 1000)
     remaining_ms = None
@@ -964,8 +1120,35 @@ async def tool_shell_background_status(ctx: "Context", job_id: str) -> ToolResul
         remaining = job.max_lifetime - (now - job.started_at)
         remaining_ms = max(0, int(remaining * 1000))
 
-    stdout = "\n".join(job.stdout_buffer)
-    stderr = "\n".join(job.stderr_buffer)
+    cursor_mode = cursor == "auto" and not from_start
+    running = job.status == JobStatus.RUNNING
+    # A finished job returns everything unread/buffered. While running, the
+    # default is a small tail; an explicit cursor read ignores tail_lines
+    # because the point is the complete unread delta.
+    effective_tail: int | None = None
+    if not cursor_mode and not from_start and running:
+        effective_tail = _DEFAULT_RUNNING_TAIL_LINES if tail_lines is None else min(tail_lines, _OUTPUT_BUFFER_SIZE)
+
+    stdout_lines, next_stdout, stdout_gap, stdout_truncated = _output_window(
+        job.stdout_buffer,
+        job.stdout_total_lines,
+        cursor=job.cursor_stdout if cursor_mode else None,
+        from_start=from_start,
+        tail_lines=effective_tail,
+    )
+    stderr_lines, next_stderr, stderr_gap, stderr_truncated = _output_window(
+        job.stderr_buffer,
+        job.stderr_total_lines,
+        cursor=job.cursor_stderr if cursor_mode else None,
+        from_start=from_start,
+        tail_lines=effective_tail,
+    )
+    if cursor_mode:
+        job.cursor_stdout = next_stdout
+        job.cursor_stderr = next_stderr
+
+    stdout = "\n".join(stdout_lines)
+    stderr = "\n".join(stderr_lines)
 
     text = format_status_text(
         job_id=job_id,
@@ -977,7 +1160,31 @@ async def tool_shell_background_status(ctx: "Context", job_id: str) -> ToolResul
         exit_code=job.exit_code,
         stdout=stdout,
         stderr=stderr,
+        captured_output=bool(job.stdout_total_lines or job.stderr_total_lines),
     )
+    notes = _window_notes(
+        "stdout",
+        stdout_lines,
+        job.stdout_total_lines,
+        stdout_gap,
+        stdout_truncated,
+        status=job.status,
+        cursor_mode=cursor_mode,
+        tail_applied=effective_tail is not None,
+    ) + _window_notes(
+        "stderr",
+        stderr_lines,
+        job.stderr_total_lines,
+        stderr_gap,
+        stderr_truncated,
+        status=job.status,
+        cursor_mode=cursor_mode,
+        tail_applied=effective_tail is not None,
+    )
+    if wait_timed_out:
+        notes.insert(0, f"Wait timed out after {wait:.1f}s; the job is still running.")
+    if notes:
+        text += "\n\n" + "\n".join(f"- {note}" for note in notes)
 
     return ToolResult(
         text=text,
@@ -990,6 +1197,13 @@ async def tool_shell_background_status(ctx: "Context", job_id: str) -> ToolResul
             "command": job.command,
             "elapsed_ms": elapsed_ms,
             "remaining_ms": remaining_ms,
+            "wait_timed_out": wait_timed_out,
+            "cursor": {
+                "stdout": job.cursor_stdout,
+                "stderr": job.cursor_stderr,
+                "stdout_total": job.stdout_total_lines,
+                "stderr_total": job.stderr_total_lines,
+            },
         },
     )
 
@@ -1192,13 +1406,21 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": False,
+        "timeout": None,  # wait= can intentionally block past the default tool timeout
         "function": {
             "name": "shell_background_status",
             "description": (
                 "Check the status and monitor progress of a background job or running build. "
                 # Status list derived from JobStatus so the schema stays in sync (#1383).
-                f"Returns {'/'.join(s.value for s in JobStatus)} status, exit code, and the last 500 lines of "
-                "stdout and stderr. Use to watch progress and check back on output."
+                f"Returns {'/'.join(s.value for s in JobStatus)} status, exit code, and recent stdout/stderr. "
+                "While the job runs, the default is its last 20 lines (tail_lines overrides); "
+                "a finished job returns its full buffered output. "
+                "Use wait to block until the job finishes or the timeout expires instead of "
+                "guessing sleeps. Use cursor='auto' for only the output since the previous "
+                "cursor read in this conversation: the cursor is server-owned, the completion "
+                "read returns everything unread, and a gap is reported instead of silently "
+                "dropping lines. from_start=true re-reads the whole buffer and leaves the "
+                "cursor untouched."
             ),
             "parameters": {
                 "type": "object",
@@ -1206,6 +1428,40 @@ TOOL_DEFINITIONS = [
                     "job_id": {
                         "type": "string",
                         "description": "Job ID from shell_background_start",
+                    },
+                    "wait": {
+                        "type": "number",
+                        "description": (
+                            "Seconds to block waiting for the job to leave running. "
+                            "Returns immediately when it finishes. Optional; default 0 "
+                            "(do not block). Negative values are rejected."
+                        ),
+                    },
+                    "cursor": {
+                        "type": "string",
+                        "enum": ["auto"],
+                        "description": (
+                            "Set to 'auto' to return only stdout/stderr lines since this "
+                            "conversation's previous cursor read. The server owns the "
+                            "position. A finished job's next cursor read returns "
+                            "everything unread."
+                        ),
+                    },
+                    "from_start": {
+                        "type": "boolean",
+                        "description": (
+                            "Re-read the entire buffered output instead of the cursor "
+                            "delta. Does not advance the cursor. Mutually exclusive "
+                            "with cursor='auto'. Optional; default false."
+                        ),
+                    },
+                    "tail_lines": {
+                        "type": "integer",
+                        "description": (
+                            "Number of trailing buffered lines to return while the job "
+                            "is still running (default 20, max 500). Ignored for a "
+                            "finished job and for cursor='auto'. Optional."
+                        ),
                     },
                 },
                 "required": ["job_id"],
