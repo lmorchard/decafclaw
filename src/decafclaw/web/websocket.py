@@ -330,10 +330,30 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
 
     all_msgs = _read_archive(config, conv_id)
 
+    # Serve the compacted working history, not the raw append-only archive
+    # (#1823). Summarized content must not reappear as ghosts when the user
+    # pages back. Newer archive rows appended after the last compaction are
+    # still included; the summary row itself is prompt plumbing (the
+    # compaction notice is shown separately).
+    compacted = read_compacted_history(config, conv_id)
+    working = all_msgs
+    display_msgs = all_msgs
+    if compacted:
+        from ..compaction import SUMMARY_PREFIX
+
+        last_ts = compacted[-1].get("timestamp", "")
+        newer = [m for m in all_msgs if m.get("timestamp", "") > last_ts]
+        working = [*compacted, *newer]
+        display_msgs = [
+            m
+            for m in working
+            if not (m.get("role") == "user" and str(m.get("content") or "").startswith(SUMMARY_PREFIX))
+        ]
+
     # Paginate: filter by timestamp, take last N
-    filtered = all_msgs
+    filtered = display_msgs
     if before:
-        filtered = [m for m in all_msgs if m.get("timestamp", "") < before]
+        filtered = [m for m in display_msgs if m.get("timestamp", "") < before]
     has_more = len(filtered) > limit
     messages = filtered[-limit:] if has_more else filtered
 
@@ -373,7 +393,6 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     if not before:
         from ..compaction import estimate_history_tokens
 
-        working = read_compacted_history(config, conv_id) or all_msgs
         if working:
             estimated_tokens = estimate_history_tokens(working)
 
