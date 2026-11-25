@@ -361,9 +361,11 @@ describe('conversation-sidebar on-demand retitle action', () => {
 
     const row = sidebar.querySelector('.conv-item[title*="Trip planning"]');
     expect(row).toBeTruthy();
-    const retitleBtn = row.querySelector('button[title="Regenerate title"]');
+    const menu = row.querySelector('details.conv-menu');
+    menu.open = true;
+    await sidebar.updateComplete;
+    const retitleBtn = [...row.querySelectorAll('.conv-menu-item')].find((b) => b.textContent.includes('Regenerate title'));
     expect(retitleBtn).toBeTruthy();
-    expect(retitleBtn.textContent).toBe('✨');
 
     retitleBtn.click();
     expect(store.retitleConversation).toHaveBeenCalledWith('c1');
@@ -584,6 +586,16 @@ describe('conversation-sidebar session move (#1277)', () => {
     await /** @type {any} */ (sidebar).updateComplete;
   }
 
+  /** Open the session menu and click its Move item. */
+  async function openMovePicker(el) {
+    const menu = el.querySelector('.conv-session .conv-menu');
+    menu.open = true;
+    await flush();
+    const item = [...el.querySelectorAll('.conv-menu-item')].find((i) => i.textContent.includes('Move to folder'));
+    item.click();
+    await flush();
+  }
+
   async function mountMove(storeOverrides = {}) {
     const store = Object.assign(new EventTarget(), {
       currentConvId: 'web-alice-r1',
@@ -725,8 +737,7 @@ describe('conversation-sidebar session move (#1277)', () => {
     const { sidebar: el, store } = await mountMove({
       listAllFolders: vi.fn(async () => ['Work', 'Work/Plans', 'a/b']),
     });
-    el.querySelector('.conv-move-btn').click();
-    await flush();
+    await openMovePicker(el);
     const options = [...el.querySelectorAll('.conv-move-option')].map((o) => o.textContent.trim());
     expect(options[0]).toBe('Top level (current)');
     expect(options).toContain('Work');
@@ -743,8 +754,7 @@ describe('conversation-sidebar session move (#1277)', () => {
 
   it('marks the current folder disabled and focuses the first option', async () => {
     const { sidebar: el } = await mountMove({ currentFolder: 'Work' });
-    el.querySelector('.conv-move-btn').click();
-    await flush();
+    await openMovePicker(el);
     const work = [...el.querySelectorAll('.conv-move-option')].find((o) => o.textContent.includes('Work'));
     expect(work.disabled).toBe(true);
     expect(work.textContent).toContain('(current)');
@@ -753,9 +763,8 @@ describe('conversation-sidebar session move (#1277)', () => {
 
   it('closes with Escape and returns focus to the move action', async () => {
     const { sidebar: el } = await mountMove();
-    const trigger = el.querySelector('.conv-move-btn');
-    trigger.click();
-    await flush();
+    const trigger = el.querySelector('.conv-menu-btn');
+    await openMovePicker(el);
     expect(el.querySelector('.conv-move-picker')).toBeTruthy();
 
     el.querySelector('.conv-move-picker').dispatchEvent(
@@ -771,9 +780,8 @@ describe('conversation-sidebar session move (#1277)', () => {
       currentFolder: '',
       listAllFolders: vi.fn(async () => []),
     });
-    const trigger = el.querySelector('.conv-move-btn');
-    trigger.click();
-    await flush();
+    const trigger = el.querySelector('.conv-menu-btn');
+    await openMovePicker(el);
     const close = el.querySelector('.conv-move-picker-close');
     expect(close).toBeTruthy();
     expect(document.activeElement).toBe(close);
@@ -793,9 +801,8 @@ describe('conversation-sidebar session move (#1277)', () => {
     const { sidebar: el } = await mountMove({
       listAllFolders: vi.fn(() => pending),
     });
-    const trigger = el.querySelector('.conv-move-btn');
-    trigger.click();
-    await flush();
+    const trigger = el.querySelector('.conv-menu-btn');
+    await openMovePicker(el);
 
     const picker = el.querySelector('.conv-move-picker');
     expect(picker).toBeTruthy();
@@ -830,7 +837,7 @@ describe('conversation-sidebar session move (#1277)', () => {
     const row = el.querySelector('.conv-item.archived');
     expect(row).toBeTruthy();
     expect(row.getAttribute('draggable')).toBeNull();
-    expect(row.querySelector('.conv-move-btn')).toBeNull();
+    expect([...row.querySelectorAll('.conv-menu-item')].some((i) => i.textContent.includes('Move to folder'))).toBe(false);
   });
 
   it('offers no move action and no drag source on system rows', async () => {
@@ -844,7 +851,7 @@ describe('conversation-sidebar session move (#1277)', () => {
     const row = el.querySelector('.conv-item.system');
     expect(row).toBeTruthy();
     expect(row.getAttribute('draggable')).toBeNull();
-    expect(row.querySelector('.conv-move-btn')).toBeNull();
+    expect([...row.querySelectorAll('.conv-menu-item')].some((i) => i.textContent.includes('Move to folder'))).toBe(false);
   });
 
   it('clears the drop-target highlight on dragend, dragleave, and drop', async () => {
