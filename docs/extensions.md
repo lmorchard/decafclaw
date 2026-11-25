@@ -372,7 +372,7 @@ state for reflection and the Context Inspector, publishes the
 `vault_retrieval` UI event, and publishes `retrieval_event` telemetry.
 
 Modes and gates match the pre-extraction behavior: `always`, `headlines`,
-`on_demand`; skipped for heartbeat, scheduled, and child-agent turns; honors
+`tapered`, `on_demand`; skipped for heartbeat, scheduled, and child-agent turns; honors
 `ctx.skip_vault_retrieval`. The extension declares
 `pre_compose_timeout = 5.0` because the first retrieval loads the embedding
 model.
@@ -386,6 +386,8 @@ section:
 | `max_results` | `vault_retrieval.max_results` | `5` |
 | `max_tokens` | `vault_retrieval.max_tokens` | `4000` |
 | `headline_summary_max_chars` | `vault_retrieval.headline_summary_max_chars` | `200` |
+| `top_n_detailed` | `vault_retrieval.tapered_top_n_detailed` | `1` |
+| `tapered_summary_max_chars` | `vault_retrieval.tapered_summary_max_chars` | `140` |
 | `show_in_ui` | `vault_retrieval.show_in_ui` | `true` |
 
 Disabled (`extensions.vault_retrieval.enabled: false`), the agent keeps

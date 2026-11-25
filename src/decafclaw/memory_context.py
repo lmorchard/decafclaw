@@ -205,7 +205,7 @@ def _enrich_results(config, results: list[dict]) -> list[dict]:
                     # retrieval mode — see #301.
                     if source_type in ("page", "user"):
                         text = full_path.read_text()
-                        metadata, _ = parse_frontmatter(text)
+                        metadata, body = parse_frontmatter(text)
                         if metadata:
                             result["importance"] = get_frontmatter_field(
                                 metadata,
@@ -215,6 +215,9 @@ def _enrich_results(config, results: list[dict]) -> list[dict]:
                             summary = get_frontmatter_field(metadata, "summary", "")
                             if summary:
                                 result["summary"] = str(summary)
+                        excerpt = _extract_tapered_excerpt(body)
+                        if excerpt:
+                            result["l1_excerpt"] = excerpt
         except Exception:
             log.warning("Failed to enrich result %s", result.get("file_path", "?"), exc_info=True)
 
@@ -296,10 +299,12 @@ def _expand_graph_links(
                 mtime = os.path.getmtime(linked_path)
                 modified_at = datetime.fromtimestamp(mtime).isoformat()
                 entry_text = build_composite_text(metadata, body)
+                l1_excerpt = _extract_tapered_excerpt(body)
             except Exception:
                 importance = 0.5
                 modified_at = ""
                 entry_text = linked_text
+                l1_excerpt = ""
 
             expanded.append(
                 {
@@ -310,6 +315,7 @@ def _expand_graph_links(
                     "linked_from": parent_page,
                     "importance": importance,
                     "modified_at": modified_at,
+                    "l1_excerpt": l1_excerpt,
                 }
             )
             added_count += 1
@@ -371,6 +377,142 @@ def format_memory_headlines(
             f"- [{label}] {path} · {summary} · score {score:.2f}",
         )
     return "\n".join(lines)
+
+
+TAPERED_BANNER = (
+    "[Automatically retrieved context — L0 summaries and L1 abstracts, not from the user. "
+    "Call vault_read with a page path to read the full L2 body.]"
+)
+
+# `> tl;dr: ...` or `> **TL;DR:** ...` blockquote opener.
+_TLDR_RE = re.compile(
+    r"^\s*>\s*(?:\*\*)?tl;?dr\s*(?:\*\*)?\s*[:—–-]?\s*(?:\*\*)?\s*(.*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Named overview sections worth treating as an L1 abstract when no tl;dr exists.
+_TAPERED_SECTION_NAMES = ("Standing Model", "Operating Consensus", "Overview", "Summary")
+
+
+def _clip_abstract(text: str, max_chars: int) -> str:
+    """Collapse whitespace and truncate an abstract to ``max_chars``."""
+    cleaned = " ".join(text.split())
+    if max_chars > 0 and len(cleaned) > max_chars:
+        return cleaned[:max_chars].rstrip() + "…"
+    return cleaned
+
+
+def _extract_tapered_excerpt(text: str, *, max_chars: int = 600) -> str:
+    """Extract an L1 abstract from a page body (#1815).
+
+    Order: a ``> tl;dr:`` blockquote, then a named overview section
+    (``## Standing Model``, ``## Operating Consensus``, ``## Overview``,
+    ``## Summary``), then the first non-heading paragraph. Returns "" when
+    the text carries nothing useful.
+    """
+    if not text:
+        return ""
+    body = text
+    if body.startswith("---"):
+        end = body.find("\n---", 3)
+        if end > 0:
+            body = body[end + 4 :]
+    body = body.strip()
+    if not body:
+        return ""
+
+    match = _TLDR_RE.search(body)
+    if match:
+        lines = [match.group(1).strip()]
+        continuation = body[match.end() :].splitlines()
+        if continuation and not continuation[0].strip():
+            continuation = continuation[1:]
+        for line in continuation:
+            stripped = line.strip()
+            if not stripped.startswith(">"):
+                break
+            lines.append(stripped.lstrip(">").strip())
+        excerpt = _clip_abstract(" ".join(line for line in lines if line), max_chars)
+        if excerpt:
+            return excerpt
+
+    for name in _TAPERED_SECTION_NAMES:
+        heading = re.compile(rf"^##+\s+{re.escape(name)}\s*$", re.IGNORECASE | re.MULTILINE)
+        heading_match = heading.search(body)
+        if not heading_match:
+            continue
+        rest = body[heading_match.end() :]
+        next_heading = re.search(r"^##+\s+", rest, re.MULTILINE)
+        section = rest[: next_heading.start()] if next_heading else rest
+        excerpt = _clip_abstract(section, max_chars)
+        if excerpt:
+            return excerpt
+
+    for block in re.split(r"\n\s*\n", body):
+        block = block.strip()
+        if not block or block.startswith("#"):
+            continue
+        excerpt = _clip_abstract(block, max_chars)
+        if excerpt:
+            return excerpt
+    return ""
+
+
+def format_memory_tapered(
+    results: list[dict],
+    *,
+    top_n_detailed: int = 1,
+    max_summary_chars: int = 140,
+    max_excerpt_chars: int = 600,
+) -> str:
+    """Render retrieval results as tapered L0/L1 abstracts (#1815).
+
+    The top ``top_n_detailed`` candidates get their frontmatter ``summary``
+    (L0) plus a short body abstract (L1). Trailing candidates collapse to one
+    headline line each (L0 only). The banner tells the agent the full L2 body
+    is available through ``vault_read``.
+
+    Returns "" on empty input.
+    """
+    if not results:
+        return ""
+    detailed_count = max(0, int(top_n_detailed))
+    parts: list[str] = [TAPERED_BANNER]
+    for r in results[:detailed_count]:
+        label = SOURCE_LABELS.get(r.get("source_type", ""), r.get("source_type", "?"))
+        path = r.get("file_path", "")
+        score = r.get("composite_score", r.get("similarity", 0))
+        header = (
+            f"--- [{label}] [[{path}]] (score: {score:.2f}) ---" if path else f"--- [{label}] (score: {score:.2f}) ---"
+        )
+        block = [header]
+        summary = r.get("summary") or ""
+        if summary:
+            block.append(f"Summary: {_clip_abstract(str(summary), max_summary_chars)}")
+        excerpt = r.get("l1_excerpt") or _extract_tapered_excerpt(
+            r.get("entry_text", ""),
+            max_chars=max_excerpt_chars,
+        )
+        if excerpt:
+            block.append(excerpt)
+        parts.append("\n".join(block))
+
+    trailing = results[detailed_count:]
+    if trailing:
+        lines = ["More matches (L0 only):"]
+        for r in trailing:
+            label = SOURCE_LABELS.get(r.get("source_type", ""), r.get("source_type", "?"))
+            path = r.get("file_path", "")
+            summary = r.get("summary") or _excerpt_for_headline(
+                r.get("entry_text", ""),
+                max_summary_chars,
+            )
+            if max_summary_chars > 0 and len(summary) > max_summary_chars:
+                summary = summary[:max_summary_chars].rstrip() + "…"
+            score = r.get("composite_score", r.get("similarity", 0))
+            lines.append(f"- [{label}] {path} · {summary} · score {score:.2f}")
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
 
 
 def _excerpt_for_headline(text: str, max_chars: int) -> str:

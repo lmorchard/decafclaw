@@ -466,6 +466,7 @@ class RetrievalMode(StrEnum):
 
     ALWAYS = "always"  # inject scored full-body candidates (default, back-compat)
     HEADLINES = "headlines"  # title + summary + score only; agent pulls bodies via vault_read
+    TAPERED = "tapered"  # L0 summary + L1 abstract for top hits; L0 headlines for the rest
     ON_DEMAND = "on_demand"  # no auto-injection; agent drives via vault_search / vault_read
 
 
@@ -522,12 +523,19 @@ class VaultRetrievalConfig:
     #   "always"    — current default; inject scored full-body candidates
     #   "headlines" — inject title + summary + score only; agent calls
     #                 vault_read for full bodies on demand
+    #   "tapered"   — L0 summary + L1 abstract for the top `tapered_top_n_detailed`
+    #                 hits, L0 headlines for the rest; agent calls vault_read
+    #                 for full bodies on demand (#1815)
     #   "on_demand" — inject nothing; agent drives retrieval via
     #                 vault_search / vault_read. @[[Page]] mentions
     #                 still inject (those are user-driven).
     # An unknown value logs a warning at compose time and falls back to "always".
     mode: RetrievalMode = RetrievalMode.ALWAYS
     headline_summary_max_chars: int = 120
+    # Tapered mode: how many candidates get an L1 abstract, and the headline
+    # summary cap for the trailing L0-only candidates.
+    tapered_top_n_detailed: int = 1
+    tapered_summary_max_chars: int = 140
     # Hybrid lexical + dense retrieval (#1816). The lexical FTS5 branch and
     # the dense vector branch are fused with reciprocal rank fusion:
     #   RRF(d) = vector_weight / (rrf_k + rank_vector) +

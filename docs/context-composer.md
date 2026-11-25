@@ -499,6 +499,7 @@ By default, every interactive turn auto-injects scored full-body candidates from
 |---|---|---|
 | `always` (default) | Full bodies of scored candidates | Back-compat; deployments with small vaults or where the cost of a stray `vault_read` round-trip outweighs the inject cost. |
 | `headlines` | One compact line per candidate (`file_path · summary · score`); no full bodies | Larger vaults where most retrieved candidates aren't actually consulted. The agent sees a directory of available pages and pulls full bodies via `vault_read` only when warranted. |
+| `tapered` | L0 frontmatter `summary` + L1 body abstract (a `> tl;dr:` blockquote or named overview section) for the top candidates; L0 headlines for the rest | Middle ground: enough technical grounding to answer from the abstract, while keeping a page's full body one `vault_read` away. |
 | `on_demand` | Nothing | Aggressive just-in-time strategy: skip auto-retrieval entirely, let the agent drive via `vault_search` / `vault_read`. |
 
 `@[[Page]]` mentions inject regardless of mode (those are user-driven explicit references, not auto-retrieval).
@@ -506,6 +507,8 @@ By default, every interactive turn auto-injects scored full-body candidates from
 **Empty result sets** (no candidates, all suppressed because already-injected, or all below `relevance.min_composite_score`) emit a `SourceEntry` with `mode` and `injection_skipped: true` so the context inspector can show retrieval ran but didn't inject. When the cause is already-injected suppression, the entry also records `drop_reason: "already_injected"`, the suppressed count, `candidates_considered`, and the token budget that was evaluated.
 
 **Headlines format** uses each result's `summary` frontmatter field when present, falls back to a truncated body excerpt. Configurable cap via `vault_retrieval.headline_summary_max_chars` (default 120).
+
+**Tapered format** (#1815) renders the top `vault_retrieval.tapered_top_n_detailed` (default 1) candidates as a header with score and wikilink, the L0 frontmatter `summary`, and an L1 abstract extracted from the body — a `> tl;dr:` blockquote first, then a `## Standing Model` / `## Operating Consensus` / `## Overview` / `## Summary` section, then the first paragraph. Remaining candidates render as headlines. `vault_retrieval.tapered_summary_max_chars` (default 140) caps headline summaries; the extension also accepts `top_n_detailed` and `headline_summary_max_chars` as options. The injected banner tells the agent to call `vault_read` for the full L2 body.
 
 **Unknown mode values** in config log a warning and fall back to `RetrievalMode.ALWAYS` (`_resolve_retrieval_mode` coerces the configured value to the enum, so JSON-loaded strings and members behave identically).
 
