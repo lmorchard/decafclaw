@@ -55,7 +55,7 @@ def _write_schedule(path: Path) -> None:
     path.write_text(SCHEDULE)
 
 
-async def _prompt_for(config, task) -> str:
+async def _prompt_for(config, task) -> tuple[str, set[str]]:
     from decafclaw.conversation_manager import ConversationManager
 
     manager = ConversationManager(config, EventBus())
@@ -65,11 +65,12 @@ async def _prompt_for(config, task) -> str:
         from decafclaw.media import ToolResult
 
         seen["prompt"] = user_message
+        seen["body_in_prompt"] = set(ctx.skills.body_in_prompt)
         return ToolResult(text="Done.")
 
     with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run), patch("decafclaw.notifications.notify"):
         await run_schedule_task(config, EventBus(), manager, task)
-    return seen["prompt"]
+    return seen["prompt"], seen["body_in_prompt"]
 
 
 @pytest.mark.asyncio
@@ -83,10 +84,11 @@ async def test_admin_schedule_omits_workspace_skill_body(config):
     task = {t.name: t for t in discover_schedules(config)}["maintenance"]
     assert task.source == "admin", "the schedule itself is human-controlled"
 
-    prompt = await _prompt_for(config, task)
+    prompt, body_in_prompt = await _prompt_for(config, task)
 
     assert MARKER_TEXT not in prompt, "agent-authored body reached a trusted prompt"
     assert '<skill name="helper">' not in prompt
+    assert "helper" not in body_in_prompt
 
 
 @pytest.mark.asyncio
@@ -98,10 +100,12 @@ async def test_admin_schedule_includes_admin_skill_body(config):
     assert {s.name: s.trust_tier for s in config.discovered_skills}["helper"] == "admin"
 
     task = {t.name: t for t in discover_schedules(config)}["maintenance"]
-    prompt = await _prompt_for(config, task)
+    prompt, body_in_prompt = await _prompt_for(config, task)
 
     assert MARKER_TEXT in prompt
     assert '<skill name="helper">' in prompt
+    # The prompt already carries the body; the composer must skip it (#1823).
+    assert "helper" in body_in_prompt
 
 
 @pytest.mark.asyncio
@@ -115,6 +119,7 @@ async def test_extra_tier_skill_body_still_injected(config, tmp_path):
     assert {s.name: s.trust_tier for s in config.discovered_skills}["helper"] == "extra"
 
     task = {t.name: t for t in discover_schedules(config)}["maintenance"]
-    prompt = await _prompt_for(config, task)
+    prompt, body_in_prompt = await _prompt_for(config, task)
 
     assert MARKER_TEXT in prompt
+    assert "helper" in body_in_prompt

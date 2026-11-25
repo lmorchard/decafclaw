@@ -182,6 +182,38 @@ Not every injection is ephemeral. Explicit `@` references and pre-emptive
 discovery hints stay in `TAIL`/`EPILOGUE` because they are tied to the user's
 request and remain useful when the turn is replayed.
 
+#### Activated skills block (#1823)
+
+Every on-demand skill in `ctx.skills.activated` contributes its body to one
+`<activated_skills>` message mounted after the current user message and before
+the `EPILOGUE` hints. Always-loaded skills are skipped: their bodies already
+live in the system prompt's `<loaded_skills>` section. The block looks like:
+
+```
+<activated_skills>
+<skill name="tabstack">…</skill>
+<skill name="vault">…</skill>
+</activated_skills>
+```
+
+Like `WORKING_MEMORY`, the block is never archived, appended to live history,
+or summarized by compaction. It re-renders from the activation set each turn,
+and `restore_skills` rebuilds that set from the sidecar after a reconnect. The
+conversation prefix through the previous assistant turn therefore stays
+cacheable across activations.
+
+Before #1823 the body was the `activate_skill` tool result. Compaction then had
+to protect any turn that called `activate_skill` to keep the instructions
+alive, which preserved every unrelated tool output in the same turn (hundreds
+of messages, ~250k tokens). That protection is gone: skill-activation turns are
+ordinary summarizable history now. `activate_skill` returns a short ack (name,
+new tools, warnings) instead.
+
+If the rendered bodies exceed `ACTIVATED_SKILLS_WARN_TOKENS` (20k), the
+composer logs a warning naming each skill and its token cost. It does not
+truncate or count-cap: dropping a body while its tools stay callable leaves the
+model with tools but not the instructions governing them.
+
 ### Token budget
 
 - `context_window_size` on the model config is the hard upper bound
@@ -192,7 +224,7 @@ request and remain useful when the turn is replayed.
 
 #### History accounting
 
-`compose()` treats the input `history` list as read-only during all token-budget and diagnostics calculation. Fresh-this-turn injections (`vault_references`, the `WORKING_MEMORY` bundle from `recent_journal`, `vault_retrieval`, `ScratchpadNotesExtension`, recalled facts, and the `[Context: ...]` line — and `PRE_COMPOSE` DELTA/TAIL/EPILOGUE contributions — plus the current user message) are each tracked via their own `SourceEntry` (`wiki_entry`, `memory_entry`, contribution `source_entry`, `user_msg_entry`). `PRE_COMPOSE` HEAD contributions and the `WORKING_MEMORY` bundle are not archived and therefore are not part of `history` accounting. The `history` source entry counts everything archived from prior turns, including messages whose role is in `ROLE_REMAP` (auto-injected role messages archived from earlier turns) — they're sent to the LLM after remap, so they count.
+`compose()` treats the input `history` list as read-only during all token-budget and diagnostics calculation. Fresh-this-turn injections (`vault_references`, the `WORKING_MEMORY` bundle from `recent_journal`, `vault_retrieval`, `ScratchpadNotesExtension`, recalled facts, and the `[Context: ...]` line — and `PRE_COMPOSE` DELTA/TAIL/EPILOGUE contributions — plus the current user message) are each tracked via their own `SourceEntry` (`wiki_entry`, `memory_entry`, contribution `source_entry`, `user_msg_entry`). `PRE_COMPOSE` HEAD contributions, the `WORKING_MEMORY` bundle, and the `<activated_skills>` block are not archived and therefore are not part of `history` accounting. The `history` source entry counts everything archived from prior turns, including messages whose role is in `ROLE_REMAP` (auto-injected role messages archived from earlier turns) — they're sent to the LLM after remap, so they count.
 
 `ROLE_REMAP` also covers two turn-closure markers (both remapped to `user`): `cancel_marker`, written when a user cancels a turn, and `turn_aborted`, written when a turn aborts via an unexpected exception. See [Cancelled turns](conversations.md#cancelled-turns) and [Aborted turns](conversations.md#aborted-turns-unexpected-exceptions) for producer-side details. The remap is what guarantees each marker reaches the LLM at the right position regardless of provider (Vertex collapses `system`-role messages into `systemInstruction`).
 

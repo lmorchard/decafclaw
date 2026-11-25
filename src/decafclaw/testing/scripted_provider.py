@@ -530,6 +530,9 @@ class ScriptedProvider:
     ) -> dict[str, Any] | None:
         return None
 
+    def default_context_window(self, model: str) -> int | None:
+        return None
+
 
 def register_scripted_provider(
     name: str = PROVIDER_SCRIPTED,

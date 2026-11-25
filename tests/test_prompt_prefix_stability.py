@@ -41,12 +41,13 @@ async def test_laptop_question_preserves_real_native_tools(ctx, composer):
 
 
 def _without_working_memory(messages):
-    """Drop this turn's transient working-memory block (#1574).
+    """Drop this turn's transient blocks (#1574, #1823).
 
-    The block is deliberately outside the replayable prefix: everything
-    before it must remain a byte-identical prefix across turns.
+    The working-memory bundle and the activated-skills block are deliberately
+    outside the replayable prefix: everything before them must remain a
+    byte-identical prefix across turns.
     """
-    return [m for m in messages if not str(m.get("content", "")).startswith("<working_memory>")]
+    return [m for m in messages if not str(m.get("content", "")).startswith(("<working_memory>", "<activated_skills>"))]
 
 
 async def test_sent_tail_replays_in_live_history_and_archive(ctx, composer):

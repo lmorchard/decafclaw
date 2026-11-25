@@ -21,7 +21,6 @@ from ..skills import (
     find_skill,
     index_skills,
     is_discoverable_skill_dir,
-    substitute_skill_placeholders,
     validate_skill_md,
 )
 from ..web.workspace_paths import PathContainmentError, resolve_contained
@@ -877,12 +876,13 @@ def _register_skill_tools(ctx: "Context", name: str, tools: dict, tool_defs: lis
 class SkillActivationResult:
     """A failed skill activation, returned by `activate_skill_internal`.
 
-    The method returns the skill body as a plain string on success and this
-    result when activation fails — its tools.py failed to import or init()
-    raised, or a workspace-tier phantom call was refused. `text` is the
-    human-readable error message. Callers detect a failed activation by
-    checking for this type instead of inspecting ctx.skills.activated, which
-    only the success path populates.
+    The method returns a short activation ack as a plain string on success
+    (the body is rendered by the context composer, not here) and this result
+    when activation fails — its tools.py failed to import or init() raised,
+    or a workspace-tier phantom call was refused. `text` is the human-readable
+    error message. Callers detect a failed activation by checking for this
+    type instead of inspecting ctx.skills.activated, which only the success
+    path populates.
     """
 
     text: str
@@ -892,9 +892,9 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
     """Activate a skill: load tools, register on ctx, mark active.
 
     Shared by tool_activate_skill (with permission checks) and
-    command execution (without permission checks). Returns the
-    skill body text on success, or a SkillActivationResult when the
-    skill's tools.py fails to load.
+    command execution (without permission checks). Returns a short ack on
+    success, or a SkillActivationResult when the skill's tools.py fails to
+    load.
 
     `reloading=True` is the re-activation path for a skill whose tools.py
     changed on disk: the previous generation's tool names are retracted
@@ -902,14 +902,13 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
     caller can tell an edit took effect from a no-op.
     """
     name = skill_info.name
-    # Expand placeholders in the body so the LLM sees usable paths. Routed
-    # through the shared `substitute_skill_placeholders` helper (the same one
-    # the command and schedule paths use) with `.resolve()` so the LLM always
-    # gets an absolute path regardless of how data_home was configured.
-    # Activation carries no user arguments, so `$ARGUMENTS`/positional expand
-    # to empty/out-of-range exactly as the other entry points do.
-    body = substitute_skill_placeholders(skill_info.body, skill_dir=str(skill_info.location.resolve()))
-    result_parts = [body]
+    # The SKILL.md body is NOT part of this result. The context composer
+    # renders every activated body as a never-archived <activated_skills>
+    # block (#1823). Returning it here put it in the archived tool result,
+    # where keeping it alive forced compaction to protect an entire turn of
+    # unrelated tool output. The ack names the activation and lists the
+    # tools; that is all this turn needs.
+    result_parts = [f"Activated skill '{name}'."]
 
     if skill_info.has_native_tools:
         # Phantom decaf-tool calls, before the import. They import cleanly and
