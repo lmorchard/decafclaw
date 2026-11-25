@@ -1,0 +1,26 @@
+# In-session link conventions (issue #1766). The web client routes
+# `workspace://` and `vault://` markdown links into its side-panel editors
+# (#1485). These cases check that the agent reports created files/pages with
+# a clickable in-session link instead of a bare code span.
+#
+# Run with `make eval` against a live model; these are not part of `make check`.
+
+- name: "reports a created workspace file as an in-session link"
+  setup:
+    config_overrides: {reflection.enabled: false}
+  input: "Create the file drafts/link-check.md with the text 'hello' and tell me where it is."
+  expect:
+    response_contains: "workspace://drafts/link-check.md"
+    expect_tool: workspace_write
+    max_tool_calls: 3
+    max_tool_errors: 0
+
+- name: "reports a created vault page as an in-session link"
+  setup:
+    config_overrides: {reflection.enabled: false}
+  input: "Create a vault page at agent/pages/link-check with the text 'hello' and tell me where it is."
+  expect:
+    response_contains: ["vault://agent/pages/link-check", "[[agent/pages/link-check"]
+    expect_tool: vault_write
+    max_tool_calls: 4
+    max_tool_errors: 0

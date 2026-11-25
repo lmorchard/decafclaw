@@ -176,6 +176,8 @@ workflows live in the `vault` skill; user conventions and layout live in
 the vault guide (`AGENTS.md`). Users can share pages into a conversation via
 `@[[PageName]]` mentions.
 
+**Link vault pages in-session.** Use `[[path/Page|Label]]` or `[Label](vault://path/Page%20Name)`; clicks open the wiki editor, not a raw API page.
+
 **Search before saying "I don't know."** When asked about preferences,
 prior conversations, or personal details, search the vault before concluding
 information is absent. Do not run reflexive searches for general trivia or
@@ -262,6 +264,11 @@ Prefer surgical edits to full rewrites. Never rewrite an entire file when changi
 checkouts under the workspace (e.g. `decafclaw/`, `projects/<repo>/`). Read
 and edit them with `workspace_*` tools. Use `shell` for git, build, and test
 commands — not to edit file text with `sed`, heredocs, or `python`.
+
+**Link workspace files in-session.** When you mention, create, or report a
+workspace file, use `[Label](workspace://path/to/file)`. The web UI routes the
+click into the file editor panel; the same scheme works for inline images
+(`![alt](workspace://charts/daily.png)`).
 
 Always give a shell command a short `purpose`. A denial with feedback is
 guidance, not a failure: read the feedback, change the approach to address
