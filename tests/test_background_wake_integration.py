@@ -86,12 +86,13 @@ async def test_user_conv_wake_fires_after_background_job_completes(ctx, config, 
     assert bg_events[0]["job_id"] == job.job_id
     assert bg_events[0]["status"] == "completed"
 
-    # 2. Inbox has a 'background' notification.
+    # 2. A live user conversation does not get an inbox notification; the
+    #    wake turn is the user-facing signal (#1842).
     from decafclaw import notifications
 
     records, _ = notifications.read_inbox(config)
     bg_notifs = [r for r in records if r.category == "background"]
-    assert len(bg_notifs) >= 1
+    assert bg_notifs == []
 
     # 3. run_agent_turn was called for the wake turn.
     wake_calls = [c for c in captured if c["task_mode"] is TaskMode.BACKGROUND_WAKE]
@@ -111,6 +112,7 @@ async def test_heartbeat_conv_gets_its_own_wake(ctx, config, monkeypatch):
     """Job started from a heartbeat conv fires wake on that heartbeat conv_id."""
     ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
     ctx.conv_id = "heartbeat-T-0"
+    ctx.task_mode = TaskMode.HEARTBEAT
 
     manager = ConversationManager(config, ctx.event_bus)
     ctx.manager = manager
@@ -142,6 +144,12 @@ async def test_heartbeat_conv_gets_its_own_wake(ctx, config, monkeypatch):
     wake_calls = [c for c in captured if c["task_mode"] is TaskMode.BACKGROUND_WAKE]
     assert len(wake_calls) == 1
     assert wake_calls[0]["conv_id"] == "heartbeat-T-0"
+
+    # An unattended job keeps its inbox notification.
+    from decafclaw import notifications
+
+    records, _ = notifications.read_inbox(config)
+    assert [r for r in records if r.category == "background"]
 
     await job_manager.cleanup_all()
 
