@@ -12,6 +12,7 @@ import fnmatch
 import logging
 import os
 import re
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -58,6 +59,111 @@ MAX_SUGGESTION_CANDIDATES = 5000
 # Top-level directories that hold bookkeeping, not files the agent reads.
 # Mirrors the prune list in workspace_index._scan_workspace_files.
 _SUGGESTION_PRUNE_ROOT_DIRS = frozenset({"conversations", ".schedule_last_run", "attachments"})
+
+# Tooling caches, VCS metadata, and dependency trees. Search and glob skip
+# these so a query at the workspace root does not walk tens of thousands of
+# package files. An explicit `path` still targets them.
+DEFAULT_IGNORED_DIRS = frozenset(
+    {
+        ".venv",
+        ".git",
+        ".pytest_cache",
+        ".ruff_cache",
+        "__pycache__",
+        "node_modules",
+        ".cache",
+        "target",
+    }
+)
+
+# Skip files above this size in workspace_search. Ingesting multi-megabyte
+# logs and database blobs line by line exhausts the turn and the tool timeout.
+MAX_SEARCH_FILE_BYTES = 1024 * 1024
+
+# Extensions that are binary even when a peek finds no NUL byte in the head.
+_BINARY_EXTENSIONS = frozenset(
+    {
+        ".bin",
+        ".db",
+        ".gif",
+        ".gz",
+        ".ico",
+        ".jpeg",
+        ".jpg",
+        ".mp3",
+        ".mp4",
+        ".npy",
+        ".npz",
+        ".onnx",
+        ".pdf",
+        ".png",
+        ".pt",
+        ".pyc",
+        ".so",
+        ".sqlite",
+        ".sqlite3",
+        ".tar",
+        ".webp",
+        ".whl",
+        ".woff",
+        ".woff2",
+        ".zip",
+    }
+)
+
+_BINARY_PEEK_BYTES = 8192
+
+
+def _walk_workspace(root: Path):
+    """Yield paths under ``root``, pruning ignored directories in place."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in DEFAULT_IGNORED_DIRS)
+        base = Path(dirpath)
+        for name in dirnames:
+            yield base / name
+        for name in sorted(filenames):
+            yield base / name
+
+
+def _is_probably_binary(path: Path) -> bool:
+    """Report whether ``path`` looks binary, by extension or a NUL-byte peek."""
+    if path.suffix.lower() in _BINARY_EXTENSIONS:
+        return True
+    try:
+        with path.open("rb") as fh:
+            return b"\x00" in fh.read(_BINARY_PEEK_BYTES)
+    except OSError:
+        return True
+
+
+# Bounded so repeated globs over a long-lived process do not retain every
+# path segment tuple they have seen.
+@lru_cache(maxsize=4096)
+def _glob_parts_match(path_parts: tuple[str, ...], pattern_parts: tuple[str, ...]) -> bool:
+    """Match path segments against pattern segments; ``**`` matches zero or more."""
+    if not pattern_parts:
+        return not path_parts
+    head, rest = pattern_parts[0], pattern_parts[1:]
+    if head == "**":
+        return _glob_parts_match(path_parts, rest) or (
+            bool(path_parts) and _glob_parts_match(path_parts[1:], pattern_parts)
+        )
+    if not path_parts:
+        return False
+    return fnmatch.fnmatchcase(path_parts[0], head) and _glob_parts_match(path_parts[1:], rest)
+
+
+def _rglob_pattern_parts(pattern: str) -> tuple[str, ...]:
+    """Split a glob for ``rglob`` semantics: patterns match at any depth."""
+    parts = tuple(p for p in pattern.split("/") if p and p != ".")
+    if not parts or parts[0] != "**":
+        return ("**", *parts)
+    return parts
+
+
+def _glob_matches_relative(rel_path: str, pattern_parts: tuple[str, ...]) -> bool:
+    parts = tuple(p for p in rel_path.split("/") if p and p != ".")
+    return _glob_parts_match(parts, pattern_parts)
 
 
 def _workspace_file_candidates(workspace: Path) -> list[str]:
@@ -985,15 +1091,21 @@ def tool_workspace_search(
     data_files: list[dict] = []
 
     # Collect files to search
-    if resolved.is_file():
+    explicit_file = resolved.is_file()
+    if explicit_file:
         files = [resolved]
     else:
-        files = sorted(f for f in resolved.rglob("*") if f.is_file() and fnmatch.fnmatch(f.name, glob))
+        files = sorted(f for f in _walk_workspace(resolved) if f.is_file() and fnmatch.fnmatch(f.name, glob))
 
     for fpath in files:
         try:
+            if not explicit_file:
+                if fpath.stat().st_size > MAX_SEARCH_FILE_BYTES:
+                    continue
+                if _is_probably_binary(fpath):
+                    continue
             content = fpath.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, PermissionError):
+        except (OSError, UnicodeDecodeError):
             continue
 
         lines = split_physical_lines(content)
@@ -1070,7 +1182,12 @@ def tool_workspace_glob(ctx: "Context", pattern: str, path: str = ".") -> str | 
     max_results = 200
     text_lines: list[str] = []
     data_matches: list[dict] = []
-    for fpath in sorted(resolved.rglob(pattern)):
+    pattern_parts = _rglob_pattern_parts(pattern)
+    for fpath in sorted(
+        f
+        for f in _walk_workspace(resolved)
+        if _glob_matches_relative(f.relative_to(resolved).as_posix(), pattern_parts)
+    ):
         rel = fpath.relative_to(workspace)
         is_dir = fpath.is_dir()
         if fpath.is_file():

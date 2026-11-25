@@ -9,6 +9,7 @@ from decafclaw.media import ToolResult, WidgetRequest
 from decafclaw.text_patching import content_version
 from decafclaw.tools.workspace_tools import (
     MAX_READ_LINES,
+    MAX_SEARCH_FILE_BYTES,
     tool_file_share,
     tool_workspace_append,
     tool_workspace_copy,
@@ -860,6 +861,37 @@ def test_search_escape_blocked(ctx):
     assert "outside" in _text(result).lower()
 
 
+def test_search_prunes_ignored_dirs(ctx):
+    tool_workspace_write(ctx, ".venv/lib/pkg/module.py", "needle in dependency\n")
+    tool_workspace_write(ctx, "src/app.py", "needle in source\n")
+    result = tool_workspace_search(ctx, "needle")
+    assert "src/app.py" in _text(result)
+    assert ".venv" not in _text(result)
+
+
+def test_search_targets_ignored_dir_explicitly(ctx):
+    tool_workspace_write(ctx, ".venv/lib/pkg/module.py", "needle in dependency\n")
+    result = tool_workspace_search(ctx, "needle", path=".venv")
+    assert ".venv/lib/pkg/module.py" in _text(result)
+
+
+def test_search_skips_oversized_files(ctx):
+    tool_workspace_write(ctx, "small.txt", "needle\n")
+    big = ctx.config.workspace_path / "big.log"
+    big.write_text("needle\n" + "x" * (MAX_SEARCH_FILE_BYTES + 1))
+    result = tool_workspace_search(ctx, "needle")
+    assert "small.txt" in _text(result)
+    assert "big.log" not in _text(result)
+
+
+def test_search_skips_binary_files(ctx):
+    tool_workspace_write(ctx, "text.txt", "needle\n")
+    (ctx.config.workspace_path / "blob.dat").write_bytes(b"needle\x00binary payload")
+    result = tool_workspace_search(ctx, "needle")
+    assert "text.txt" in _text(result)
+    assert "blob.dat" not in _text(result)
+
+
 # -- workspace_glob tests --
 
 
@@ -904,6 +936,20 @@ def test_glob_with_subpath(ctx):
 def test_glob_escape_blocked(ctx):
     result = tool_workspace_glob(ctx, "*.py", path="../../etc")
     assert "outside" in _text(result).lower()
+
+
+def test_glob_prunes_ignored_dirs(ctx):
+    tool_workspace_write(ctx, ".venv/lib/pkg/module.py", "dependency\n")
+    tool_workspace_write(ctx, "src/app.py", "source\n")
+    result = tool_workspace_glob(ctx, "*.py")
+    assert "src/app.py" in _text(result)
+    assert ".venv" not in _text(result)
+
+
+def test_glob_targets_ignored_dir_explicitly(ctx):
+    tool_workspace_write(ctx, ".venv/lib/pkg/module.py", "dependency\n")
+    result = tool_workspace_glob(ctx, "*.py", path=".venv")
+    assert ".venv/lib/pkg/module.py" in _text(result)
 
 
 # -- file_share tests --
