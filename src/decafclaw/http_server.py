@@ -2952,8 +2952,13 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             },
         ),
         APIRoute("/metrics", metrics_endpoint, methods=["GET"]),
-        APIRoute("/actions/confirm", handle_confirm, methods=["GET", "POST"]),
-        APIRoute("/actions/cancel", handle_cancel, methods=["GET", "POST"]),
+        # One route per method keeps the generated operation IDs stable. A
+        # shared route with both methods makes FastAPI emit duplicate IDs and
+        # lets generation flip the suffix (#1884).
+        APIRoute("/actions/confirm", handle_confirm, methods=["GET"], operation_id="confirm_action_get"),
+        APIRoute("/actions/confirm", handle_confirm, methods=["POST"], operation_id="confirm_action_post"),
+        APIRoute("/actions/cancel", handle_cancel, methods=["GET"], operation_id="cancel_action_get"),
+        APIRoute("/actions/cancel", handle_cancel, methods=["POST"], operation_id="cancel_action_post"),
         APIRoute(
             "/api/auth/login",
             auth_login,
