@@ -19,6 +19,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from decafclaw.commands import list_invokable_commands
 from decafclaw.confirmations import ConfirmationRequest
 from decafclaw.conversation_manager import TurnKind
+from decafclaw.llm import ensure_model_context_window
 from decafclaw.llm.history import without_provider_data
 from decafclaw.model_catalog import (
     MODELS_CHANGED_EVENT_TYPE,
@@ -452,17 +453,34 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
                 if conv_state and conv_state.persisted.active_model:
                     current_model = conv_state.persisted.active_model
 
+    # The meter measures the active model's context window (#1275), and on
+    # reload it shows the last turn's recorded usage when one exists, so live
+    # and reload agree. The history estimate remains the fallback for old
+    # conversations with no sidecar.
+    from ..context_sidecars import read_context_sidecar
+
+    window_model = current_model or effective_default_model(config)
+    context_limit = await ensure_model_context_window(config, window_model)
+    context_usage = None
+    if not before:
+        sidecar = read_context_sidecar(config, conv_id) or {}
+        raw_usage = sidecar.get("context_usage")
+        if isinstance(raw_usage, int) and raw_usage > 0:
+            context_usage = raw_usage
+
     response: SrvConvHistory = {
         "type": WSMessageType.CONV_HISTORY,
         "conv_id": conv_id,
         "messages": messages,
         "has_more": has_more,
-        "context_limit": config.compaction.max_tokens,
+        "context_limit": context_limit,
     }
     if not is_owner:
         response["read_only"] = True
     if estimated_tokens is not None:
         response["estimated_tokens"] = estimated_tokens
+    if context_usage is not None:
+        response["context_usage"] = context_usage
     if current_model is not None:
         response["active_model"] = current_model
     # Send available model configs so the UI can offer a picker

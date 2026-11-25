@@ -26,10 +26,10 @@ from .context import TaskMode, TokenUsage
 from .context_types import ROLE_REMAP, InjectionCursors
 from .conversation_paths import iter_conversation_archives, iter_conversation_dirs
 from .heartbeat import is_background_wake_ok
-from .llm import call_llm_streaming
+from .llm import call_llm_streaming, ensure_model_context_window
 from .llm.history import without_provider_data
 from .media import TerminationReason, ToolResult
-from .model_catalog import effective_default_model
+from .model_catalog import effective_default_model, effective_turn_model
 from .workflow.journal import load_journal, save_journal
 from .workflow.paths import workflow_path
 
@@ -127,6 +127,17 @@ def _turn_settle_outcome(is_cancelled: bool, reason: TerminationReason | None) -
     if reason is TerminationReason.ERROR:
         return "failed"
     return "completed"
+
+
+async def _resolve_context_limit(config, active_model: str) -> int:
+    """Resolve the context meter's denominator (#1275).
+
+    The meter shows how full the active model's context window is. The
+    provider lookup and the ``compaction.max_tokens`` fallback live in
+    :func:`ensure_model_context_window`, so live and reload agree and an
+    unknown window keeps today's cap.
+    """
+    return await ensure_model_context_window(config, effective_turn_model(config, active_model))
 
 
 def _build_message_complete(
@@ -2284,7 +2295,7 @@ class ConversationManager:
                     response_media,
                     suppress_user_message=suppress,
                     tokens=ctx.tokens,
-                    context_limit=self.config.compaction.max_tokens,
+                    context_limit=await _resolve_context_limit(self.config, ctx.active_model),
                     thinking=response_thinking,
                     provenance=dict(ctx.composer.last_provenance),
                 )

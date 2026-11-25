@@ -24,6 +24,8 @@ from decafclaw.archive import (
 )
 from decafclaw.compaction import SUMMARY_PREFIX
 from decafclaw.config import Config
+from decafclaw.config_types import ModelConfig
+from decafclaw.context_sidecars import write_context_sidecar
 from decafclaw.conversation_manager import ConversationManager
 from decafclaw.events import EventBus
 from decafclaw.web.message_types import WSMessageType
@@ -231,3 +233,42 @@ async def test_web_history_before_cursor_parses_mixed_shapes(ws_context, config)
 
     contents = [m.get("content") for m in history["messages"]]
     assert contents == ["old"]
+
+
+# -- context meter basis on reload (#1275) ------------------------------------
+
+
+async def test_conv_history_uses_model_window_and_last_usage(ws_context, config):
+    """Reload uses the model's window and the last turn's recorded usage."""
+    state, index = ws_context
+    config.model_configs["big"] = ModelConfig(provider="scripted", model="x", context_window_size=200_000)
+    config.default_model = "big"
+    conv = _conv_dir(config) / CONV_ID
+    _write_jsonl(
+        conv / "archive.jsonl",
+        [{"role": "user", "content": "hello", "timestamp": "2026-11-25T00:00:00"}],
+    )
+    write_context_sidecar(config, CONV_ID, {"context_usage": 12345})
+
+    history = await _load_history(state, index)
+
+    assert history["context_limit"] == 200_000
+    assert history["context_usage"] == 12345
+
+
+async def test_conv_history_falls_back_to_compaction_cap(ws_context, config):
+    """An unknown window keeps the compaction cap; no sidecar means no usage."""
+    state, index = ws_context
+    config.compaction.max_tokens = 10000
+    config.llm.context_window_size = 0
+    conv = _conv_dir(config) / CONV_ID
+    _write_jsonl(
+        conv / "archive.jsonl",
+        [{"role": "user", "content": "hello", "timestamp": "2026-11-25T00:00:00"}],
+    )
+
+    history = await _load_history(state, index)
+
+    assert history["context_limit"] == 10000
+    assert "context_usage" not in history
+    assert "estimated_tokens" in history
