@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from ..embed import post_embedding
 from ..types import (
     FINISH_REASON_ERROR,
     FINISH_REASON_LENGTH,
@@ -303,36 +304,14 @@ class VertexProvider:
         url = f"{self._base_url(model)}:predict"
         body = {"instances": [{"content": text}]}
 
-        max_retries = 3
-        for attempt in range(max_retries + 1):
-            try:
-                async with httpx.AsyncClient() as client:
-                    resp = await client.post(
-                        url,
-                        json=body,
-                        headers=await self._headers(),
-                        timeout=timeout,
-                    )
-                if resp.status_code == 429 and attempt < max_retries:
-                    delay = 2**attempt
-                    log.warning(
-                        "Vertex embedding rate limited, retrying in %ds (attempt %d/%d)",
-                        delay,
-                        attempt + 1,
-                        max_retries,
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-                return data["predictions"][0]["embeddings"]["values"]
-            except httpx.HTTPStatusError as e:
-                log.error("Vertex embedding failed: %s", e)
-                return None
-            except Exception as e:
-                log.error("Vertex embedding failed: %s", e)
-                return None
-        return None
+        return await post_embedding(
+            url=url,
+            body=body,
+            headers=self._headers,
+            extract=_extract_vertex_embedding,
+            timeout=timeout,
+            log_label="Vertex embedding",
+        )
 
     async def get_model_info(
         self,
@@ -978,6 +957,15 @@ def _build_request_body(
         body["tools"] = [{"functionDeclarations": func_decls}]
 
     return body
+
+
+def _extract_vertex_embedding(data: dict) -> list[float]:
+    """Pull the vector out of a ``:predict`` response.
+
+    Raises (KeyError/IndexError) when the shape is unexpected; the shared
+    transport treats that as a failure and returns ``None``.
+    """
+    return data["predictions"][0]["embeddings"]["values"]
 
 
 def _parse_response(data: dict) -> dict:
