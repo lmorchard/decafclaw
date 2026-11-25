@@ -54,6 +54,12 @@ Everything runs in a single async process. Subsystems are parallel `asyncio` tas
 
 All of these run as independent `asyncio.Task`s. They share a single `app_ctx` with an `EventBus` for cross-component events.
 
+### Shutdown and process exit
+
+`SIGTERM`/`SIGINT`, or a restart requested through `RestartCoordinator`, sets the shutdown event. `run_all` then stops subsystems in reverse order: the on-idle restart drain, model discovery and the config watcher, the schedule/heartbeat timers, the HTTP server (uvicorn `should_exit`, after terminal PTYs are killed), Mattermost, in-flight turns, skill-owned resources, the workspace index refresh loop, and finally MCP servers. `Shutdown complete` is logged only after all of that.
+
+A completed shutdown must end the process, but asyncio's own teardown is not bounded: `asyncio.run` waits for default-executor worker threads (up to 300s), and interpreter exit joins every non-daemon thread. A sync tool call or embedding stuck in a worker thread can therefore leave a live-but-useless daemon that systemd must SIGKILL (#1799). After `Shutdown complete`, `start_app` arms `arm_shutdown_watchdog`: if teardown outlives `SHUTDOWN_EXIT_GRACE_SECONDS`, it logs the lingering tasks and non-daemon thread stacks and calls `exit_process`, which flushes logs and telemetry and exits with `os._exit`. The normal path calls `exit_process` as soon as `asyncio.run` returns. Any task or thread named in that log is a leak worth fixing.
+
 Transports delegate turn lifecycle to the **ConversationManager** (`conversation_manager.py`), which handles context setup, history loading, confirmation persistence, message queuing, and per-conversation event streams. Transports are thin adapters — parse input, subscribe to the conversation's event stream, render output.
 
 - **Mattermost transport** (`mattermost.py`) — websocket input, renders events back to Mattermost

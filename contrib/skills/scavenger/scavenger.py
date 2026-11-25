@@ -10,8 +10,13 @@ Zero daemons on targets. Hard blast-radius containment via dedicated scavenger u
 from __future__ import annotations
 
 import argparse
+import base64
+import contextlib
 import dataclasses
+import fcntl
+import hashlib
 import json
+import logging
 import os
 import re
 import socket
@@ -19,8 +24,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import IO, Any, Callable, Dict, Iterator, List, Optional, Tuple
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -41,6 +49,9 @@ class HostConfig:
     priority: int = 100  # Lower number = higher priority
     default_memory: str = "16g"
     default_cpus: int = 8
+    pids_limit: int = 4096  # --pids-limit for every container; -1 disables the cap
+    log_max_size: str = "10m"  # --log-opt max-size (docker/podman json-file driver)
+    log_max_file: int = 3  # --log-opt max-file (docker/podman json-file driver)
     tags: List[str] = field(default_factory=list)
     gpu_type: Optional[str] = None  # "metal", "vulkan", "cuda", etc.
     gpu_passthrough_mode: Optional[str] = None  # "container_device", "native_only", etc.
@@ -106,6 +117,9 @@ def load_fleet_config(config_path: Optional[str] = None) -> Dict[str, HostConfig
             priority=h.get("priority", 100),
             default_memory=limits.get("default_memory", "16g"),
             default_cpus=limits.get("default_cpus", 8),
+            pids_limit=limits.get("pids_limit", 4096),
+            log_max_size=limits.get("log_max_size", "10m"),
+            log_max_file=limits.get("log_max_file", 3),
             tags=h.get("tags", []),
             gpu_type=gpu.get("type"),
             gpu_passthrough_mode=gpu.get("passthrough_mode"),
@@ -118,12 +132,16 @@ def load_fleet_config(config_path: Optional[str] = None) -> Dict[str, HostConfig
 DEFAULT_RECIPES_DIR = "dockerfiles"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Container labels. The decafclaw.* names were used before the engine was made standalone;
-# readers accept both so containers created earlier are still found and reaped.
+# Container labels. Readers accept the previous decafclaw.* names so existing
+# environments remain visible after the engine is made standalone.
 LABEL_ENV_ID = "scavenger.env_id"
 LABEL_EXPIRES_AT = "scavenger.expires_at"
+LABEL_CREATED_AT = "scavenger.created_at"
+LABEL_TTL_SECONDS = "scavenger.ttl_seconds"
 LEGACY_LABEL_ENV_ID = "decafclaw.env_id"
 LEGACY_LABEL_EXPIRES_AT = "decafclaw.expires_at"
+LEGACY_LABEL_CREATED_AT = "decafclaw.created_at"
+LEGACY_LABEL_TTL_SECONDS = "decafclaw.ttl_seconds"
 
 
 def read_env_labels(labels: Dict[str, str]) -> Tuple[Optional[str], Optional[int]]:
@@ -207,28 +225,296 @@ def parse_ttl(ttl_str: str) -> int:
     return val
 
 
+# -----------------------------------------------------------------------------
+# Lease cache (~/.config/scavenger/leases.json)
+#
+# The hosts are the record of their environments: containers and volumes carry
+# scavenger.* labels, and native workspaces hold a small lease file. The local
+# leases.json is only a cache, rebuilt from the hosts by reconcile_leases().
+# -----------------------------------------------------------------------------
+
+NATIVE_LEASE_FILE = ".scavenger-lease.json"
+
+
+@contextlib.contextmanager
+def _leases_lock() -> Iterator[None]:
+    """Hold an exclusive advisory lock for read-modify-write cycles on the cache."""
+    os.makedirs(os.path.dirname(LEASES_FILE), exist_ok=True)
+    with open(LEASES_FILE + ".lock", "a", encoding="utf-8") as lock_f:
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_f, fcntl.LOCK_UN)
+
+
 def load_leases() -> Dict[str, EnvReservation]:
-    """Load active environment leases from disk."""
+    """Load the lease cache from disk.
+
+    A corrupt cache is logged and moved aside (never silently treated as the
+    truth); callers rebuild it from the hosts with reconcile_leases().
+    """
     if not os.path.isfile(LEASES_FILE):
         return {}
     try:
         with open(LEASES_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        leases = {}
-        for k, v in data.items():
-            leases[k] = EnvReservation(**v)
-        return leases
-    except Exception:
+        return {k: EnvReservation(**v) for k, v in data.items()}
+    except (OSError, ValueError, TypeError, AttributeError) as e:
+        quarantine = f"{LEASES_FILE}.corrupt-{int(time.time())}"
+        log.error(
+            "Lease cache %s is unreadable (%s); moving to %s and rebuilding from hosts", LEASES_FILE, e, quarantine
+        )
+        try:
+            os.replace(LEASES_FILE, quarantine)
+        except OSError as move_err:
+            log.error("Could not move corrupt lease cache aside: %s", move_err)
         return {}
 
 
-def save_leases(leases: Dict[str, EnvReservation]) -> None:
-    """Save environment leases to disk atomically."""
+def _write_leases(leases: Dict[str, EnvReservation]) -> None:
     os.makedirs(os.path.dirname(LEASES_FILE), exist_ok=True)
     tmp_path = LEASES_FILE + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump({k: dataclasses.asdict(v) for k, v in leases.items()}, f, indent=2)
     os.replace(tmp_path, LEASES_FILE)
+
+
+def save_leases(leases: Dict[str, EnvReservation]) -> None:
+    """Save the lease cache to disk atomically, under the file lock."""
+    with _leases_lock():
+        _write_leases(leases)
+
+
+def update_leases(mutate: Callable[[Dict[str, EnvReservation]], None]) -> Dict[str, EnvReservation]:
+    """Read-modify-write the cache under the file lock so concurrent writers do not lose updates."""
+    with _leases_lock():
+        leases = load_leases()
+        mutate(leases)
+        _write_leases(leases)
+        return leases
+
+
+def parse_engine_json(text: str) -> List[Dict[str, Any]]:
+    """Parse `ps`/`volume ls --format json` output: a JSON array (podman) or one object per line (docker)."""
+    text = text.strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        data = json.loads(text)
+        return [d for d in data if isinstance(d, dict)]
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            row = json.loads(line)
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def parse_labels(raw: Any) -> Dict[str, str]:
+    """Normalize labels: podman gives a dict, docker a 'k=v,k2=v2' string."""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return {str(k): str(v) for k, v in raw.items()}
+    labels = {}
+    for part in str(raw).split(","):
+        key, sep, value = part.partition("=")
+        if sep:
+            labels[key.strip()] = value
+    return labels
+
+
+def _reservation_from_labels(
+    labels: Dict[str, str],
+    host_name: str,
+    container_name: Optional[str] = None,
+    volume_name: Optional[str] = None,
+    image: Optional[str] = None,
+) -> Optional[EnvReservation]:
+    env_id, expires_at = read_env_labels(labels)
+    if not env_id or expires_at is None:
+        return None
+    try:
+        created_at = float(labels.get(LABEL_CREATED_AT) or labels.get(LEGACY_LABEL_CREATED_AT, 0.0))
+    except ValueError:
+        created_at = 0.0
+    try:
+        ttl_seconds = int(labels.get(LABEL_TTL_SECONDS) or labels[LEGACY_LABEL_TTL_SECONDS])
+    except (TypeError, ValueError):
+        ttl_seconds = int(expires_at - created_at) if created_at else 0
+    return EnvReservation(
+        env_id=env_id,
+        host=host_name,
+        kind="container",
+        created_at=created_at,
+        expires_at=expires_at,
+        ttl_seconds=ttl_seconds,
+        container_name=container_name,
+        volume_name=volume_name,
+        image=image,
+    )
+
+
+def native_lease_json(res: EnvReservation) -> str:
+    """Single-line JSON written into a native workspace as its lease file."""
+    return json.dumps(
+        {
+            "env_id": res.env_id,
+            "created_at": res.created_at,
+            "expires_at": res.expires_at,
+            "ttl_seconds": res.ttl_seconds,
+        }
+    )
+
+
+def list_host_script(engine: str) -> str:
+    """Remote script that lists labelled containers, labelled volumes, and native lease files."""
+    return f"""
+echo ---CONTAINERS---
+{engine} ps --all --format json || echo ---FAILED---
+echo ---VOLUMES---
+{engine} volume ls --format json || echo ---FAILED---
+echo ---NATIVE---
+for f in "$HOME"/workspaces/*/{NATIVE_LEASE_FILE}; do
+    if [ -f "$f" ]; then cat "$f"; echo; fi
+done
+echo ---END---
+"""
+
+
+def parse_host_listing(host_name: str, output: str) -> Optional[List[EnvReservation]]:
+    """Turn list_host_script output into reservations. None means the listing is not trustworthy."""
+    markers = {"---CONTAINERS---": "containers", "---VOLUMES---": "volumes", "---NATIVE---": "native"}
+    sections: Dict[str, List[str]] = {"containers": [], "volumes": [], "native": []}
+    current: Optional[str] = None
+    complete = False
+    for line in output.splitlines():
+        line = line.strip()
+        if line == "---FAILED---":
+            return None
+        if line == "---END---":
+            complete = True
+            break
+        if line in markers:
+            current = markers[line]
+        elif current:
+            sections[current].append(line)
+    if not complete:
+        return None
+
+    found: Dict[str, EnvReservation] = {}
+    try:
+        for row in parse_engine_json("\n".join(sections["containers"])):
+            names = row.get("Names")
+            name = names[0] if isinstance(names, list) and names else (names if isinstance(names, str) else None)
+            res = _reservation_from_labels(
+                parse_labels(row.get("Labels")),
+                host_name,
+                container_name=name,
+                volume_name=None,
+                image=row.get("Image"),
+            )
+            if res:
+                res.volume_name = f"scavenger-vol-{res.env_id}"
+                found[res.env_id] = res
+        for row in parse_engine_json("\n".join(sections["volumes"])):
+            res = _reservation_from_labels(parse_labels(row.get("Labels")), host_name, volume_name=row.get("Name"))
+            if not res:
+                continue
+            if res.env_id in found:
+                found[res.env_id].volume_name = res.volume_name
+            else:
+                found[res.env_id] = res
+    except ValueError as e:
+        log.warning("Could not parse container listing from %s: %s", host_name, e)
+        return None
+
+    for line in sections["native"]:
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            env_id = str(data["env_id"])
+            found[env_id] = EnvReservation(
+                env_id=env_id,
+                host=host_name,
+                kind="native",
+                created_at=float(data.get("created_at", 0.0)),
+                expires_at=float(data["expires_at"]),
+                ttl_seconds=int(data.get("ttl_seconds", 0)),
+                workspace_path=f"workspaces/{env_id}",
+            )
+        except (ValueError, KeyError, TypeError) as e:
+            log.warning("Ignoring unreadable native lease file on %s (%s): %r", host_name, e, line)
+    return list(found.values())
+
+
+def list_host_envs(host: HostConfig) -> Optional[List[EnvReservation]]:
+    """List the environments a host holds, from its own labels and lease files.
+
+    Returns None when the host cannot be queried (unreachable, or no usable engine),
+    so callers keep their cached records instead of treating the host as empty.
+    """
+    try:
+        res = run_ssh(host.ssh_alias, list_host_script(host.engine), timeout=20)
+    except subprocess.TimeoutExpired:
+        log.warning("Timed out listing environments on %s", host.name)
+        return None
+    if res.returncode != 0:
+        log.warning("Could not list environments on %s: %s", host.name, (res.stderr or "").strip())
+        return None
+    return parse_host_listing(host.name, res.stdout)
+
+
+def _merge_record(host_rec: EnvReservation, cached: Optional[EnvReservation]) -> EnvReservation:
+    """Host record wins; the cache only fills fields the host record does not carry."""
+    if cached is None:
+        return host_rec
+    merged = {}
+    for f in dataclasses.fields(host_rec):
+        value = getattr(host_rec, f.name)
+        merged[f.name] = value if value else getattr(cached, f.name)
+    return EnvReservation(**merged)
+
+
+def reconcile_leases(fleet: Dict[str, HostConfig]) -> Tuple[Dict[str, EnvReservation], List[str]]:
+    """Rebuild the cache from what each reachable host reports.
+
+    Entries on unreachable hosts are kept as cached. Returns (leases, unreachable host names).
+    """
+    started = time.time()
+    listings: Dict[str, Dict[str, EnvReservation]] = {}
+    unreachable: List[str] = []
+    for name, host in fleet.items():
+        envs = list_host_envs(host)
+        if envs is None:
+            unreachable.append(name)
+        else:
+            listings[name] = {e.env_id: e for e in envs}
+
+    def apply(cache: Dict[str, EnvReservation]) -> None:
+        for env_id, res in list(cache.items()):
+            listing = listings.get(res.host)
+            # An entry created after the scan began may simply be newer than the listing.
+            if listing is not None and env_id not in listing and res.created_at < started:
+                del cache[env_id]
+        for listing in listings.values():
+            for env_id, rec in listing.items():
+                cache[env_id] = _merge_record(rec, cache.get(env_id))
+
+    return update_leases(apply), unreachable
+
+
+def find_lease(fleet: Dict[str, HostConfig], env_id: str) -> Optional[EnvReservation]:
+    """Look up one environment in the cache, rebuilding the cache from the hosts on a miss."""
+    res = load_leases().get(env_id)
+    if res:
+        return res
+    leases, _ = reconcile_leases(fleet)
+    return leases.get(env_id)
 
 
 def send_magic_packet(mac: str, broadcast: str = "255.255.255.255", port: int = 9) -> None:
@@ -433,6 +719,32 @@ def select_best_host(
     raise RuntimeError(f"No eligible scavenger host available. Probed: [{summary}]")
 
 
+#: Container engines whose json-file log driver accepts --log-opt size caps.
+LOG_OPT_ENGINES = ("docker", "podman")
+
+
+def container_limit_flags(host: HostConfig, network: str = "default") -> List[str]:
+    """Build the container security and resource limit flags for a host.
+
+    Pure function: reads no environment, runs nothing. Returns argv tokens
+    for --network, --pids-limit, and (where the engine supports it) the
+    json-file log size cap. Join with spaces to embed in a remote shell script.
+
+    network: "none" (no network access at all) or "default" (engine default).
+    """
+    if network not in ("none", "default"):
+        raise ValueError(f"Unsupported network mode: {network!r} (expected 'none' or 'default')")
+
+    flags = [f"--network={network}"]
+    if host.pids_limit is not None:
+        flags.append(f"--pids-limit={host.pids_limit}")
+    if host.engine in LOG_OPT_ENGINES and host.log_max_size:
+        flags.extend(["--log-opt", f"max-size={host.log_max_size}"])
+        if host.log_max_file:
+            flags.extend(["--log-opt", f"max-file={host.log_max_file}"])
+    return flags
+
+
 def execute_job(
     host: HostConfig,
     command: str,
@@ -440,18 +752,20 @@ def execute_job(
     image: str = "alpine:latest",
     mem_limit: str = "16g",
     cpus: int = 8,
+    network: str = "default",
     timeout_seconds: int = 1800,
-    stdout: Any = None,
-    stderr: Any = None,
+    stdout: Optional[IO[str]] = None,
+    stderr: Optional[IO[str]] = None,
 ) -> int:
     """One-shot job: stage repo bundle, run ephemeral container, stream output, clean up.
 
-    `stdout`/`stderr` default to this process's streams; pass real files to capture output.
+    ``stdout``/``stderr`` default to this process's streams; pass real files to capture output.
     """
     out = stdout if stdout is not None else sys.stdout
     err = stderr if stderr is not None else sys.stderr
     selinux_flag = ":Z" if host.needs_selinux_z else ""
     device_args = " ".join(host.device_flags) if host.device_flags else ""
+    limit_args = " ".join(container_limit_flags(host, network))
 
     remote_script = f"""
 set -e
@@ -467,6 +781,7 @@ fi
 {host.engine} run --rm \\
     --memory={mem_limit} \\
     --cpus={cpus} \\
+    {limit_args} \\
     {device_args} \\
     -v "$JOB_DIR/workspace:/workspace{selinux_flag}" \\
     -w /workspace \\
@@ -492,6 +807,7 @@ git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
 {host.engine} run --rm \\
     --memory={mem_limit} \\
     --cpus={cpus} \\
+    {limit_args} \\
     {device_args} \\
     -v "$RECV_DIR/workspace:/workspace{selinux_flag}" \\
     -w /workspace \\
@@ -605,6 +921,7 @@ def env_create(
     sync_dir: Optional[str] = None,
     mem_limit: str = "16g",
     cpus: int = 8,
+    network: str = "default",
     ttl: str = "2h",
     arch: Optional[str] = None,
     recipes_dir: Optional[str] = None,
@@ -612,17 +929,21 @@ def env_create(
     """
     Reserve a stateful environment (container or native workspace) on the fleet.
     Preserves state across turns until env_destroy or TTL expiry.
+
+    Reaps expired environments first so their containers, volumes, and native
+    slots are freed before host selection. A reap failure on one host is
+    logged and does not block creation.
     """
-    leases = load_leases()
+    env_reap(fleet)
+
     now = time.time()
     ttl_sec = parse_ttl(ttl)
     expires_at = now + ttl_sec
 
-    # Check for existing active lease with same env_id
-    if env_id in leases:
-        existing = leases[env_id]
-        if existing.expires_at > now:
-            return existing
+    # Check for existing active lease with same env_id (cache first, then the hosts)
+    existing = find_lease(fleet, env_id)
+    if existing and existing.expires_at > now:
+        return existing
 
     # Select host
     if host_name:
@@ -651,15 +972,15 @@ def env_create(
             setup_script = rec_path
 
     if kind == "native":
-        for lease in leases.values():
-            if lease.host == host.name and lease.kind == "native" and lease.expires_at > now and lease.env_id != env_id:
+        # Single occupancy is decided by the lease files on the host, not the local cache.
+        on_host = list_host_envs(host)
+        if on_host is None:
+            raise RuntimeError(f"Cannot verify native execution slot on {host.name}: host listing failed")
+        for lease in on_host:
+            if lease.kind == "native" and lease.expires_at > now and lease.env_id != env_id:
                 raise RuntimeError(f"Native execution slot on {host.name} is currently leased to {lease.env_id}")
 
         ws_rel = f"workspaces/{env_id}"
-        mkdir_res = run_ssh(host.ssh_alias, f"mkdir -p ~/{ws_rel}")
-        if mkdir_res.returncode != 0:
-            raise RuntimeError(f"Failed to create workspace on {host.name}: {mkdir_res.stderr}")
-
         res = EnvReservation(
             env_id=env_id,
             host=host.name,
@@ -669,6 +990,13 @@ def env_create(
             ttl_seconds=ttl_sec,
             workspace_path=ws_rel,
         )
+        b64_lease = base64.b64encode(native_lease_json(res).encode("utf-8")).decode("ascii")
+        mkdir_res = run_ssh(
+            host.ssh_alias,
+            f"mkdir -p ~/{ws_rel} && echo '{b64_lease}' | base64 -d > ~/{ws_rel}/{NATIVE_LEASE_FILE}",
+        )
+        if mkdir_res.returncode != 0:
+            raise RuntimeError(f"Failed to create workspace on {host.name}: {mkdir_res.stderr}")
 
         if sync_dir and os.path.isdir(sync_dir):
             env_sync(fleet, res, direction="up", local_path=sync_dir)
@@ -678,17 +1006,27 @@ def env_create(
         v_name = f"scavenger-vol-{env_id}"
         selinux_flag = ":Z" if host.needs_selinux_z else ""
         device_args = " ".join(host.device_flags) if host.device_flags else ""
+        labels = " ".join(
+            f'--label {k}="{v}"'
+            for k, v in (
+                (LABEL_ENV_ID, env_id),
+                (LABEL_EXPIRES_AT, int(expires_at)),
+                (LABEL_CREATED_AT, int(now)),
+                (LABEL_TTL_SECONDS, ttl_sec),
+            )
+        )
+        limit_args = " ".join(container_limit_flags(host, network))
 
         create_script = f"""
 set -e
 {host.engine} rm -f {c_name} 2>/dev/null || true
-{host.engine} volume create {v_name} >/dev/null 2>&1 || true
+{host.engine} volume create {labels} {v_name} >/dev/null 2>&1 || true
 {host.engine} run -d \\
     --name {c_name} \\
-    --label {LABEL_ENV_ID}="{env_id}" \\
-    --label {LABEL_EXPIRES_AT}="{int(expires_at)}" \\
+    {labels} \\
     --memory={mem_limit} \\
     --cpus={cpus} \\
+    {limit_args} \\
     {device_args} \\
     -v {v_name}:/workspace{selinux_flag} \\
     -w /workspace \\
@@ -717,8 +1055,6 @@ set -e
     # Execute setup_script if provided
     if setup_script and os.path.isfile(setup_script):
         print(f"⚙️ Running setup script for {res.env_id}...", file=sys.stderr)
-        import base64
-
         with open(setup_script, "r", encoding="utf-8") as sf:
             script_content = sf.read()
         b64_setup = base64.b64encode(script_content.encode("utf-8")).decode("ascii")
@@ -732,8 +1068,10 @@ set -e
         if setup_proc.returncode != 0:
             raise RuntimeError(f"Setup script failed on {host.name}:\n{setup_proc.stderr}")
 
-    leases[env_id] = res
-    save_leases(leases)
+    def record(leases: Dict[str, EnvReservation]) -> None:
+        leases[env_id] = res
+
+    update_leases(record)
     return res
 
 
@@ -769,8 +1107,6 @@ def env_exec_bg(
     host = fleet.get(res.host)
     if not host:
         raise ValueError(f"Unknown host {res.host} for environment {res.env_id}")
-
-    import base64
 
     b64_cmd = base64.b64encode(command.encode("utf-8")).decode("ascii")
     inner_script = (
@@ -834,8 +1170,6 @@ def env_arm_watch(
         inner = f"touch '{target}' && tail -n +1 -f '{target}' | grep -m 1 -E '{pattern}'"
     else:
         raise ValueError(f"Unknown watch_type: {watch_type}")
-
-    import base64
 
     if res.kind == "native":
         full_script = f"cd ~/{ws} && {inner}"
@@ -926,11 +1260,11 @@ def env_sync(
 
 
 def env_destroy(fleet: Dict[str, HostConfig], env_id: str) -> bool:
-    """Tear down a reserved environment and release its lease."""
-    leases = load_leases()
-    res = leases.pop(env_id, None)
-    save_leases(leases)
+    """Tear down a reserved environment on its host and drop it from the cache.
 
+    The cache entry is kept when the host teardown fails, so the environment is not orphaned.
+    """
+    res = find_lease(fleet, env_id)
     if not res:
         return False
 
@@ -938,32 +1272,280 @@ def env_destroy(fleet: Dict[str, HostConfig], env_id: str) -> bool:
     if not host:
         return False
 
-    if res.kind == "native":
-        ws = res.workspace_path or f"workspaces/{env_id}"
-        run_ssh(host.ssh_alias, f"rm -rf ~/{ws}")
-    else:
-        c_name = res.container_name or f"scavenger-env-{env_id}"
-        v_name = res.volume_name or f"scavenger-vol-{env_id}"
-        run_ssh(
-            host.ssh_alias,
-            f"{host.engine} rm -f {c_name} 2>/dev/null; {host.engine} volume rm -f {v_name} 2>/dev/null || true",
-        )
+    try:
+        if res.kind == "native":
+            ws = res.workspace_path or f"workspaces/{env_id}"
+            destroy_res = run_ssh(host.ssh_alias, f"rm -rf ~/{ws}")
+        else:
+            c_name = res.container_name or f"scavenger-env-{env_id}"
+            v_name = res.volume_name or f"scavenger-vol-{env_id}"
+            destroy_res = run_ssh(
+                host.ssh_alias,
+                f"{host.engine} rm -f {c_name} 2>/dev/null; {host.engine} volume rm -f {v_name} 2>/dev/null || true",
+            )
+    except Exception as e:
+        print(f"⚠️ Failed to destroy {env_id} on {host.name}: {e}", file=sys.stderr)
+        return False
 
+    if destroy_res.returncode != 0:
+        print(
+            f"⚠️ Destroy of {env_id} on {host.name} failed (rc={destroy_res.returncode}): "
+            f"{(destroy_res.stderr or '').strip()}",
+            file=sys.stderr,
+        )
+        return False
+
+    def drop(leases: Dict[str, EnvReservation]) -> None:
+        leases.pop(env_id, None)
+
+    update_leases(drop)
     return True
 
 
 def env_reap(fleet: Dict[str, HostConfig]) -> List[str]:
-    """Sweep and purge all expired environment leases across the fleet."""
-    leases = load_leases()
+    """Sweep and purge all expired environments, as reported by each reachable host."""
+    leases, unreachable = reconcile_leases(fleet)
+    for name in unreachable:
+        log.warning("Host %s unreachable; its environments were not reaped", name)
     now = time.time()
     reaped = []
 
     for env_id, res in list(leases.items()):
+        if res.host in unreachable:
+            continue
         if res.expires_at < now:
-            env_destroy(fleet, env_id)
-            reaped.append(env_id)
+            try:
+                ok = env_destroy(fleet, env_id)
+            except Exception as e:
+                print(f"⚠️ Reap of {env_id} on {res.host} failed: {e}", file=sys.stderr)
+                continue
+            if ok:
+                reaped.append(env_id)
 
     return reaped
+
+
+# =============================================================================
+# End-to-end selfcheck (manual, against one real host)
+# =============================================================================
+
+
+class SelfcheckFailure(Exception):
+    """A selfcheck step failed; the message is shown on the FAIL line."""
+
+
+@dataclass
+class SelfcheckOps:
+    """The host operations selfcheck drives. Tests substitute fakes for these."""
+
+    probe: Callable[[HostConfig], HostStatus]
+    run_job: Callable[..., int]
+    env_create: Callable[..., EnvReservation]
+    env_exec: Callable[[EnvReservation, str], "subprocess.CompletedProcess[str]"]
+    env_sync: Callable[[EnvReservation, str, str], None]
+    env_destroy: Callable[[str], bool]
+    ssh: Callable[[HostConfig, str], "subprocess.CompletedProcess[str]"]
+
+
+def build_selfcheck_ops(fleet: Dict[str, HostConfig], wake: bool = True) -> SelfcheckOps:
+    """Bind the real fleet operations into a SelfcheckOps."""
+    return SelfcheckOps(
+        probe=lambda host: probe_host(host, try_wake=wake),
+        run_job=execute_job,
+        env_create=lambda **kw: env_create(fleet, **kw),
+        env_exec=lambda res, cmd: env_exec(fleet, res, cmd, timeout_seconds=120),
+        env_sync=lambda res, direction, path: env_sync(fleet, res, direction=direction, local_path=path),
+        env_destroy=lambda env_id: env_destroy(fleet, env_id),
+        ssh=lambda host, cmd: run_ssh(host.ssh_alias, cmd, timeout=60),
+    )
+
+
+def _sha256_file(path: str) -> str:
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def _git_init_repo(path: str, marker: str) -> None:
+    """Create a one-commit git repo holding marker.txt for the one-shot run check."""
+    with open(os.path.join(path, "marker.txt"), "w", encoding="utf-8") as f:
+        f.write(marker + "\n")
+    git = ["git", "-C", path, "-c", "user.name=selfcheck", "-c", "user.email=selfcheck@localhost"]
+    for args in (["init", "-q"], ["add", "marker.txt"], ["commit", "-q", "-m", "selfcheck"]):
+        proc = subprocess.run(git + args, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            raise SelfcheckFailure(f"local git {args[0]} failed: {proc.stderr.strip()}")
+
+
+def _leftover_script(host: HostConfig, env_id: str) -> str:
+    return f"""
+set -e
+c=$({host.engine} ps -a -q --filter name=scavenger-env-{env_id})
+v=$({host.engine} volume ls -q --filter name=scavenger-vol-{env_id})
+w=""
+if [ -e ~/workspaces/{env_id} ]; then w=present; fi
+echo "container=$c"
+echo "volume=$v"
+echo "workspace=$w"
+"""
+
+
+def run_selfcheck(
+    host: HostConfig,
+    ops: SelfcheckOps,
+    image: str = "alpine:latest",
+    emit: Callable[[str], None] = print,
+    env_id: Optional[str] = None,
+) -> bool:
+    """Run the end-to-end steps against one host. Prints one PASS/FAIL line per step.
+
+    Stops at the first failing step. Returns True only if every step passed.
+    """
+    env_id = env_id or f"selfcheck-{uuid.uuid4().hex[:8]}"
+    token = uuid.uuid4().hex
+    state: Dict[str, Any] = {"res": None, "destroyed": False}
+
+    with tempfile.TemporaryDirectory(prefix="scavenger-selfcheck-") as tmp:
+        payload_dir = os.path.join(tmp, "payload")
+        down_dir = os.path.join(tmp, "down")
+        repo_dir = os.path.join(tmp, "repo")
+        for d in (payload_dir, repo_dir):
+            os.makedirs(d)
+        payload = os.path.join(payload_dir, "payload.bin")
+        with open(payload, "wb") as f:
+            f.write(os.urandom(8192))
+        payload_sha = _sha256_file(payload)
+
+        def step_probe() -> str:
+            st = ops.probe(host)
+            if not st.online:
+                raise SelfcheckFailure(st.reason or "host unreachable")
+            if not st.eligible:
+                raise SelfcheckFailure(f"online but not eligible: {st.reason}")
+            return f"eligible ({st.engine}, {st.arch})"
+
+        def step_run() -> str:
+            _git_init_repo(repo_dir, f"marker-{token}")
+            with tempfile.TemporaryFile("w+", encoding="utf-8") as out:
+                rc = ops.run_job(
+                    host=host,
+                    command="cat marker.txt",
+                    repo_path=repo_dir,
+                    image=image,
+                    mem_limit=host.default_memory,
+                    cpus=host.default_cpus,
+                    timeout_seconds=300,
+                    stdout=out,
+                )
+                out.seek(0)
+                output = out.read()
+            if rc != 0:
+                raise SelfcheckFailure(f"run exited {rc}")
+            if f"marker-{token}" not in output:
+                raise SelfcheckFailure(f"repo marker missing from output: {output.strip()[:200]!r}")
+            return "repo bundle reached the container"
+
+        def step_env_create() -> str:
+            state["res"] = ops.env_create(
+                env_id=env_id,
+                host_name=host.name,
+                kind="container",
+                image=image,
+                mem_limit=host.default_memory,
+                cpus=host.default_cpus,
+                ttl="15m",
+            )
+            return f"created {env_id}"
+
+        def step_env_exec() -> str:
+            proc = ops.env_exec(state["res"], f"echo exec-{token}")
+            if proc.returncode != 0:
+                raise SelfcheckFailure(f"exec exited {proc.returncode}: {proc.stderr.strip()[:200]}")
+            if f"exec-{token}" not in proc.stdout:
+                raise SelfcheckFailure(f"unexpected exec output: {proc.stdout.strip()[:200]!r}")
+            return "command output matched"
+
+        def step_sync_up() -> str:
+            ops.env_sync(state["res"], "up", payload_dir)
+            proc = ops.env_exec(state["res"], "sha256sum payload.bin")
+            remote_sha = proc.stdout.split()[0] if proc.returncode == 0 and proc.stdout.split() else ""
+            if remote_sha != payload_sha:
+                raise SelfcheckFailure(
+                    f"checksum mismatch after sync up (local {payload_sha[:12]}, remote {remote_sha[:12] or 'none'})"
+                )
+            return f"sha256 {payload_sha[:12]} matches on host"
+
+        def step_sync_down() -> str:
+            proc = ops.env_exec(state["res"], f"echo remote-{token} > remote.txt")
+            if proc.returncode != 0:
+                raise SelfcheckFailure(f"could not write remote file: {proc.stderr.strip()[:200]}")
+            ops.env_sync(state["res"], "down", down_dir)
+            down_payload = os.path.join(down_dir, "payload.bin")
+            if not os.path.isfile(down_payload):
+                raise SelfcheckFailure("payload.bin missing after sync down")
+            if _sha256_file(down_payload) != payload_sha:
+                raise SelfcheckFailure("payload.bin checksum changed on the round trip")
+            remote_txt = os.path.join(down_dir, "remote.txt")
+            if not os.path.isfile(remote_txt):
+                raise SelfcheckFailure("remote.txt missing after sync down")
+            with open(remote_txt, "r", encoding="utf-8") as f:
+                if f.read().strip() != f"remote-{token}":
+                    raise SelfcheckFailure("remote.txt content differs after sync down")
+            return "round trip checksum matches, host-made file came back"
+
+        def step_env_destroy() -> str:
+            ok = ops.env_destroy(env_id)
+            state["destroyed"] = True
+            if not ok:
+                raise SelfcheckFailure("env-destroy reported no such environment")
+            return f"destroyed {env_id}"
+
+        def step_leftovers() -> str:
+            proc = ops.ssh(host, _leftover_script(host, env_id))
+            if proc.returncode != 0:
+                raise SelfcheckFailure(f"leftover query failed: {proc.stderr.strip()[:200]}")
+            found = []
+            for line in proc.stdout.splitlines():
+                key, _, value = line.partition("=")
+                if key in ("container", "volume", "workspace") and value.strip():
+                    found.append(f"{key}={value.strip()}")
+            if found:
+                raise SelfcheckFailure("left on host: " + ", ".join(found))
+            return "no container, volume, or workspace left"
+
+        steps: List[Tuple[str, Callable[[], str]]] = [
+            ("probe", step_probe),
+            ("run", step_run),
+            ("env-create", step_env_create),
+            ("env-exec", step_env_exec),
+            ("env-sync-up", step_sync_up),
+            ("env-sync-down", step_sync_down),
+            ("env-destroy", step_env_destroy),
+            ("leftovers", step_leftovers),
+        ]
+
+        passed = True
+        try:
+            for name, fn in steps:
+                try:
+                    detail = fn()
+                except SelfcheckFailure as e:
+                    emit(f"FAIL {name}: {e}")
+                    passed = False
+                    break
+                except Exception as e:  # noqa: BLE001 - any host or tooling error is a step failure
+                    emit(f"FAIL {name}: {type(e).__name__}: {e}")
+                    passed = False
+                    break
+                emit(f"PASS {name}: {detail}")
+        finally:
+            if state["res"] is not None and not state["destroyed"]:
+                try:
+                    ops.env_destroy(env_id)
+                    emit(f"NOTE cleaned up {env_id} after failure")
+                except Exception as e:  # noqa: BLE001
+                    emit(f"NOTE cleanup of {env_id} failed ({type(e).__name__}: {e}); remove it by hand")
+
+    return passed
 
 
 # =============================================================================
@@ -1002,6 +1584,10 @@ def _lease_dict(res: EnvReservation, now: Optional[float] = None) -> Dict[str, A
 
 def cmd_probe(args: argparse.Namespace) -> int:
     fleet = _load_fleet(args)
+
+    reaped = env_reap(fleet)
+    if reaped:
+        print(f"Reaped {len(reaped)} expired environment(s): {', '.join(reaped)}", file=sys.stderr)
 
     targets = [args.host] if args.host else list(fleet.keys())
     results = []
@@ -1059,6 +1645,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         image=args.image,
         mem_limit=args.mem,
         cpus=args.cpus,
+        network=args.network,
         timeout_seconds=args.timeout,
     )
     if not args.json:
@@ -1100,6 +1687,7 @@ def cmd_env_create(args: argparse.Namespace) -> int:
         sync_dir=args.sync_dir,
         mem_limit=args.mem,
         cpus=args.cpus,
+        network=args.network,
         ttl=args.ttl,
         arch=args.arch,
         recipes_dir=resolve_recipes_dir(args.recipes_dir, args.config),
@@ -1109,13 +1697,19 @@ def cmd_env_create(args: argparse.Namespace) -> int:
     return 0
 
 
-def _get_lease(args: argparse.Namespace) -> Optional[EnvReservation]:
-    return load_leases().get(args.env_id)
+def _get_lease(args: argparse.Namespace, fleet: Optional[Dict[str, HostConfig]] = None) -> Optional[EnvReservation]:
+    if fleet is not None:
+        return find_lease(fleet, args.env_id)
+    cached = load_leases().get(args.env_id)
+    if cached:
+        return cached
+    configured = load_fleet_config(args.config)
+    return find_lease(configured, args.env_id) if configured else None
 
 
 def cmd_env_exec(args: argparse.Namespace) -> int:
     fleet = _load_fleet(args)
-    res = _get_lease(args)
+    res = find_lease(fleet, args.env_id)
     if not res:
         return _fail(args, f"No active lease for environment '{args.env_id}'")
 
@@ -1149,7 +1743,7 @@ def cmd_env_info(args: argparse.Namespace) -> int:
 
 def cmd_env_sync(args: argparse.Namespace) -> int:
     fleet = _load_fleet(args)
-    res = _get_lease(args)
+    res = find_lease(fleet, args.env_id)
     if not res:
         return _fail(args, f"No active lease for environment '{args.env_id}'")
 
@@ -1165,15 +1759,22 @@ def cmd_env_sync(args: argparse.Namespace) -> int:
 
 def cmd_env_destroy(args: argparse.Namespace) -> int:
     fleet = _load_fleet(args)
-    ok = env_destroy(fleet, args.env_id)
-    if ok:
+    if env_destroy(fleet, args.env_id):
         _emit(args, {"env_id": args.env_id, "destroyed": True}, f"Environment '{args.env_id}' destroyed.")
         return 0
+    if load_leases().get(args.env_id):
+        return _fail(args, f"Failed to destroy environment '{args.env_id}'; lease retained for retry.")
     return _fail(args, f"Environment '{args.env_id}' not found or already destroyed.")
 
 
 def cmd_env_list(args: argparse.Namespace) -> int:
-    leases = load_leases()
+    fleet = load_fleet_config(args.config)
+    if fleet:
+        leases, unreachable = reconcile_leases(fleet)
+        for name in unreachable:
+            print(f"Warning: host {name} unreachable; showing cached records for it", file=sys.stderr)
+    else:
+        leases = load_leases()
     now = time.time()
     lines = [f"{'ENV_ID':<24} {'HOST':<12} {'KIND':<10} {'EXPIRES_IN':<12} {'TARGET'}", "-" * 75]
     for k, v in leases.items():
@@ -1196,6 +1797,24 @@ def cmd_reap(args: argparse.Namespace) -> int:
     )
     _emit(args, {"reaped": reaped}, text)
     return 0
+
+
+def cmd_selfcheck(args: argparse.Namespace) -> None:
+    fleet = _load_fleet(args)
+    host = fleet.get(args.host)
+    if not host:
+        sys.exit(_fail(args, f"Unknown host: {args.host}"))
+
+    ops = build_selfcheck_ops(fleet, wake=args.wake)
+    ok = run_selfcheck(host, ops, image=args.image)
+    text = f"selfcheck {'passed' if ok else 'FAILED'} for {host.name}"
+    if args.json:
+        _emit(args, {"host": host.name, "passed": ok})
+    elif ok:
+        print(text)
+    else:
+        print(text, file=sys.stderr)
+    sys.exit(0 if ok else 1)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1227,6 +1846,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--image", default="alpine:latest", help="Container image (default: alpine:latest)")
     p_run.add_argument("--mem", default="16g", help="Memory limit (default: 16g)")
     p_run.add_argument("--cpus", type=int, default=8, help="CPU core limit (default: 8)")
+    p_run.add_argument(
+        "--network",
+        choices=["none", "default"],
+        default="default",
+        help="Container network: 'none' blocks all network access (use for test runs that need no downloads)",
+    )
     p_run.add_argument("--timeout", type=int, default=1800, help="Watchdog timeout in seconds (default: 1800)")
     p_run.add_argument("--no-wake", dest="wake", action="store_false", help="Do not fire WoL packets during selection")
     p_run.add_argument("--force", action="store_true", help="Run on host even if courtesy checks flag busy/battery")
@@ -1250,6 +1875,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_ec.add_argument("--sync-dir", help="Local directory to initial-sync into /workspace")
     p_ec.add_argument("--mem", default="16g", help="Memory limit")
     p_ec.add_argument("--cpus", type=int, default=8, help="CPU limit")
+    p_ec.add_argument(
+        "--network",
+        choices=["none", "default"],
+        default="default",
+        help="Container network: 'none' blocks all network access (use for environments that need no downloads)",
+    )
     p_ec.add_argument("--ttl", default="2h", help="Time to live (e.g. '1h', '30m')")
     p_ec.add_argument("--arch", choices=["arm64", "x86_64"], help="Architecture preference")
 
@@ -1272,8 +1903,12 @@ def build_parser() -> argparse.ArgumentParser:
     add("env-list", "List active environment reservations", cmd_env_list)
     add("reap", "Reap all expired environment reservations", cmd_reap)
 
-    return parser
+    p_sc = add("selfcheck", "Run an end-to-end check against one real host", cmd_selfcheck, wake=True)
+    p_sc.add_argument("host", help="Host name from the fleet config")
+    p_sc.add_argument("--image", default="alpine:latest", help="Container image (default: alpine:latest)")
+    p_sc.add_argument("--no-wake", dest="wake", action="store_false", help="Do not fire Wake-on-LAN packets")
 
+    return parser
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)

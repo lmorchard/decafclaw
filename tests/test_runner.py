@@ -262,3 +262,26 @@ async def test_runner_schedule_timer_enabled(config):
             await asyncio.wait_for(runner_task, timeout=5.0)
         except (asyncio.CancelledError, Exception):
             pass
+
+
+@pytest.mark.asyncio
+async def test_runner_runs_shutdown_complete_hook(config):
+    """run_all invokes on_shutdown_complete after the graceful sequence (#1799)."""
+    config.http.enabled = True
+    config.heartbeat.interval = ""
+    config.schedules.enabled = False
+    bus = EventBus()
+    ctx = Context(config=config, event_bus=bus)
+
+    calls = []
+
+    post_schedule, patches = _schedule_switch_mocks(AsyncMock())
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        runner_task = asyncio.create_task(run_all(ctx, on_shutdown_complete=lambda: calls.append("hook")))
+        await asyncio.wait_for(post_schedule.wait(), timeout=10.0)
+        ctx.restart_coordinator.shutdown_event.set()
+        await asyncio.wait_for(runner_task, timeout=10.0)
+
+    assert calls == ["hook"]

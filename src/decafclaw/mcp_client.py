@@ -17,11 +17,32 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 
-def _ga(obj, key, default=None):
-    """Get attribute from dict or object uniformly."""
+_MISSING = object()
+
+
+def _snake_case(name: str) -> str:
+    """Convert a camelCase SDK field name to its snake_case attribute name."""
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+def _ga(obj, key, default=None) -> Any:
+    """Get a field from a dict or SDK object uniformly.
+
+    SDK v2 models use snake_case attributes with camelCase JSON aliases; callers
+    pass the JSON spelling. Try the exact key first (dicts and v1-style mocks),
+    then the snake_case attribute.
+    """
     if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
+        if key in obj:
+            return obj[key]
+        snake = _snake_case(key)
+        if snake in obj:
+            return obj[snake]
+        return default
+    value = getattr(obj, key, _MISSING)
+    if value is not _MISSING:
+        return value
+    return getattr(obj, _snake_case(key), default)
 
 
 def _extract_list(result, attr: str) -> list:
@@ -42,6 +63,13 @@ _VALID_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # Env var expansion: ${VAR} or ${VAR:-default}
 _ENV_VAR_RE = re.compile(r"\$\{([^}:]+?)(?::-([^}]*))?\}")
 
+# MCP protocol revision policy. "auto" keeps the legacy initialize handshake and
+# steps up to 2026-07-28 only when an HTTP server says it is modern-only.
+PROTOCOL_AUTO = "auto"
+PROTOCOL_LEGACY = "2024-11-05"
+PROTOCOL_MODERN = "2026-07-28"
+_VALID_PROTOCOLS = frozenset({PROTOCOL_AUTO, PROTOCOL_LEGACY, PROTOCOL_MODERN})
+
 
 @dataclass
 class MCPServerConfig:
@@ -55,6 +83,7 @@ class MCPServerConfig:
     url: str = ""
     headers: dict[str, str] = field(default_factory=dict)
     timeout: int = 30000  # ms
+    protocol: str = PROTOCOL_AUTO
 
 
 def _expand_env(value: str) -> str:
@@ -124,6 +153,13 @@ def load_mcp_config(config) -> list[MCPServerConfig]:
         server_data: dict = _expand_config(server_data)  # type: ignore[assignment]
 
         server_type = server_data.get("type", "stdio")
+        protocol = server_data.get("protocol", PROTOCOL_AUTO)
+        if protocol not in _VALID_PROTOCOLS:
+            log.warning(
+                f"MCP server {name!r}: unknown protocol {protocol!r}; "
+                f"expected one of {sorted(_VALID_PROTOCOLS)}. Using {PROTOCOL_AUTO!r}."
+            )
+            protocol = PROTOCOL_AUTO
         configs.append(
             MCPServerConfig(
                 name=name,
@@ -134,6 +170,7 @@ def load_mcp_config(config) -> list[MCPServerConfig]:
                 url=server_data.get("url", ""),
                 headers=server_data.get("headers", {}),
                 timeout=server_data.get("timeout", 30000),
+                protocol=protocol,
             )
         )
 
@@ -196,7 +233,8 @@ def parse_mcp_tool_name(name: str) -> tuple[str, str] | None:
 def _convert_tool_definition(server_name: str, mcp_tool) -> dict:
     """Convert an MCP tool definition to OpenAI-style tool definition.
 
-    mcp_tool can be a dict or an SDK Tool object (has .name, .description, .inputSchema).
+    mcp_tool can be a dict or an SDK Tool object (has .name, .description,
+    .input_schema / .inputSchema).
     """
     name = _ga(mcp_tool, "name", "")
     description = _ga(mcp_tool, "description", "")
@@ -273,6 +311,10 @@ def _convert_mcp_response(result):
             parts.append(f"[{item_type}: unsupported content type]")
 
     text = "\n".join(parts) if parts else "(no content)"
+    if not parts:
+        structured = _ga(result, "structuredContent")
+        if structured is not None:
+            text = json.dumps(structured, indent=2, default=str)
 
     if is_error:
         return ToolResult(text=f"[error: {text}]", media=media)
@@ -373,6 +415,45 @@ class MCPConnectionError(MCPReadinessError):
     """Raised when a required MCP server fails to connect."""
 
 
+def _find_mcp_error(exc: BaseException) -> BaseException | None:
+    """Find an MCPError inside the task-group ExceptionGroups the SDK raises."""
+    from mcp.shared.exceptions import MCPError
+
+    if isinstance(exc, MCPError):
+        return exc
+    if isinstance(exc, BaseExceptionGroup):
+        for sub in exc.exceptions:
+            found = _find_mcp_error(sub)
+            if found is not None:
+                return found
+    return None
+
+
+def _is_modern_only_error(exc: BaseException) -> bool:
+    """Whether an initialize failure is positive evidence of a modern-only server.
+
+    MCP revision 2026-07-28 servers reject the legacy handshake with -32022
+    and a ``supported`` list. Only that signal triggers the step-up; method
+    errors, timeouts, and transport failures keep the legacy verdict.
+    """
+    from mcp.shared.exceptions import MCPError
+    from mcp.types import UNSUPPORTED_PROTOCOL_VERSION, UnsupportedProtocolVersionErrorData
+    from mcp.types.version import MODERN_PROTOCOL_VERSIONS
+    from pydantic import ValidationError
+
+    if not isinstance(exc, MCPError) or exc.code != UNSUPPORTED_PROTOCOL_VERSION:
+        return False
+
+    data = getattr(getattr(exc, "error", None), "data", None)
+    try:
+        supported = UnsupportedProtocolVersionErrorData.model_validate(data).supported
+    except (TypeError, ValidationError):
+        # -32022 without a parsable version list still names a revision we do
+        # not speak; let the modern probe settle it.
+        return True
+    return any(version in MODERN_PROTOCOL_VERSIONS for version in supported)
+
+
 # -- MCP Registry --------------------------------------------------------------
 
 
@@ -409,6 +490,58 @@ class MCPServerState:
     def is_ready(self) -> bool:
         """Check if server is ready/connected."""
         return self.status == ConnState.CONNECTED
+
+
+@contextlib.asynccontextmanager
+async def _open_stdio_session(server_config: MCPServerConfig, message_handler, *, modern: bool):
+    """Open a stdio ClientSession and complete the configured handshake."""
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    params = StdioServerParameters(
+        command=server_config.command,
+        args=server_config.args,
+        env={**os.environ, **server_config.env} if server_config.env else None,
+    )
+    session_kwargs = {"message_handler": message_handler} if message_handler else {}
+    async with stdio_client(params) as (read_stream, write_stream):
+        async with ClientSession(read_stream, write_stream, **session_kwargs) as session:
+            if modern:
+                await session.discover()
+            else:
+                await session.initialize()
+            yield session
+
+
+@contextlib.asynccontextmanager
+async def _open_http_session(server_config: MCPServerConfig, message_handler, *, modern: bool):
+    """Open a Streamable HTTP ClientSession and complete the configured handshake."""
+    import httpx2
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+
+    http_client = (
+        # Mirror the SDK's transport defaults: short connect/write/pool waits,
+        # long read waits for server-held response streams.
+        httpx2.AsyncClient(headers=server_config.headers, timeout=httpx2.Timeout(30.0, read=300.0))
+        if server_config.headers
+        else None
+    )
+    session_kwargs = {"message_handler": message_handler} if message_handler else {}
+    try:
+        async with streamable_http_client(server_config.url, http_client=http_client) as (
+            read_stream,
+            write_stream,
+        ):
+            async with ClientSession(read_stream, write_stream, **session_kwargs) as session:
+                if modern:
+                    await session.discover()
+                else:
+                    await session.initialize()
+                yield session
+    finally:
+        if http_client is not None:
+            await http_client.aclose()
 
 
 class MCPRegistry:
@@ -534,20 +667,19 @@ class MCPRegistry:
         async def handler(message):
             from mcp import types as _mcp_types
 
-            # Only handle ServerNotification, ignore requests and exceptions
-            if not isinstance(message, _mcp_types.ServerNotification):
+            # Stream errors arrive as Exception items; only notifications matter.
+            if isinstance(message, Exception):
                 return
 
             try:
-                notification = message.root
-                if isinstance(notification, _mcp_types.ToolListChangedNotification):
+                if isinstance(message, _mcp_types.ToolListChangedNotification):
                     await self.refresh_tools(server_name)
-                elif isinstance(notification, _mcp_types.ResourceListChangedNotification):
+                elif isinstance(message, _mcp_types.ResourceListChangedNotification):
                     await self.refresh_resources(server_name)
-                elif isinstance(notification, _mcp_types.PromptListChangedNotification):
+                elif isinstance(message, _mcp_types.PromptListChangedNotification):
                     await self.refresh_prompts(server_name)
                 else:
-                    log.debug(f"MCP server {server_name!r}: unhandled notification {type(notification).__name__}")
+                    log.debug(f"MCP server {server_name!r}: unhandled notification {type(message).__name__}")
             except Exception as e:
                 log.warning(f"MCP server {server_name!r}: notification handler error: {e}")
 
@@ -681,7 +813,7 @@ class MCPRegistry:
             state.session = session
 
             # Store server capabilities for capability-aware discovery
-            state.capabilities = session.get_server_capabilities()
+            state.capabilities = session.server_capabilities
 
             # Discover tools
             tools_result = await session.list_tools()
@@ -780,40 +912,40 @@ class MCPRegistry:
 
     async def _connect_stdio(self, exit_stack, server_config, message_handler=None):
         """Connect to a stdio MCP server. Override in tests."""
-        from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
-
-        params = StdioServerParameters(
-            command=server_config.command,
-            args=server_config.args,
-            env={**os.environ, **server_config.env} if server_config.env else None,
-        )
-        read_stream, write_stream = await exit_stack.enter_async_context(stdio_client(params))
-        kwargs = {}
-        if message_handler:
-            kwargs["message_handler"] = message_handler
-        session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream, **kwargs))
-        await session.initialize()
-        return session
+        modern = server_config.protocol == PROTOCOL_MODERN
+        return await exit_stack.enter_async_context(_open_stdio_session(server_config, message_handler, modern=modern))
 
     async def _connect_http(self, exit_stack, server_config, message_handler=None):
-        """Connect to an HTTP MCP server. Override in tests."""
-        import httpx
-        from mcp import ClientSession
-        from mcp.client.streamable_http import streamable_http_client
+        """Connect to an HTTP MCP server. Override in tests.
 
-        http_kwargs: dict = {"url": server_config.url}
-        if server_config.headers:
-            http_client = httpx.AsyncClient(headers=server_config.headers)
-            http_kwargs["http_client"] = http_client
+        ``auto`` tries the legacy initialize handshake first, because the
+        existing server fleet is legacy-only and a few servers mishandle an
+        unknown ``server/discover``. A -32022 that names a modern revision is
+        positive evidence of a modern-only server, so the connection is retried
+        with discovery.
+        """
+        if server_config.protocol == PROTOCOL_MODERN:
+            return await exit_stack.enter_async_context(_open_http_session(server_config, message_handler, modern=True))
+        if server_config.protocol == PROTOCOL_LEGACY:
+            return await exit_stack.enter_async_context(
+                _open_http_session(server_config, message_handler, modern=False)
+            )
 
-        read_stream, write_stream, _ = await exit_stack.enter_async_context(streamable_http_client(**http_kwargs))
-        session_kwargs = {}
-        if message_handler:
-            session_kwargs["message_handler"] = message_handler
-        session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream, **session_kwargs))
-        await session.initialize()
-        return session
+        try:
+            return await exit_stack.enter_async_context(
+                _open_http_session(server_config, message_handler, modern=False)
+            )
+        except Exception as exc:
+            mcp_error = _find_mcp_error(exc)
+            if mcp_error is None or not _is_modern_only_error(mcp_error):
+                raise
+            log.info(
+                "MCP server %r is modern-only; retrying with protocol %s",
+                server_config.name,
+                PROTOCOL_MODERN,
+            )
+
+        return await exit_stack.enter_async_context(_open_http_session(server_config, message_handler, modern=True))
 
     def _make_tool_caller(self, server_name, tool_name, timeout_ms):
         """Create an async callable that invokes an MCP tool.

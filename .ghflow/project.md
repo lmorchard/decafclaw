@@ -1,17 +1,18 @@
 ---
 ghflow_project_facts: 1
-written: 2026-11-19
+written: 2026-11-24
 sources:
-  - AGENTS.md 930bed5be4fc8cfe267d5bb23bd3818d78fc94e4
-  - CLAUDE.md 930bed5be4fc8cfe267d5bb23bd3818d78fc94e4
-  - Makefile b3638bb7cdc6406b35c2a1fec0249ca7c3064b25
-  - .github/workflows/ci.yml 2de18948e0afc3ee4c14570649660a08aea316d5
-  - conftest.py fb46496f6536760ece617b135afc7aef3c6eac93
-  - tests/conftest.py 6ba9db5b8e4149d7aabd375dc1d57a283f7bfbe1
-  - pyproject.toml b705dda2e2f0e144f03fa64a344fdf9ef122232d
+  - AGENTS.md 68aea5815e0b5fb9b88e23c297bd72cb3ed53860
+  - CLAUDE.md 68aea5815e0b5fb9b88e23c297bd72cb3ed53860
+  - Makefile 5c566d7d51b8d9fca722d69184164f4215447ca9
+  - .github/workflows/ci.yml aa8dd08ffe089400fe54b30172d21f740a0b05cf
+  - conftest.py 2b63e029a3b2c4524ade2c71f18f181f3997dff1
+  - tests/conftest.py 3e6f545a3c6d2adf28d926ba539fbba8d574b559
+  - tests/web/conftest.py 10cc18c08878e55b406bd3c1d6ed80e8baae60b8
+  - pyproject.toml ea12eff96088d2b4c79567f68b463f85137fb556
   - scripts/gen_message_types.py 06a0ab1456ab2e0655d70eab5e68f24a2eda9be9
-  - docs/config.md 02e25d2ce219a502b2047b0767340c3181943f94
-  - docs/testing.md e30d35456d9757a42f84f13abeca170998145fd2
+  - docs/config.md efa6fa6d20219bdc8e32c1fb42fd3dde3879368c
+  - docs/testing.md 162454c9807cfed6ae7fb45399b31cfb891ed600
 worktree:
   copy:
     - .env
@@ -27,33 +28,34 @@ worktree:
 `AGENTS.md` is a symlink to `CLAUDE.md`; read it in full. `ghflow facts` reports when a source above changes.
 
 ## Worktree setup
-- Worktrees at `.claude/worktrees/{branch}/`, branched from `origin/main`; never edit the main clone. `uv sync` (or `make install`); a doc-only worktree skips it (say so in the report).
-- `cp ../../../.env .env` from the main clone (it points at the main clone's `data/`), then add `HTTP_PORT=<port>` (default 18880) to avoid port conflicts with other worktrees. Run `make test` once for a baseline before code changes.
+- Worktrees at `.claude/worktrees/{branch}/`, branched from `origin/main`; never edit the main clone. `uv sync` (or `make install`) for the venv; a doc-only worktree skips it (say so in the report).
+- `cp ../../../.env .env` from the main clone (it points at shared agent data), then set a distinct `HTTP_PORT`. Run `make test` once for a baseline before code changes.
 
 ## Gates
 - `make fmt` before every commit. `make check` = `install-js check-npm-policy check-message-types check-skill-annotations fmt-check lint typecheck check-js check-browser-assets`; `make test` = `uv run pytest tests/ contrib/skills/`.
-- CI: required `lint-and-test` (`make check`, `playwright install chromium`, pytest) and `js-test` (`make test-js`); `check-tui` runs `make check-tui test-tui` outside `make check`.
-- npm policy (#930): direct deps exact-pinned (no ^/~); every Makefile npm install runs `--ignore-scripts` (allowlisted scripts via `npm rebuild`); `make check-npm-policy` gates it (detail in `docs/dependency-install-policy.md`). `make install-js` uses `npm ci`; do not `npm install` in `src/decafclaw/web/static/` — dependency changes go through `make vendor`.
+- CI required: `lint-and-test` (`make check`, then pytest `-m "not integration and not browser"`) and `js-test` (`make test-js`). Separate jobs: `browser-test` (Playwright chromium, pytest `-m "browser and not integration"`) and `check-tui` (`make check-tui test-tui`).
+- npm policy (#930): direct deps exact-pinned; every Makefile npm install runs `--ignore-scripts` (allowlisted scripts via `npm rebuild`); `make check-npm-policy` gates it. `make install-js` uses `npm ci`; do not `npm install` in `src/decafclaw/web/static/` — dependency changes go through `make vendor`.
 
 ## Generated files
-- `src/decafclaw/web/message_types.json` generates `src/decafclaw/web/message_types.py`, `src/decafclaw/web/static/lib/message-types.js`, `docs/websocket-messages.md`, and `tui/src/types.generated.ts` via `make gen-message-types`. `make check-message-types` (inside `make check`) fails on a hand edit.
-- `make gen-api-client` (inside `make check-js`) regenerates the committed OpenAPI client under `src/decafclaw/web/static/lib/api-client/`. `make vendor` rebuilds the committed vendor bundle.
+- `src/decafclaw/web/message_types.json` generates `message_types.py`, `static/lib/message-types.js`, `docs/websocket-messages.md`, and `tui/src/types.generated.ts` via `make gen-message-types`; `make check-message-types` (in `make check`) fails on a hand edit.
+- `make gen-api-client` regenerates `openapi.json`/`openapi.yaml` and the committed client under `static/lib/api-client/`; `make check-js` (in `make check`) fails on drift there. `make vendor` rebuilds the committed vendor bundle.
 
 ## Test layout
-- Root `conftest.py` holds the shared fixtures `config`, `ctx`, `tmp_data`, and autouse `mock_embed_text`. `tests/conftest.py` adds `stub_llm`, an autouse guard that fails any unstubbed LLM call, and an autouse guard that fails tests leaking asyncio's running-loop mark. `tests/web/conftest.py` adds `http_config`, `app`, `client`.
-- One file: `uv run pytest tests/test_x.py -n 0` (`-n 0` turns off xdist). Default addopts: `-n auto --dist=worksteal -m 'not integration'`; `testpaths = ["tests", "contrib"]`.
-- Markers: `integration` hits real LLM APIs (`make test` excludes it); `live_llm` opts a test out of the unstubbed-LLM-call guard in tests/conftest.py — real provider code with HTTP mocked below the guard; `scripted_provider` drives the normal LLM path through the in-memory `decafclaw.testing.ScriptedProvider` (#923) while the real network providers stay guarded. Browser tests need Playwright chromium. `make ephemeral-test` runs the scripted end-to-end tool round-trip (#957; details in `docs/ephemeral-instance.md`).
+- Root `conftest.py`: fixtures `config`, `ctx` (seeds the extension manager with default-enabled core extensions), `tmp_data`; autouse `mock_embed_text`. `tests/conftest.py`: `stub_llm`, plus autouse guards that fail unstubbed LLM calls, tests setting OpenTelemetry's global tracer provider (#1424), and tests leaking asyncio's running-loop mark. `tests/web/conftest.py`: package-scoped `http_config`, `bus`, `app`, `client`.
+- One file: `uv run pytest tests/test_x.py -n 0` (turns off xdist). Default addopts `-n auto --dist=worksteal -m 'not integration'`; `testpaths = ["tests", "contrib"]`.
+- Markers: `integration` hits real LLM APIs (excluded by default; `make test-integration`); `browser` launches Playwright (`make test-browser`, separate CI job, needs chromium installed); `live_llm` opts out of the unstubbed-LLM guard (real provider code, HTTP mocked below it); `scripted_provider` drives the normal LLM path through in-memory `decafclaw.testing.ScriptedProvider` (#923). `make ephemeral-test` runs the scripted end-to-end round-trip (#957; `docs/ephemeral-instance.md`).
 
 ## Session notes
 - `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `plan.md`, `notes.md`. Session docs are committed.
 
-## Running the app
-- `make run-dev` from a worktree (#1096): refuses to run from the main clone, seeds the worktree's `data-dev/` (gitignored) with created-if-missing copies of the main clone's `data/{agent_id}/config.json` and `web_tokens.json`, writes a PIDfile at `data-dev/.pid` for `make stop-dev` (#1208), and runs `uv run decafclaw` with `DATA_HOME` set to it, `MATTERMOST_ENABLED=false`, `EMAIL_ENABLED=false`, `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_ENABLED=false`, `HEARTBEAT_INTERVAL=0` (interval of 0 disables the heartbeat timer), `HTTP_ENABLED=true`, and the worktree's `HTTP_PORT` (from the worktree's `.env`; default 18880). Mattermost stays off unless an issue calls for it, and then only attended with Les's go-ahead.
+## Never run
+- `make run`/`dev`/`debug`: one bot instance per Mattermost account (a second misses WebSocket events); Les may already have `make dev` running — check before starting, ask him to stop it if live logs need replacing.
+- In a worktree use `make run-dev` instead: refuses to run from the main clone, seeds gitignored `data-dev/` (created-if-missing copies of the main clone's `config.json` + `web_tokens.json`), Mattermost/email/DMs/heartbeat off, web UI on the worktree's `HTTP_PORT` (default 18880); `make stop-dev` stops it via the PIDfile.
 
 ## Commits and PRs
-- Subjects mostly `type(scope): summary`, for example `fix(agent): ...`. Every change goes through a PR. `Closes #N` closes the issue on merge.
+- Subjects mostly `type(scope): summary` (e.g. `fix(agent): ...`). Every change goes through a PR; Les reviews before merge. `Closes #N` closes the issue on merge.
 
 ## Board
-- Owner `lmorchard`, project `6`, field `Status`: Backlog, Ready, In progress, In review, Done. Priority P0/P1/P2; Size XS to XL.
+- Owner `lmorchard`, project `6`, field `Status`; the flow uses Ready, In progress, In review, Done. Priority P0/P1/P2; Size XS to XL.
 
 Live state: `python3 "$GHFLOW_CLI" facts --issue ISSUE_URL`.

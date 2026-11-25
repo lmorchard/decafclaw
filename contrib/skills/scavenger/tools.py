@@ -18,6 +18,7 @@ from contrib.skills.scavenger.scavenger import (
     EnvReservation,
     HostConfig,
     HostStatus,
+    container_limit_flags,
     env_arm_watch,
     env_create,
     env_destroy,
@@ -26,15 +27,20 @@ from contrib.skills.scavenger.scavenger import (
     env_reap,
     env_sync,
     execute_job,
+    find_lease,
     load_fleet_config,
     load_leases,
     probe_host,
+    reconcile_leases,
     resolve_recipes_dir,
     run_ssh,
     select_best_host,
     wake_host,
 )
 from decafclaw import canvas
+
+#: Network modes accepted by scavenger container tools.
+NETWORK_MODES = ("none", "default")
 
 
 def _resolve_local_path(ctx: Any, path: str) -> Optional[str]:
@@ -78,6 +84,8 @@ def scavenger_probe(ctx: Any, host: str = "") -> str:
     if not fleet:
         return "Error: No fleet configuration found. Check ~/.config/scavenger/fleet.json."
 
+    reaped = env_reap(fleet)
+
     targets = [host] if host else list(fleet.keys())
     lines = [
         f"{'HOST':<14} {'ONLINE':<8} {'ARCH':<8} {'ENGINE':<8} {'AC':<6} {'STATUS':<10} {'NOTES'}",
@@ -94,6 +102,9 @@ def scavenger_probe(ctx: Any, host: str = "") -> str:
         lines.append(
             f"{st.name:<14} {str(st.online):<8} {st.arch:<8} {st.engine:<8} {ac_str:<6} {status_str:<10} {st.reason}"
         )
+
+    if reaped:
+        lines.append(f"Reaped {len(reaped)} expired environment(s): {', '.join(reaped)}")
 
     return "\n".join(lines)
 
@@ -119,8 +130,12 @@ def scavenger_run(
     image: str = "alpine:latest",
     mem: str = "16g",
     cpus: int = 8,
+    network: str = "default",
 ) -> str:
     """Run a one-shot ephemeral container job on the best eligible scavenger host."""
+    if network not in NETWORK_MODES:
+        return f"Error: Invalid network '{network}'. Use 'none' (no network) or 'default'."
+
     fleet = load_fleet_config()
     if not fleet:
         return "Error: No fleet configuration found at ~/.config/scavenger/fleet.json."
@@ -144,6 +159,7 @@ def scavenger_run(
 
     selinux_flag = ":Z" if target_host.needs_selinux_z else ""
     device_args = " ".join(target_host.device_flags) if target_host.device_flags else ""
+    limit_args = " ".join(container_limit_flags(target_host, network))
 
     if real_repo:
         bundle_proc = subprocess.Popen(
@@ -161,6 +177,7 @@ git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
 {target_host.engine} run --rm \\
     --memory={mem} \\
     --cpus={cpus} \\
+    {limit_args} \\
     {device_args} \\
     -v "$RECV_DIR/workspace:/workspace{selinux_flag}" \\
     -w /workspace \\
@@ -188,6 +205,7 @@ mkdir -p "$JOB_DIR/workspace"
 {target_host.engine} run --rm \\
     --memory={mem} \\
     --cpus={cpus} \\
+    {limit_args} \\
     {device_args} \\
     -v "$JOB_DIR/workspace:/workspace{selinux_flag}" \\
     -w /workspace \\
@@ -251,10 +269,14 @@ def scavenger_env_create(
     sync_dir: str = "",
     mem: str = "16g",
     cpus: int = 8,
+    network: str = "default",
     ttl: str = "2h",
     arch: str = "",
 ) -> str:
     """Reserve a stateful environment (container or native workspace) on the fleet."""
+    if network not in NETWORK_MODES:
+        return f"Error: Invalid network '{network}'. Use 'none' (no network) or 'default'."
+
     fleet = load_fleet_config()
     if not fleet:
         return "Error: No fleet configuration found."
@@ -280,6 +302,7 @@ def scavenger_env_create(
             sync_dir=real_sync,
             mem_limit=mem,
             cpus=cpus,
+            network=network,
             ttl=ttl,
             arch=arch or None,
             recipes_dir=recipes_dir,
@@ -309,8 +332,7 @@ async def scavenger_env_exec(
     automated wake event so DecafClaw is woken when the condition triggers.
     """
     fleet = load_fleet_config()
-    leases = load_leases()
-    res = leases.get(env_id)
+    res = find_lease(fleet, env_id)
     if not res:
         return f"Error: No active lease found for environment '{env_id}'"
 
@@ -399,8 +421,7 @@ async def scavenger_env_watch(
     - watch_type='pattern': pattern matches in target log file
     """
     fleet = load_fleet_config()
-    leases = load_leases()
-    res = leases.get(env_id)
+    res = find_lease(fleet, env_id)
     if not res:
         return f"Error: No active lease found for environment '{env_id}'"
 
@@ -442,8 +463,8 @@ async def scavenger_env_watch(
 
 def scavenger_env_info(ctx: Any, env_id: str) -> str:
     """Inspect targeted details and remaining TTL for a specific environment reservation."""
-    leases = load_leases()
-    res = leases.get(env_id)
+    fleet = load_fleet_config()
+    res = find_lease(fleet, env_id)
     if not res:
         return f"Error: No active lease found for environment '{env_id}'"
 
@@ -466,8 +487,7 @@ async def scavenger_env_terminal(ctx: Any, env_id: str, shell: str = "sh") -> st
     Embeds DecafClaw's native xterm.js PTY terminal widget in a new tab.
     """
     fleet = load_fleet_config()
-    leases = load_leases()
-    res = leases.get(env_id)
+    res = find_lease(fleet, env_id)
     if not res:
         return f"Error: No active lease found for environment '{env_id}'"
 
@@ -533,8 +553,7 @@ exec ssh -t -o BatchMode=no {host.ssh_alias} "{host.engine} exec -it {c_name} {s
 def scavenger_env_sync(ctx: Any, env_id: str, direction: str, local_path: str) -> str:
     """Sync files up to or down from a reserved environment."""
     fleet = load_fleet_config()
-    leases = load_leases()
-    res = leases.get(env_id)
+    res = find_lease(fleet, env_id)
     if not res:
         return f"Error: No active lease found for environment '{env_id}'"
 
@@ -552,12 +571,18 @@ def scavenger_env_destroy(ctx: Any, env_id: str) -> str:
     ok = env_destroy(fleet, env_id)
     if ok:
         return f"Environment '{env_id}' destroyed and lease released."
+    still = load_leases().get(env_id)
+    if still:
+        return (
+            f"Failed to destroy environment '{env_id}' on {still.host} (host unreachable?); lease retained for retry."
+        )
     return f"Environment '{env_id}' not found or already destroyed."
 
 
 def scavenger_env_list(ctx: Any) -> str:
-    """List all active environment reservations across the fleet."""
-    leases = load_leases()
+    """List all active environment reservations across the fleet, as reported by each host."""
+    fleet = load_fleet_config()
+    leases, unreachable = reconcile_leases(fleet)
     now = time.time()
     if not leases:
         return "No active environment reservations."
@@ -571,6 +596,8 @@ def scavenger_env_list(ctx: Any) -> str:
         rem_str = f"{rem}s" if rem > 0 else "EXPIRED"
         target = v.container_name if v.kind == "container" else (v.workspace_path or "")
         lines.append(f"{k:<24} {v.host:<12} {v.kind:<10} {rem_str:<12} {target}")
+    if unreachable:
+        lines.append(f"(unreachable, showing cached records: {', '.join(unreachable)})")
 
     return "\n".join(lines)
 
@@ -581,6 +608,12 @@ def scavenger_reap(ctx: Any) -> str:
     reaped = env_reap(fleet)
     if reaped:
         return f"Reaped {len(reaped)} expired environment(s): {', '.join(reaped)}"
+    still_expired = [k for k, v in load_leases().items() if v.expires_at < time.time()]
+    if still_expired:
+        return (
+            f"Could not reap {len(still_expired)} expired environment(s) ({', '.join(still_expired)}); "
+            "their hosts are unreachable. They will be retried on the next sweep."
+        )
     return "No expired environments to reap."
 
 
@@ -672,6 +705,11 @@ TOOL_DEFINITIONS = [
                         "type": "integer",
                         "description": "CPU core limit for container (default: 8).",
                     },
+                    "network": {
+                        "type": "string",
+                        "enum": ["none", "default"],
+                        "description": "Container network mode (default: 'default'). Use 'none' for test runs that need no downloads — it blocks all container network access, including the LAN.",
+                    },
                 },
                 "required": ["command"],
             },
@@ -742,6 +780,11 @@ TOOL_DEFINITIONS = [
                     "cpus": {
                         "type": "integer",
                         "description": "CPU limit for container (default: 8).",
+                    },
+                    "network": {
+                        "type": "string",
+                        "enum": ["none", "default"],
+                        "description": "Container network mode (default: 'default'). Use 'none' for environments that need no downloads — it blocks all container network access, including the LAN.",
                     },
                     "ttl": {
                         "type": "string",

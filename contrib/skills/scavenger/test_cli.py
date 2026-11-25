@@ -289,7 +289,8 @@ def test_env_sync_json(tmp_path, leases_file, capsys):
 def test_env_destroy_json_and_failure(tmp_path, leases_file, capsys):
     cfg = _write_fleet(tmp_path / "fleet.json")
     sc.save_leases({"e1": _lease()})
-    with patch.object(sc, "run_ssh"):
+    success = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    with patch.object(sc, "run_ssh", return_value=success):
         code, out, _ = run_cli(capsys, "--config", cfg, "env-destroy", "e1", "--json")
     assert code == 0
     assert json.loads(out) == {"env_id": "e1", "destroyed": True}

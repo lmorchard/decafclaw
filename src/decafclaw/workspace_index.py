@@ -249,6 +249,27 @@ def start_workspace_index_loop(config: "Config") -> asyncio.Task:
     return _periodic_task
 
 
+async def shutdown_workspace_index() -> None:
+    """Cancel the periodic refresh loop and any in-flight refresh.
+
+    ``runner.run_all`` calls this during shutdown so the loop is not left for
+    ``asyncio.run`` to cancel during teardown (#1799). Idempotent.
+    """
+    global _periodic_task, _refresh_task
+    loop = asyncio.get_running_loop()
+    tasks = [
+        task
+        for task in (_periodic_task, _refresh_task)
+        if task is not None and not task.done() and task.get_loop() is loop
+    ]
+    _periodic_task = None
+    _refresh_task = None
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def get_workspace_files(config: "Config") -> list[str]:
     """Get workspace files from in-memory cache, triggering background refresh if stale.
 

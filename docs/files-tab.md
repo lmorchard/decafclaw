@@ -170,7 +170,7 @@ Backend:
 
 - `src/decafclaw/web/bookmarks.py` — Per-agent bookmark store (`data/{agent_id}/bookmarks.json`, atomic writes).
 - `src/decafclaw/web/workspace_paths.py` — Path resolution, pattern constants, kind detection.
-- `src/decafclaw/http_server.py` — Handlers: `workspace_list`, `workspace_recent`, `workspace_read_json`, `workspace_write`, `workspace_delete`, `workspace_create`; helpers `_workspace_file_entry`, `_can_write_as_text`, `_workspace_rename`, `_prune_empty_parents`.
+- `src/decafclaw/web/workspace_routes.py` — The workspace route module (models + handlers + router): `workspace_list`, `workspace_recent`, `workspace_read_json`, `workspace_write`, `workspace_delete`, `workspace_create`; helpers `_workspace_file_entry`, `_can_write_as_text`, `_workspace_rename`, `_prune_empty_parents`.
 
 ## Configuration
 
