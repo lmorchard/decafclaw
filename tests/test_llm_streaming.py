@@ -8,6 +8,8 @@ import pytest
 
 from decafclaw.llm import call_llm_streaming
 from decafclaw.llm.providers.openai_compat import _sanitize_tool_call_id
+from decafclaw.llm.retry import MAX_RETRIES
+from decafclaw.llm.types import LLMRetryExhaustedError
 
 pytestmark = pytest.mark.live_llm
 
@@ -398,3 +400,40 @@ async def test_streaming_429_retries_then_succeeds():
 
     assert result["content"] == "OK"
     assert call_count == 2  # first attempt 429, second succeeds
+
+
+@pytest.mark.asyncio
+async def test_streaming_429_exhaustion_raises_retry_exhausted():
+    """Persistent 429 exhausts the retry budget and raises LLMRetryExhaustedError."""
+    call_count = 0
+
+    class AlwaysRateLimited:
+        def __init__(self):
+            self.response = FakeResponse(429)
+            self.response.headers = {"retry-after": "0"}
+
+        async def aiter_sse(self):
+            yield FakeSSEEvent("[DONE]")  # never reached on a 429
+
+        async def aread(self):
+            return b'{"error": "rate limited"}'
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    with patch("httpx_sse.aconnect_sse") as mock_sse:
+
+        def make_source(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return AlwaysRateLimited()
+
+        mock_sse.side_effect = make_source
+        with pytest.raises(LLMRetryExhaustedError) as exc_info:
+            await call_llm_streaming(_config(), [])
+
+    assert call_count == MAX_RETRIES + 1
+    assert exc_info.value.status == 429

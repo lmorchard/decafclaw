@@ -12,14 +12,13 @@ from typing import Any
 import httpx
 
 from ..history import without_provider_data
-from ..retry import MAX_RETRIES, RetryableError, cancellable_sleep
+from ..retry import MAX_RETRIES, RetryableError, cancellable_sleep, run_with_retries
 from ..types import (
     FINISH_REASON_CANCELLED,
     FINISH_REASON_ERROR,
     FINISH_REASON_STOP,
     FINISH_REASON_TOOL_CALLS,
     DiscoveredModel,
-    LLMRetryExhaustedError,
     StreamCallback,
 )
 
@@ -382,41 +381,13 @@ class OpenAICompatProvider:
 
         state = _StreamState(on_chunk)
 
-        for attempt in range(MAX_RETRIES + 1):
-            try:
-                await self._stream_one_attempt(
-                    url,
-                    body,
-                    timeout,
-                    cancel_event,
-                    state,
-                )
-                break  # Success
-            except RetryableError as e:
-                if attempt >= MAX_RETRIES:
-                    raise LLMRetryExhaustedError(
-                        f"LLM failed after {MAX_RETRIES} retries (status {e.status}): {e.body[:200]}",
-                        status=e.status,
-                        body=e.body,
-                        retry_after=e.retry_after,
-                    ) from e
-                delay = min(int(e.retry_after or 2**attempt), 30)
-                log.warning(
-                    "LLM %s (%d), retrying in %ds (attempt %d/%d): %s",
-                    "rate limited" if e.status == 429 else "server error",
-                    e.status,
-                    delay,
-                    attempt + 1,
-                    MAX_RETRIES,
-                    e.body[:200],
-                )
-                await cancellable_sleep(delay, cancel_event)
-            except Exception as e:
-                if not state.content_parts and not state.thinking_parts and not state.tool_calls_in_progress:
-                    raise
-                log.error("LLM streaming error (partial content kept): %s", e)
-                state.finish_reason = FINISH_REASON_ERROR
-                break
+        await run_with_retries(
+            lambda: self._stream_one_attempt(url, body, timeout, cancel_event, state),
+            has_output=lambda s: bool(s.content_parts or s.thinking_parts or s.tool_calls_in_progress),
+            state=state,
+            cancel_event=cancel_event,
+            on_partial_error=_mark_interrupted,
+        )
 
         return await state.finalize()
 
@@ -684,3 +655,8 @@ class _StreamState:
                 await self.on_chunk(chunk_type, data)
             except Exception as e:
                 log.debug("Stream chunk callback error: %s", e)
+
+
+def _mark_interrupted(state: _StreamState) -> None:
+    """Mark a partially-received stream as errored so finalize reports it (#1313)."""
+    state.finish_reason = FINISH_REASON_ERROR
