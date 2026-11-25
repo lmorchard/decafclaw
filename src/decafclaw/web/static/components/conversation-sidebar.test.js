@@ -1209,3 +1209,79 @@ describe('conversation-sidebar session search (#1451)', () => {
     expect(sidebar.querySelector('.conv-search-status')).toBeNull();
   });
 });
+
+// #1408 — the sidebar renders straight from store getters on change events;
+// no reactive mirror fields remain. These pin the re-render contract: a store
+// change must update the DOM even though no reactive property of the sidebar
+// changed.
+describe('conversation-sidebar store reads (#1408)', () => {
+  let sidebar;
+
+  afterEach(() => {
+    sidebar?.remove();
+  });
+
+  async function mount(storeOverrides = {}) {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'c1',
+      conversations: [
+        { conv_id: 'c1', title: 'Trip planning' },
+        { conv_id: 'c2', title: 'Coding' },
+      ],
+      folders: [],
+      archivedConversations: [],
+      archivedFolders: [],
+      systemConversations: [],
+      systemFolders: [],
+      contextUsage: 45000,
+      contextLimit: 100000,
+      activeModel: 'vertex-gemini-flash-3.8',
+      availableModels: ['vertex-gemini-flash-3.8'],
+      modelGroups: [{ name: 'Vertex', models: ['vertex-gemini-flash-3.8'] }],
+      defaultModel: 'vertex-gemini-flash-3.8',
+      activeMode: 'default',
+      availableModes: [{ name: 'default', description: 'Standard' }],
+      selectConversation: vi.fn(),
+      ...storeOverrides,
+    });
+    sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
+    document.body.append(sidebar);
+    sidebar.store = store;
+    await sidebar.updateComplete;
+    return { sidebar, store };
+  }
+
+  it('re-renders the conversation list when the store listing changes', async () => {
+    const { sidebar, store } = await mount();
+    expect(sidebar.querySelectorAll('.conv-item:not(.wiki-folder-item)')).toHaveLength(2);
+
+    store.conversations = [...store.conversations, { conv_id: 'c3', title: 'New chat' }];
+    store.dispatchEvent(new Event('change'));
+    await sidebar.updateComplete;
+
+    expect(sidebar.querySelectorAll('.conv-item:not(.wiki-folder-item)')).toHaveLength(3);
+  });
+
+  it('re-renders the context usage meter from store values on change', async () => {
+    const { sidebar, store } = await mount();
+    expect(sidebar.querySelector('.context-usage')?.textContent).toContain('45%');
+
+    store.contextUsage = 90000;
+    store.dispatchEvent(new Event('change'));
+    await sidebar.updateComplete;
+
+    expect(sidebar.querySelector('.context-usage')?.textContent).toContain('90%');
+  });
+
+  it('re-renders the model picker from store values on change', async () => {
+    const { sidebar, store } = await mount();
+    expect(sidebar.querySelector('.model-picker-trigger')?.textContent).toContain('vertex-gemini-flash-3.8');
+
+    store.activeModel = 'openai-gpt-4o';
+    store.availableModels = ['vertex-gemini-flash-3.8', 'openai-gpt-4o'];
+    store.dispatchEvent(new Event('change'));
+    await sidebar.updateComplete;
+
+    expect(sidebar.querySelector('.model-picker-trigger')?.textContent).toContain('openai-gpt-4o');
+  });
+});
