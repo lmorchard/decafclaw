@@ -424,6 +424,8 @@ export class MessageStore {
           let resultContent = '';
           let resultShortText = '';
           /** @type {object|null} */
+          let resultDetails = null;
+          /** @type {object|null} */
           let resultWidget = null;
           let resultSubmitted = false;
           /** @type {object|null} */
@@ -436,6 +438,7 @@ export class MessageStore {
             if (messages[j].role === 'tool' && messages[j].tool_call_id === tcId) {
               resultContent = messages[j].content || '';
               resultShortText = messages[j].display_short_text || '';
+              resultDetails = messages[j].details || null;
               resultWidget = messages[j].widget || null;
               resultSubmitted = !!messages[j].submitted;
               resultResponse = messages[j].response || null;
@@ -453,6 +456,7 @@ export class MessageStore {
             command,
             content: resultContent,
             display_short_text: resultShortText,
+            details: resultDetails,
             widget: resultWidget,
             submitted: resultSubmitted,
             response: resultResponse,

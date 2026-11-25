@@ -14,6 +14,7 @@ export class ChatMessage extends LitElement {
     tool: { type: String },
     command: { type: String },
     display_short_text: { type: String, attribute: false },
+    details: { type: Object, attribute: false },
     toolCalls: { type: Array, attribute: false },
     toolCallId: { type: String, attribute: false },
     statusHistory: { type: Array, attribute: false },
@@ -42,6 +43,8 @@ export class ChatMessage extends LitElement {
     this.tool = '';
     this.command = '';
     this.display_short_text = '';
+    /** @type {object|null} */
+    this.details = null;
     /** @type {Array|null} */
     this.toolCalls = null;
     this.toolCallId = '';
@@ -181,7 +184,7 @@ export class ChatMessage extends LitElement {
     }
 
     if (this.role === 'tool') {
-      return html`<tool-message .tool=${this.tool} .command=${this.command} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget} .submitted=${this.submitted} .response=${this.response} .isError=${this.isError} .timedOut=${this.timedOut} .timeoutSec=${this.timeoutSec}></tool-message>`;
+      return html`<tool-message .tool=${this.tool} .command=${this.command} .content=${this.content} .display_short_text=${this.display_short_text || ''} .details=${this.details} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget} .submitted=${this.submitted} .response=${this.response} .isError=${this.isError} .timedOut=${this.timedOut} .timeoutSec=${this.timeoutSec}></tool-message>`;
     }
 
     if (this.role === 'thinking') {

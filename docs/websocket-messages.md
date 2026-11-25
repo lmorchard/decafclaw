@@ -309,6 +309,7 @@ Final result of a tool call. Replaces the in-flight tool_status with terminal st
 - `is_error` — boolean?
 - `timed_out` — boolean?
 - `timeout_sec` — number?
+- `details` — object?
 
 ### `tool_start`
 

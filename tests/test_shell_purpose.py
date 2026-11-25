@@ -162,7 +162,7 @@ async def test_purpose_reaches_aux_judge(ctx):
 
     result = await check_shell_approval(ctx, "touch marker.txt", purpose="Create a marker file")
 
-    assert result == {"approved": True}
+    assert result["approved"] is True
     assert "Stated Purpose: Create a marker file" in captured["prompt"]
 
 

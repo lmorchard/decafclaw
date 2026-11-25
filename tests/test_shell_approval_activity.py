@@ -60,7 +60,7 @@ async def test_read_only_command_never_reaches_the_judge(ctx):
 
     result = await check_shell_approval(ctx, "ls -la")
 
-    assert result == {"approved": True}
+    assert result["approved"] is True
     judge.assert_not_called()
 
 
@@ -86,7 +86,7 @@ async def test_kill_switch_bypasses_the_read_only_tier(ctx):
 
     result = await check_shell_approval(ctx, "ls -la")
 
-    assert result == {"approved": True}
+    assert result["approved"] is True
     # The judge saw it, so the silent tier did not short-circuit.
     judge.assert_called_once()
     tiers = [e["tier"] for e in events if e["type"] == "approval_decision"]
@@ -111,7 +111,7 @@ async def test_kill_switch_is_on_by_default(ctx):
     judge = MagicMock()
     ctx.aux_approval_llm = judge
 
-    assert await check_shell_approval(ctx, "ls -la") == {"approved": True}
+    assert (await check_shell_approval(ctx, "ls -la"))["approved"] is True
     judge.assert_not_called()
 
 
@@ -130,7 +130,7 @@ async def test_new_activity_prompts_with_direction_and_skips_judge(ctx):
     ) as confirm:
         result = await check_shell_approval(ctx, "touch marker.txt", cwd=str(cwd))
 
-    assert result == {"approved": False}
+    assert result["approved"] is False
     judge.assert_not_called()
     assert confirm.await_args is not None
     kwargs = confirm.await_args.kwargs
@@ -156,7 +156,7 @@ async def test_established_activity_reaches_the_judge(ctx):
 
     result = await check_shell_approval(ctx, "touch marker.txt", cwd=cwd)
 
-    assert result == {"approved": True}
+    assert result["approved"] is True
     judge.assert_called_once()
     prompt = captured["prompt"]
     assert "Conversation Activity: unknown" in prompt
@@ -216,7 +216,7 @@ async def test_unattended_read_only_is_allowed_and_new_activity_defers(ctx):
     """Read-only allows outright; a new activity defers rather than denies."""
     ctx.task_mode = TaskMode.HEARTBEAT
 
-    assert await check_shell_approval(ctx, "ls -la") == {"approved": True}
+    assert (await check_shell_approval(ctx, "ls -la"))["approved"] is True
 
     # aux judge disabled: the deferral falls through to the existing
     # unattended denial path, which explains itself as unattended rather than
@@ -306,7 +306,7 @@ async def test_read_only_tier_bypasses_the_security_monitor(ctx):
     ):
         result = await check_shell_approval(ctx, 'grep -rn "#1641" src/')
 
-    assert result == {"approved": True}
+    assert result["approved"] is True
     monitor.assert_not_awaited()
     confirm.assert_not_awaited()
 
@@ -320,7 +320,7 @@ async def test_read_only_tier_still_yields_to_an_allow_pattern(ctx):
     with patch("decafclaw.tools.shell_tools.evaluate_command_llm", monitor):
         result = await check_shell_approval(ctx, "python scripts/build.py")
 
-    assert result == {"approved": True}
+    assert result["approved"] is True
     monitor.assert_not_awaited()
 
 
@@ -346,7 +346,7 @@ async def test_unattended_new_activity_defers_to_the_judge(ctx):
     # No history: a new activity, on an unattended turn.
     result = await check_shell_approval(ctx, "touch marker.txt")
 
-    assert result == {"approved": True}
+    assert result["approved"] is True
     judge.assert_called_once()
     defer = next(e for e in events if e["type"] == "approval_decision" and e["tier"] == "activity_new_unattended")
     assert defer["decision"] == "defer"
