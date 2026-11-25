@@ -1463,17 +1463,243 @@ def _check_cd_rejection(command: str) -> str | None:
     return None
 
 
+# A leading `cd <dir> && <cmd>` is rewritten instead of rejected (#1751).
+# Anchored and `&&`-only: `;`, `||`, newline, and mid-chain shapes still fall
+# through to the rejection, because a half-converted chain is worse than a
+# rejected one.
+_CD_AND_CHAIN_PATTERN = re.compile(
+    r"""^\s*cd(?:\s+(?:-[A-Za-z]+|--))*\s*(?P<dir>'[^']*'|"[^"]*"|[^\s;&|\n]+)\s*&&\s*(?P<cmd>\S.*)$""",
+    re.DOTALL,
+)
+
+
+def _rewrite_cd_chain(command: str, cwd: str | None) -> tuple[str, str] | None:
+    """Rewrite ``cd <dir> && <cmd>`` to ``(cmd, dir)``; return None otherwise.
+
+    Only a leading ``&&`` chain with a cleanly captured directory and command
+    is rewritten. An existing ``cwd`` is left alone: the caller already set a
+    working directory, so the chain is ambiguous and the rejection is safer.
+    """
+    if cwd:
+        return None
+    match = _CD_AND_CHAIN_PATTERN.match(command)
+    if not match:
+        return None
+    target_dir = (match.group("dir") or "").strip("'\"")
+    rest = (match.group("cmd") or "").strip()
+    if not target_dir or not rest:
+        return None
+    return rest, target_dir
+
+
+def _has_unquoted_semicolon(command: str) -> bool:
+    """Report whether ``command`` contains a semicolon outside quotes."""
+    quote = ""
+    escaped = False
+    for char in command:
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+            continue
+        if char in "'\"":
+            quote = char
+            continue
+        if char == ";":
+            return True
+    return False
+
+
+def _check_semicolon_rejection(command: str) -> str | None:
+    """Reject ``;`` chaining: a later command runs even when an earlier fails (#1751)."""
+    if _has_unquoted_semicolon(command):
+        return (
+            "Shell commands must not use ';' chaining: a later command runs even "
+            "when an earlier one fails. Use '&&' to run only on success, or run "
+            "separate shell calls."
+        )
+    return None
+
+
+# Native-tool redirects only fire for simple, unambiguous command shapes. Any
+# shell metacharacter falls back to the normal approval path rather than
+# guessing at semantics.
+_NATIVE_REDIRECT_METACHARS = ("|", "&", ";", "<", ">", "`", "$(")
+
+
+def _join_cwd(cwd: str | None, path: str) -> str:
+    if not cwd or path.startswith("/"):
+        return path
+    return f"{cwd.rstrip('/')}/{path}"
+
+
+def _parse_head_tail(args: list[str]) -> tuple[str, int] | None:
+    count = 10
+    path = None
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "-n" and index + 1 < len(args):
+            raw_count = args[index + 1]
+            if raw_count.startswith("+"):
+                return None
+            try:
+                count = int(raw_count)
+            except ValueError:
+                return None
+            index += 2
+            continue
+        if re.fullmatch(r"-\d+", arg):
+            count = int(arg[1:])
+            index += 1
+            continue
+        if arg.startswith("-"):
+            return None
+        if path is not None:
+            return None
+        path = arg
+        index += 1
+    if path is None or count <= 0:
+        return None
+    return path, count
+
+
+def _parse_grep(args: list[str]) -> tuple[str, str] | None:
+    flags: list[str] = []
+    pattern = None
+    path = None
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            index += 1
+            continue
+        if arg.startswith("-") and len(arg) > 1:
+            if arg in ("-n", "-i", "-r", "-R", "-E", "-F"):
+                flags.append(arg)
+                index += 1
+                continue
+            if set(arg[1:]) <= set("niREFr"):
+                flags.extend("-" + char for char in arg[1:])
+                index += 1
+                continue
+            return None
+        if pattern is None:
+            pattern = arg
+        elif path is None:
+            path = arg
+        else:
+            return None
+        index += 1
+    if pattern is None:
+        return None
+    if "-F" in flags:
+        pattern = re.escape(pattern)
+    if "-i" in flags:
+        pattern = f"(?i){pattern}"
+    return pattern, path or "."
+
+
+def _tail_start_line(ctx: "Context", path: str, count: int) -> int | None:
+    from ..web.workspace_paths import PathContainmentError, resolve_contained
+
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        lines = resolved.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError, PathContainmentError):
+        return None
+    return max(1, len(lines) - count + 1)
+
+
+def _native_read_spec(ctx: "Context", cwd: str | None, head: str, args: list[str]) -> tuple[str, dict] | None:
+    if head == "cat" and len(args) == 1 and not args[0].startswith("-"):
+        return "workspace_read", {"path": _join_cwd(cwd, args[0])}
+    if head in ("head", "tail"):
+        parsed = _parse_head_tail(args)
+        if parsed is None:
+            return None
+        path, count = parsed
+        full_path = _join_cwd(cwd, path)
+        if head == "head":
+            return "workspace_read", {"path": full_path, "end_line": count}
+        start = _tail_start_line(ctx, full_path, count)
+        if start is None:
+            return None
+        return "workspace_read", {"path": full_path, "start_line": start}
+    if head in ("grep", "rg"):
+        parsed = _parse_grep(args)
+        if parsed is None:
+            return None
+        pattern, path = parsed
+        return "workspace_search", {"pattern": pattern, "path": _join_cwd(cwd, path)}
+    return None
+
+
+def _native_read_redirect(ctx: "Context", command: str, cwd: str | None) -> ToolResult | None:
+    """Run a simple ``cat``/``head``/``tail``/``grep`` via the native tool (#1751).
+
+    The substitution is visible in the result. It is also budgeted: one
+    redirect per (command, purpose) fingerprint per turn (#1626), so a repeat
+    falls through to the normal approval path.
+    """
+    if any(token in command for token in _NATIVE_REDIRECT_METACHARS):
+        return None
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    spec = _native_read_spec(ctx, cwd, tokens[0], tokens[1:])
+    if spec is None:
+        return None
+    tool_name, kwargs = spec
+    if not _claim_shell_redirect(ctx, command=command, cwd=cwd, purpose="native_tool"):
+        return None
+    from .workspace_tools import tool_workspace_read, tool_workspace_search
+
+    if tool_name == "workspace_read":
+        result = tool_workspace_read(ctx, **kwargs)
+    else:
+        result = tool_workspace_search(ctx, **kwargs)
+    text = result.text if isinstance(result, ToolResult) else result
+    prefix = f"(ran as {tool_name})\n"
+    if isinstance(result, ToolResult):
+        result.text = prefix + text
+        return result
+    return ToolResult(text=prefix + text)
+
+
 async def tool_shell(ctx: "Context", command: str, cwd: str | None = None, purpose: str = "") -> ToolResult:
     """Run a shell command after user confirmation, optionally inside a workspace subdirectory."""
+    if rewritten := _rewrite_cd_chain(command, cwd):
+        command, cwd = rewritten
+        log.info(f"[tool:shell] rewrote cd chain to cwd={cwd}: {command}")
+
     if cd_err := _check_cd_rejection(command):
         log.info(f"[tool:shell] rejected command {command}: {cd_err}")
         return ToolResult(text=f"[error: {cd_err}]")
+
+    if semicolon_err := _check_semicolon_rejection(command):
+        log.info(f"[tool:shell] rejected command {command}: {semicolon_err}")
+        return ToolResult(text=f"[error: {semicolon_err}]")
 
     try:
         workdir = _resolve_shell_cwd(ctx, cwd)
     except ValueError as exc:
         log.info(f"[tool:shell] rejected command {command}: {exc}")
         return ToolResult(text=f"[error: {exc}]")
+
+    workspace = ctx.config.workspace_path.resolve()
+    rel_cwd = "" if workdir == workspace else workdir.relative_to(workspace).as_posix()
+    if redirected := _native_read_redirect(ctx, command, rel_cwd):
+        log.info(f"[tool:shell] redirected to a native read tool: {command}")
+        return redirected
 
     log.info(f"[tool:shell] requesting confirmation for: {command} (cwd: {workdir})")
 

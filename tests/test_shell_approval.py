@@ -132,8 +132,9 @@ async def test_persisted_wildcard_rejects_chained_command(ctx):
         return_value={"approved": False},
     ) as mock_confirm:
         result = await tool_shell(ctx, "python scripts/foo.py --arg val; echo chained")
-        mock_confirm.assert_awaited_once()
-        assert "denied" in result.text
+        # The semicolon is rejected before the allowlist or a human is reached.
+        mock_confirm.assert_not_awaited()
+        assert "';' chaining" in result.text
 
 
 @pytest.mark.asyncio
