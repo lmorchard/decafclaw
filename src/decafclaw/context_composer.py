@@ -102,9 +102,10 @@ def render_activated_skills(ctx: "Context") -> tuple[dict, int, int] | None:
 
     Returns ``(message, tokens, skill_count)``, or None when nothing is active.
     """
-    activated = getattr(ctx.skills, "activated", None) or {}
+    activated = ctx.skills.activated
     if not activated:
         return None
+    already_in_prompt = ctx.skills.body_in_prompt
 
     from .skills import find_skill, index_skills, substitute_skill_placeholders
 
@@ -121,6 +122,10 @@ def render_activated_skills(ctx: "Context") -> tuple[dict, int, int] | None:
             # Always-loaded bodies already live in the system prompt's
             # <loaded_skills> section; rendering them again here would
             # duplicate the body on every turn.
+            continue
+        if name in already_in_prompt:
+            # A user-invoked inline command or a schedule's required-skills
+            # block already carries this body as this turn's prompt.
             continue
         body = substitute_skill_placeholders(info.body, skill_dir=str(info.location.resolve()))
         if not body.strip():
@@ -325,6 +330,23 @@ class ContextComposer:
         )
         sources.extend(hook_sources)
 
+        # -- Activated skill bodies (#1823) --
+        # Render before the fixed-token phase so the dynamic retrieval pool
+        # reserves room for the block; mounting happens at the generation
+        # boundary below. The block is never archived and re-renders from
+        # ctx.skills.activated each turn.
+        activated_block = render_activated_skills(ctx)
+        activated_msg = None
+        if activated_block is not None:
+            activated_msg, activated_tokens, activated_count = activated_block
+            sources.append(
+                SourceEntry(
+                    source="activated_skills",
+                    tokens_estimated=activated_tokens,
+                    items_included=activated_count,
+                )
+            )
+
         # -- Fixed-token phase (#1365) --
         # Charges everything mounted so far — system prompt, tools, the user
         # message, and the fixed PRE_COMPOSE contributions — plus archived
@@ -463,21 +485,11 @@ class ContextComposer:
         messages.extend(llm_history)
 
         # -- Activated skill bodies (#1823) --
-        # Mounted at the generation boundary and never archived. The block
-        # re-renders from ctx.skills.activated each turn, so the conversation
-        # prefix through the previous assistant turn stays cacheable and
-        # compaction need not preserve activation turns.
-        activated_block = render_activated_skills(ctx)
-        if activated_block is not None:
-            activated_msg, activated_tokens, activated_count = activated_block
+        # Mounted at the generation boundary and never archived; the content
+        # and its source entry were computed before the fixed-token phase so
+        # the dynamic budget reserves room for it.
+        if activated_msg is not None:
             messages.append(activated_msg)
-            sources.append(
-                SourceEntry(
-                    source="activated_skills",
-                    tokens_estimated=activated_tokens,
-                    items_included=activated_count,
-                )
-            )
 
         # -- PRE_COMPOSE EPILOGUE contributions (#1507) --
         # Mount after the user message, at the immediate generation boundary.

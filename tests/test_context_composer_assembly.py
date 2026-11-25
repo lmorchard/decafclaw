@@ -1532,6 +1532,46 @@ class TestActivatedSkillsBlock:
         assert "ceiling" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_body_in_prompt_skill_is_not_rendered(self, ctx):
+        in_prompt = _make_skill_info("tabstack", "Tabstack", body="# Tabstack\nUse it.")
+        other = _make_skill_info("other", "Other", body="Other body.")
+        ctx.config.discovered_skills = [in_prompt, other]
+        ctx.skills.activated["tabstack"] = "hash"
+        ctx.skills.activated["other"] = "hash"
+        ctx.skills.body_in_prompt.add("tabstack")
+
+        composed = await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+
+        block = next(
+            m["content"] for m in composed.messages if str(m.get("content", "")).startswith("<activated_skills>")
+        )
+        assert "Use it." not in block
+        assert "Other body." in block
+
+    @pytest.mark.asyncio
+    async def test_block_is_charged_before_dynamic_budget(self, ctx):
+        """The block must be a fixed cost, or vault retrieval can overfill a
+        small window by the body size (#1823)."""
+        config = ctx.config
+        config.llm.context_window_size = 100_000
+        config.compaction.max_tokens = 300_000
+        config.vault_retrieval.max_tokens = 0
+        composer = ContextComposer()
+
+        await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+        baseline = ctx.composer.dynamic_token_budget
+
+        info = _make_skill_info("big", "Big", body="x" * 40_000)
+        ctx.config.discovered_skills = [info]
+        ctx.skills.activated["big"] = "hash"
+        await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+        with_skill = ctx.composer.dynamic_token_budget
+
+        assert baseline is not None
+        assert with_skill is not None
+        assert baseline - with_skill >= 9_000
+
+    @pytest.mark.asyncio
     async def test_no_block_when_nothing_is_activated(self, ctx):
         composed = await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
         assert not any("<activated_skills>" in str(m.get("content", "")) for m in composed.messages)

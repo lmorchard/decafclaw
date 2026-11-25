@@ -341,14 +341,16 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     if compacted:
         from ..compaction import SUMMARY_PREFIX
 
-        last_ts = compacted[-1].get("timestamp", "")
+        # The sidecar stamps its summary at write time; the max timestamp is
+        # the compaction boundary, so newer archive rows are the turns after
+        # it. Only the first row is the summary — a real user message that
+        # happens to start with the prefix must stay visible.
+        last_ts = max((m.get("timestamp", "") for m in compacted), default="")
         newer = [m for m in all_msgs if m.get("timestamp", "") > last_ts]
         working = [*compacted, *newer]
-        display_msgs = [
-            m
-            for m in working
-            if not (m.get("role") == "user" and str(m.get("content") or "").startswith(SUMMARY_PREFIX))
-        ]
+        summary = compacted[0]
+        is_summary = summary.get("role") == "user" and str(summary.get("content") or "").startswith(SUMMARY_PREFIX)
+        display_msgs = [m for m in working if not (is_summary and m is summary)]
 
     # Paginate: filter by timestamp, take last N
     filtered = display_msgs

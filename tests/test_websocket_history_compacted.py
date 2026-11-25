@@ -85,6 +85,19 @@ async def test_includes_rows_appended_after_compaction(ws_context):
 
 
 @pytest.mark.asyncio
+async def test_user_message_starting_with_summary_prefix_is_visible(ws_context):
+    """Only the sidecar's first row is hidden; a real user message that
+    happens to start with the prefix must survive (#1823)."""
+    state, index, sent, config = ws_context
+    _seed_compacted(config)
+    append_message(config, CONV_ID, {"role": "user", "content": f"{SUMMARY_PREFIX}this is a real user message"})
+
+    frame = await _load(state, index, sent)
+
+    assert any("real user message" in str(m.get("content")) for m in frame["messages"])
+
+
+@pytest.mark.asyncio
 async def test_pagination_does_not_resurrect_summarized_turns(ws_context):
     state, index, sent, config = ws_context
     archived = _seed_compacted(config)
