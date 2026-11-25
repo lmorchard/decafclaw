@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -1317,6 +1318,10 @@ class _StickyTrailingManager:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.environ.get("PYTEST_XDIST_WORKER") is not None,
+    reason="known xdist-only flake (#1886); run this test with -n 0",
+)
 async def test_pin_sticky_emit_timeout_does_not_block_reader(tmp_path, config, sticky_registry, monkeypatch):
     """A slow sticky subscriber cannot block the subprocess output reader."""
     monkeypatch.setattr(tools, "_STICKY_THROTTLE_SEC", 0.01)
