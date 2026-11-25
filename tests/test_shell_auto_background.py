@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from decafclaw.context_types import TaskMode
 from decafclaw.conversation_manager import TurnKind
 from decafclaw.media import ToolResult
 from decafclaw.skills.background import tools as bg_tools
@@ -155,6 +156,9 @@ async def test_above_budget_returns_job_handle_same_process(ctx):
 async def test_handoff_completion_fires_exactly_once(ctx):
     """A handed-off job that completes fires the completion sequence exactly once."""
     ws = _prepare_workspace(ctx)
+    # Unattended, so the completion sequence includes an inbox notification;
+    # attended jobs skip it (#1842).
+    ctx.task_mode = TaskMode.SCHEDULED
     ctx.config.shell.foreground_wait_budget_sec = 0.2
     command = "echo done >> side_effects.txt && sleep 0.5"
     _save_allow_pattern(ctx.config, command)
@@ -191,6 +195,7 @@ async def test_handoff_completion_fires_exactly_once(ctx):
 async def test_handed_off_job_uses_max_runtime(ctx):
     """A handed-off job's lifetime is the configured total runtime limit."""
     _prepare_workspace(ctx)
+    ctx.task_mode = TaskMode.SCHEDULED
     ctx.config.shell.foreground_wait_budget_sec = 0.1
     ctx.config.shell.max_runtime_sec = 2.0
     _save_allow_pattern(ctx.config, "sleep 30")

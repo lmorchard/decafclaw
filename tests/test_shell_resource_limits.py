@@ -285,6 +285,7 @@ async def test_background_notification_names_a_cap_kill(monkeypatch):
     job.conv_id = "conv"
     job.event_bus = None
     job.config = _config()
+    job.attended = False
 
     await _notify_job_exit(job)
 
