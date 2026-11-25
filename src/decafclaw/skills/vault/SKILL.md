@@ -33,6 +33,7 @@ Vault pages sync across Linux, macOS, Windows, and mobile devices (Android / iOS
 ## Boundaries
 
 - `vault_write` modifies files in the vault. Default to writing in `agent/pages/`.
+- **`vault_write` does not generate frontmatter.** It persists exactly the content you pass, so a new page written without a frontmatter block stays without one — and nothing else repairs that automatically. When creating a page, include `tags`, `summary`, and `keywords` in the frontmatter block yourself. `importance` is recomputed from the link graph by garden, so it can be omitted on a new page.
 - Prefer `vault_edit` for surgical changes — it replaces an exact block of text without rewriting the page. Use `vault_read` (optionally with `start_line`/`end_line`) to get the exact text and the page's version token; pass that token as `expected_version` so a stale edit is rejected.
 - Use `vault_write` for a new page or a substantial rewrite; it overwrites the entire page, so `vault_read` first when updating an existing one.
 - `vault_append` adds text to the end of a page (creating it if missing) without a prior read.

@@ -76,6 +76,17 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 - Flag pages that are both orphaned (zero inbound links in `vault_graph_report`) and rarely retrieved (low importance after recompute) — these are strong split/merge/delete candidates for a future pass, not something to act on unilaterally.
 - Also flag weakly-linked pages (one or two thin connections) as candidates for Step 4's "add missing connections" work next time around.
 
+## Step 9: Backfill Missing Frontmatter
+
+Writing tools do not generate frontmatter — `vault_write` persists exactly what the caller passes, so any page written by a skill or agent that skipped metadata lands without it. Nothing else repairs that, so it accumulates:
+
+- Use `vault_frontmatter_audit`'s `missing` counts to see the backlog, then work a bounded batch this run (aim for ~10–20 pages, not the whole backlog at once).
+- Prefer pages in the `missing.tags` and `missing.summary` lists that are also connected to the graph — a sparse metadata record on a well-linked page costs more than on an orphan.
+- For each page: `vault_read` it, then `vault_update_frontmatter` with `summary`, `keywords`, `tags`, and `importance`. Do not rewrite the body to add metadata — the frontmatter tool merges fields without touching content.
+- Treat `importance` as structural: it is recomputed from PageRank in Step 8, so a hand-set value is only a placeholder until the next recompute. Do not agonize over it.
+- Never guess a summary from the title alone — read enough of the page to characterize what it actually covers.
+- Leave pages alone whose body you cannot characterize confidently. A wrong summary is worse than a missing one, since retrieval will surface it as authoritative.
+
 ## Finishing Up
 
 End with a short narrative summary of what you tidied: pages merged, links fixed, summaries added, and **pages deleted with explicit counts** (including any deletion refused by the inbound-link guard and why). If the vault was already in good shape and nothing needed attention, begin your summary with `HEARTBEAT_OK` on its own line followed by a brief quiet-cycle note — the leading marker lets the scheduler log a tidy line, and the narrative keeps the archive readable for the newsletter.
