@@ -822,6 +822,7 @@ async def _handle_update_command(
 
     Runs with NO agent turn and NO archive write.
     """
+    from ..restart_wake import new_restart_wake
     from ..self_update import perform_self_update
 
     arg = ""
@@ -839,6 +840,13 @@ async def _handle_update_command(
         "confirmed": confirmed,
         "manager": manager,
         "index": index,
+        "config": state.get("config"),
+        "wake": new_restart_wake(
+            conv_id=conv_id,
+            reason="Deploy requested via /update",
+            user_id=username,
+            transport="web",
+        ),
     }
     if restart_coordinator is not None:
         kwargs["restart_coordinator"] = restart_coordinator

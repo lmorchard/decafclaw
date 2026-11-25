@@ -60,12 +60,14 @@ journalctl --user -u decafclaw -f   # live logs
 
 You can check for and apply updates directly from the web chat interface (or Mattermost via `!update`):
 
-1. **Check for updates:** Type `/update` in the chat input. DecafClaw fetches latest commits from upstream (`@{u}`) and displays incoming commits (`git log HEAD..@{u} --oneline`). If already up to date, it lets you know and stops.
+1. **Check for updates:** Type `/update` in the chat input. DecafClaw fetches and resolves the deploy candidate (`origin/production` when it exists, else the current branch's upstream) and displays incoming commits. If already up to date, it lets you know and stops. The preview also notes that the automated deploy timer will pick the commits up on its own within one interval.
 2. **Safety guards:**
-   - **Active turns:** If any conversation is currently running an active turn, `/update` refuses and names the busy conversations. Nothing is pulled or restarted.
-   - **Dirty working tree:** If the working tree has uncommitted modifications or staged changes, `/update` aborts before pulling.
-   - **Fast-forward only:** The update requires that the branch can be fast-forwarded (`git pull --ff-only`).
-3. **Apply and restart:** Type `/update confirm` (or `/update --yes`). DecafClaw pulls the commits, runs `uv sync`, and restarts the service (`systemctl --user restart decafclaw`). If `uv sync` fails, it reports the error and does not restart.
+   - **Active turns:** If any conversation is currently running an active turn, `/update` refuses and names the busy conversations. Nothing is deployed.
+   - **Dirty working tree:** If the working tree has uncommitted modifications or staged changes, `/update` aborts.
+   - **Fast-forward only:** The candidate must be a fast-forward of `HEAD`.
+3. **Start the deploy:** Type `/update confirm` (or `/update --yes`). DecafClaw starts the same unit the timer uses (`systemctl --user start --no-block decafclaw-deploy.service`) and returns immediately. The external deploy runner owns the stop, backup, fast-forward, `uv sync`, start, `/health` verification, and rollback. Its result is delivered back to the conversation through a post-restart wake.
+
+The automated timer (`decafclaw-deploy.timer`) is the other trigger for exactly this path; manual and automatic deploys cannot run twice because the runner holds a `flock`.
 
 *Note:* `/update` is a human-only side-effect command — it initiates no LLM turn, writes no archive entry, and is strictly inaccessible to agent tools and skills.
 
@@ -79,14 +81,15 @@ cd ~/decafclaw
 ./scripts/deploy.sh
 ```
 
-Or manually:
+Prefer the same unit the timer and `/update` use, so the backup and health gate
+run:
 
 ```bash
-cd ~/decafclaw
-git pull
-uv sync
-systemctl --user restart decafclaw
+systemctl --user start decafclaw-deploy.service
 ```
+
+`scripts/deploy.sh` remains a manual fallback; it takes a backup before pulling
+but does not verify `/health` or roll back.
 
 ### External deploy runner
 

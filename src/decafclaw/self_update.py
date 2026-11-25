@@ -1,6 +1,11 @@
-"""Human-only self-update command handler (#981).
+"""Human-only self-update command handler (#981, #1649).
 
-Guarded update wrapping git pull, uv sync, and systemctl restart.
+``/update`` previews incoming commits and, on confirm, starts the external
+deploy unit (``decafclaw-deploy.service``). It no longer runs ``git pull``,
+``uv sync``, or ``systemctl restart`` inline: the deploy runner owns the stop,
+backup, pull, sync, start, verify, and rollback path, and the timer uses the
+same unit.
+
 This module is human-only: it MUST NEVER be imported by agent tools or skills.
 A test enforces this boundary.
 """
@@ -9,10 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+
+from .restart_wake import RestartWake, delete_restart_wake, save_restart_wake
 
 log = logging.getLogger(__name__)
 
@@ -82,19 +88,21 @@ async def perform_self_update(
     repo_dir: Path | None = None,
     cmd_runner: Callable[[list[str], Path | None, dict[str, str] | None], Awaitable[tuple[int, str, str]]]
     | None = None,
+    config: Any | None = None,
+    wake: RestartWake | None = None,
 ) -> UpdateResult:
     """Run the guarded self-update workflow.
 
     1. Check for active turns across all conversations. If any are busy, refuse.
     2. Check working tree cleanliness (modified/staged tracked files). If dirty, abort.
-    3. Check upstream tracking branch and fetch.
-    4. Check if current branch can fast-forward to upstream. If diverged, abort.
-    5. Inspect incoming commits (HEAD..@{u}). If none, stop ("Already up to date").
+    3. Fetch and resolve the deploy candidate: ``origin/production`` when it
+       exists, else the current branch's upstream.
+    4. Check the candidate is a fast-forward of HEAD. If diverged, abort.
+    5. Inspect incoming commits. If none, stop ("Already up to date").
     6. If unconfirmed, show incoming commits and prompt for `/update confirm`.
-    7. If confirmed:
-       a. git pull --ff-only
-       b. uv sync
-       c. systemctl --user restart --no-block decafclaw
+    7. If confirmed: persist the post-restart wake (when given) and run
+       ``systemctl --user start --no-block decafclaw-deploy.service``. The
+       external runner owns the actual deploy and health gate.
     """
     runner = cmd_runner or _default_cmd_runner
 
@@ -127,34 +135,36 @@ async def perform_self_update(
             message=f"Cannot update: working tree is dirty (modified or staged files present):\n{stdout.strip()}",
         )
 
-    # 4. Check upstream tracking branch
-    ret, stdout, stderr = await runner(
-        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], target_repo, None
-    )
-    if ret != 0:
-        return UpdateResult(
-            ok=False,
-            message="Cannot update: current branch has no upstream tracking branch configured.",
-        )
-
-    # 5. Fetch latest
+    # 4. Fetch latest and resolve the deploy candidate. The runner deploys
+    # origin/production; a checkout that has not switched to it yet still gets
+    # a useful preview from its own upstream.
     ret, stdout, stderr = await runner(["git", "fetch"], target_repo, None)
     if ret != 0:
         return UpdateResult(
             ok=False,
             message=f"Cannot update: `git fetch` failed:\n{stderr.strip()}",
         )
-
-    # 6. Check if fast-forwardable
-    ret, stdout, stderr = await runner(["git", "merge-base", "--is-ancestor", "HEAD", "@{u}"], target_repo, None)
+    ret, _, _ = await runner(["git", "rev-parse", "--verify", "--quiet", "origin/production"], target_repo, None)
+    candidate_ref = "origin/production" if ret == 0 else "@{u}"
+    ret, stdout, stderr = await runner(
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", candidate_ref], target_repo, None
+    )
     if ret != 0:
         return UpdateResult(
             ok=False,
-            message="Cannot update: current branch has diverged from upstream and cannot be fast-forwarded.",
+            message="Cannot update: no deploy branch (origin/production) or upstream tracking branch.",
         )
 
-    # 7. Check incoming commits
-    ret, stdout, stderr = await runner(["git", "log", "HEAD..@{u}", "--oneline"], target_repo, None)
+    # 5. Check if fast-forwardable
+    ret, stdout, stderr = await runner(["git", "merge-base", "--is-ancestor", "HEAD", candidate_ref], target_repo, None)
+    if ret != 0:
+        return UpdateResult(
+            ok=False,
+            message=f"Cannot update: HEAD has diverged from {candidate_ref} and cannot be fast-forwarded.",
+        )
+
+    # 6. Check incoming commits
+    ret, stdout, stderr = await runner(["git", "log", f"HEAD..{candidate_ref}", "--oneline"], target_repo, None)
     if ret != 0:
         return UpdateResult(
             ok=False,
@@ -165,7 +175,7 @@ async def perform_self_update(
     if not incoming:
         return UpdateResult(
             ok=True,
-            message="DecafClaw is already up to date.",
+            message=f"DecafClaw is already up to date with {candidate_ref}.",
         )
 
     # If not confirmed, display incoming commits and ask for confirmation
@@ -173,49 +183,39 @@ async def perform_self_update(
         return UpdateResult(
             ok=True,
             message=(
-                f"Incoming commits:\n{incoming}\n\nTo apply this update and restart DecafClaw, run `/update confirm`."
+                f"Incoming commits from {candidate_ref}:\n{incoming}\n\n"
+                "To start the deploy now, run `/update confirm`. The automated deploy "
+                "timer will pick these up on its own within one interval."
             ),
         )
 
-    # 8. Pull with --ff-only
-    ret, stdout, stderr = await runner(["git", "pull", "--ff-only"], target_repo, None)
+    # 7. Start the external deploy unit. --no-block keeps the HTTP request or
+    # Mattermost handler from hanging through the stop window (#1512's bug
+    # class). The unit owns stop, backup, pull, sync, start, verify, rollback.
+    resolved_config = config
+    if resolved_config is None and restart_coordinator is not None:
+        resolved_config = getattr(restart_coordinator, "config", None)
+    if resolved_config is None:
+        resolved_config = getattr(manager, "config", None)
+    if wake is not None and resolved_config is not None:
+        save_restart_wake(resolved_config, wake)
+
+    ret, stdout, stderr = await runner(
+        ["systemctl", "--user", "start", "--no-block", "decafclaw-deploy.service"], target_repo, None
+    )
     if ret != 0:
+        if wake is not None and resolved_config is not None:
+            delete_restart_wake(resolved_config, wake.conv_id)
         return UpdateResult(
             ok=False,
-            message=f"Cannot update: `git pull --ff-only` failed:\n{stderr.strip()}",
-        )
-
-    # 9. uv sync
-    env = os.environ.copy()
-    home = str(Path.home())
-    env["PATH"] = f"{home}/.local/bin:{env.get('PATH', '')}"
-
-    ret, stdout, stderr = await runner(["uv", "sync"], target_repo, env)
-    if ret != 0:
-        err_detail = stderr.strip() or stdout.strip()
-        return UpdateResult(
-            ok=False,
-            message=f"Update failed during `uv sync` (exit code {ret}):\n{err_detail}\n\nService was NOT restarted.",
-        )
-
-    # 10. Restart service
-    if restart_coordinator is not None:
-        await restart_coordinator.request_restart(reason="Self-update completed successfully", on_idle=False)
-        return UpdateResult(
-            ok=True,
-            message="Update applied successfully. Restarting DecafClaw service...",
-            restarted=True,
-        )
-
-    ret, stdout, stderr = await runner(["systemctl", "--user", "restart", "--no-block", "decafclaw"], target_repo, None)
-    if ret != 0:
-        return UpdateResult(
-            ok=False,
-            message=f"Update applied successfully, but service restart failed:\n{stderr.strip()}",
+            message=f"Cannot start the deploy service:\n{stderr.strip()}",
         )
 
     return UpdateResult(
         ok=True,
-        message="Update applied successfully. Restarting DecafClaw service...",
+        message=(
+            "Deploy started. The service will stop briefly, apply the update, verify "
+            "health, and report the result here."
+        ),
         restarted=True,
     )
