@@ -6,7 +6,7 @@ import logging
 import os
 import tempfile
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .conversation_paths import sidecar_path
@@ -17,6 +17,45 @@ log = logging.getLogger(__name__)
 # reflection, etc.) are stored in the archive but filtered out before
 # sending to the LLM.
 LLM_ROLES = {"system", "user", "assistant", "tool"}
+
+
+def now_iso() -> str:
+    """UTC timestamp in the canonical archive format (#1829).
+
+    Every row this module stamps goes through here, so a single archive
+    never mixes timezones. Rows written before #1829 used naive local
+    time (``datetime.now()``), while background events and confirmation
+    requests used UTC — and the two orders disagree by the local UTC
+    offset, so lexicographic comparisons silently dropped the newest
+    turns. See :func:`parse_timestamp` for the reader-side counterpart.
+    """
+    return datetime.now(timezone.utc).isoformat()
+
+
+def parse_timestamp(value: str | None) -> datetime | None:
+    """Parse any timestamp this project has ever written, as aware UTC.
+
+    Three shapes exist in the wild:
+
+    * ``2026-11-25T08:22:53.077847+00:00`` — current canonical (#1829)
+    * ``2026-11-25T08:22:53Z`` — older UTC writers (background, confirms)
+    * ``2026-11-25T00:22:53.077847`` — pre-#1829 naive **local** time
+
+    The naive form is interpreted as UTC so comparisons stay total and
+    well-ordered. That is knowingly approximate for legacy rows (they are
+    off by the host's UTC offset), but it is monotonic *within* a legacy
+    file, which is all the ordering callers need, and it is stable across
+    hosts. Returns ``None`` for missing or unparseable values.
+    """
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def archive_path(config, conv_id: str) -> Path:
@@ -30,7 +69,7 @@ def append_message(config, conv_id: str, message: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
     # Add timestamp if not already present
     if "timestamp" not in message:
-        message = {**message, "timestamp": datetime.now().isoformat()}
+        message = {**message, "timestamp": now_iso()}
     with open(path, "a") as f:
         f.write(json.dumps(message) + "\n")
 
@@ -50,7 +89,7 @@ def _write_jsonl_atomic(path: Path, messages: list[dict]):
         with os.fdopen(fd, "w") as f:
             for msg in messages:
                 if "timestamp" not in msg:
-                    msg = {**msg, "timestamp": datetime.now().isoformat()}
+                    msg = {**msg, "timestamp": now_iso()}
                 f.write(json.dumps(msg) + "\n")
         os.replace(tmp_name, path)
     except BaseException:
@@ -138,10 +177,17 @@ def restore_history(config, conv_id: str) -> list[dict] | None:
     compacted = read_compacted_history(config, conv_id)
     if compacted:
         full = read_archive(config, conv_id)
-        last_ts = compacted[-1].get("timestamp", "")
-        newer = [
-            m for m in full if m.get("timestamp", "") > last_ts and m.get("role") not in ("compaction", "model", "mode")
-        ]
+        # Compare parsed instants, not raw strings: archives hold a mix of
+        # naive-local (pre-#1829) and UTC-offset stamps, and lexicographic
+        # order across those two shapes drops real turns (#1829).
+        last_ts = parse_timestamp(compacted[-1].get("timestamp"))
+        newer = []
+        for m in full:
+            if m.get("role") in ("compaction", "model", "mode"):
+                continue
+            ts = parse_timestamp(m.get("timestamp"))
+            if ts is not None and last_ts is not None and ts > last_ts:
+                newer.append(m)
         return compacted + newer
 
     archived = read_archive(config, conv_id)
