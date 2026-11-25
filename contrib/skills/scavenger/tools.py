@@ -86,6 +86,8 @@ def scavenger_probe(ctx: Any, host: str = "") -> str:
     if not fleet:
         return "Error: No fleet configuration found. Check ~/.config/scavenger/fleet.json."
 
+    reaped = env_reap(fleet)
+
     targets = [host] if host else list(fleet.keys())
     lines = [
         f"{'HOST':<14} {'ONLINE':<8} {'ARCH':<8} {'ENGINE':<8} {'AC':<6} {'STATUS':<10} {'NOTES'}",
@@ -102,6 +104,9 @@ def scavenger_probe(ctx: Any, host: str = "") -> str:
         lines.append(
             f"{st.name:<14} {str(st.online):<8} {st.arch:<8} {st.engine:<8} {ac_str:<6} {status_str:<10} {st.reason}"
         )
+
+    if reaped:
+        lines.append(f"Reaped {len(reaped)} expired environment(s): {', '.join(reaped)}")
 
     return "\n".join(lines)
 
@@ -582,6 +587,11 @@ def scavenger_env_destroy(ctx: Any, env_id: str) -> str:
     ok = env_destroy(fleet, env_id)
     if ok:
         return f"Environment '{env_id}' destroyed and lease released."
+    still = load_leases().get(env_id)
+    if still:
+        return (
+            f"Failed to destroy environment '{env_id}' on {still.host} (host unreachable?); lease retained for retry."
+        )
     return f"Environment '{env_id}' not found or already destroyed."
 
 
@@ -611,6 +621,12 @@ def scavenger_reap(ctx: Any) -> str:
     reaped = env_reap(fleet)
     if reaped:
         return f"Reaped {len(reaped)} expired environment(s): {', '.join(reaped)}"
+    still_expired = [k for k, v in load_leases().items() if v.expires_at < time.time()]
+    if still_expired:
+        return (
+            f"Could not reap {len(still_expired)} expired environment(s) ({', '.join(still_expired)}); "
+            "their hosts are unreachable. They will be retried on the next sweep."
+        )
     return "No expired environments to reap."
 
 
