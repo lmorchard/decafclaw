@@ -18,6 +18,7 @@ from decafclaw.compaction import (
     _split_into_turns,
     _turn_has_protected_tool,
     compact_history,
+    estimate_history_tokens,
     estimate_tokens,
     flatten_messages,
 )
@@ -134,6 +135,30 @@ class TestEstimateTokens:
         assert estimate_tokens("") == 0
 
 
+class TestEstimateHistoryTokens:
+    def test_does_not_truncate_tool_results(self):
+        """The meter must see preserved tool output, not the summarizer's
+        500-char preview (#1823)."""
+        messages = [{"role": "tool", "tool_call_id": "tc1", "content": "x" * 40_000}]
+        assert estimate_history_tokens(messages) >= 10_000
+        assert estimate_history_tokens(messages) > estimate_tokens(flatten_messages(messages)) * 10
+
+    def test_counts_tool_call_arguments(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "tc1", "function": {"name": "shell", "arguments": '{"command": "' + "y" * 4000 + '"}'}}
+                ],
+            }
+        ]
+        assert estimate_history_tokens(messages) >= 1000
+
+    def test_skips_metadata_roles(self):
+        assert estimate_history_tokens([{"role": "model", "content": "gemini-4-argon"}]) == 0
+
+
 class TestCompactHistory:
     @pytest.fixture
     def populated_archive(self, config):
@@ -247,8 +272,9 @@ class TestCompactHistory:
         assert len(end) == 1
         assert end[0]["success"] is True
         # The estimate is computed over the rebuilt history (the actual
-        # prompt size the next turn would send), not the old last_prompt.
-        expected = estimate_tokens(flatten_messages(history))
+        # prompt size the next turn would send), not the old last_prompt and
+        # not the summarizer's truncated view (#1823).
+        expected = estimate_history_tokens(history)
         assert end[0]["estimated_tokens_after"] == expected
         # Authoritative meter figure threaded through to message_complete.
         assert ctx.tokens.last_compaction_estimate == expected

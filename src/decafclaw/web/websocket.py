@@ -371,11 +371,11 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     estimated_tokens = None
     current_model = None
     if not before:
-        from ..compaction import estimate_tokens, flatten_messages
+        from ..compaction import estimate_history_tokens
 
         working = read_compacted_history(config, conv_id) or all_msgs
         if working:
-            estimated_tokens = estimate_tokens(flatten_messages(working))
+            estimated_tokens = estimate_history_tokens(working)
 
         # Extract current model (scan reverse for last valid model message).
         for m in reversed(all_msgs):

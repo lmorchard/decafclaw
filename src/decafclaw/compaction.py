@@ -405,6 +405,28 @@ def flatten_messages(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def estimate_history_tokens(messages: list[dict]) -> int:
+    """Estimate the prompt size of preserved history, untruncated.
+
+    ``flatten_messages`` truncates every tool result to 500 chars because it
+    feeds the compaction summarizer. Using it to measure the rebuilt history
+    under-reported the post-compaction prompt by roughly 10x — 330k tokens
+    read as ~29k, a false ~10% meter reading (#1823). This walks the content
+    the next turn actually sends. The two jobs stay separate on purpose.
+    """
+    total = 0
+    for msg in messages:
+        role = msg.get("role")
+        if role in ("compaction", "model", "mode"):
+            continue
+        total += estimate_tokens(str(msg.get("content") or ""))
+        for tc in msg.get("tool_calls") or []:
+            function = tc.get("function") or {}
+            total += estimate_tokens(str(function.get("name") or ""))
+            total += estimate_tokens(str(function.get("arguments") or ""))
+    return total
+
+
 async def _single_summarize(ctx: "Context", config, flattened_text: str, prompt: str) -> str:
     """Summarize a single block of flattened text."""
     summary_messages = [
@@ -688,7 +710,7 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     import time as _time
 
     before_messages = len(history)
-    history_tokens_before = estimate_tokens(flatten_messages(history))
+    history_tokens_before = estimate_history_tokens(history)
     compact_start_time = _time.monotonic()
     # #1005 — the context meter reads this as the post-compaction prompt
     # size. Set only on a successful compaction; a failed compaction leaves
@@ -776,11 +798,12 @@ async def compact_history(ctx: "Context", history: list) -> bool:
 
         # #1005 — the meter shows the prompt size of the last LLM call, which
         # by definition exceeded the compaction threshold (>100%) and is not
-        # corrected after compaction. Estimate the *post-compaction* history
-        # the same way the reload path does (websocket.py), and hand it to the
-        # turn's message_complete (via ctx.tokens.last_compaction_estimate)
-        # and the COMPACTION_DONE wire message (via the event below).
-        estimated_tokens_after = estimate_tokens(flatten_messages(history))
+        # corrected after compaction. Measure the *post-compaction* history
+        # the same way the reload path does (websocket.py), without the
+        # summarizer's 500-char truncation (#1823), and hand it to the turn's
+        # message_complete (via ctx.tokens.last_compaction_estimate) and the
+        # COMPACTION_DONE wire message (via the event below).
+        estimated_tokens_after = estimate_history_tokens(history)
         ctx.tokens.last_compaction_estimate = estimated_tokens_after
         if hasattr(ctx, "composer") and ctx.composer is not None:
             ctx.composer.reset_for_compaction()
