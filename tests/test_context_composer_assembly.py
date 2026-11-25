@@ -1470,3 +1470,68 @@ class TestPromptCachePrefixStability:
                 ctx, "turn 4", list(archived), mode=ComposerMode.INTERACTIVE
             )
         assert_prefix(res3, from_archive)
+
+
+# -- Activated skills block (#1823) -----------------------------------------
+
+
+class TestActivatedSkillsBlock:
+    @pytest.fixture(autouse=True)
+    def _no_auto_refresh(self, config):
+        # The composer re-discovers skills from disk each turn; these tests
+        # use synthetic SkillInfo entries that have no directory.
+        config.agent.auto_refresh_skills = False
+
+    @pytest.mark.asyncio
+    async def test_renders_bodies_and_is_never_archived(self, ctx):
+        info = _make_skill_info("tabstack", "Tabstack", body="# Tabstack\nUse the fetch tool.")
+        ctx.config.discovered_skills = [info]
+        ctx.skills.activated["tabstack"] = "hash"
+
+        composed = await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+
+        block = next(
+            (m["content"] for m in composed.messages if str(m.get("content", "")).startswith("<activated_skills>")),
+            None,
+        )
+        assert block is not None
+        assert "Use the fetch tool." in block
+        assert '<skill name="tabstack">' in block
+        # Never archived: archiving it would duplicate every body every turn.
+        assert not any("<activated_skills>" in str(m.get("content", "")) for m in composed.messages_to_archive)
+
+    @pytest.mark.asyncio
+    async def test_expands_skill_dir_placeholder(self, ctx):
+        info = _make_skill_info("tabstack", "Tabstack", body="Run $SKILL_DIR/fetch.sh")
+        ctx.config.discovered_skills = [info]
+        ctx.skills.activated["tabstack"] = "hash"
+
+        composed = await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+
+        block = next(
+            m["content"] for m in composed.messages if str(m.get("content", "")).startswith("<activated_skills>")
+        )
+        assert f"Run {info.location.resolve()}/fetch.sh" in block
+        assert "$SKILL_DIR" not in block
+
+    @pytest.mark.asyncio
+    async def test_warns_above_the_ceiling_without_truncating(self, ctx, caplog):
+        big_body = "x" * 100_000  # ~25k tokens
+        info = _make_skill_info("big-skill", "Big", body=big_body)
+        ctx.config.discovered_skills = [info]
+        ctx.skills.activated["big-skill"] = "hash"
+
+        with caplog.at_level("WARNING", logger="decafclaw.context_composer"):
+            composed = await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+
+        block = next(
+            m["content"] for m in composed.messages if str(m.get("content", "")).startswith("<activated_skills>")
+        )
+        assert big_body in block  # never truncated
+        assert "big-skill" in caplog.text
+        assert "ceiling" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_no_block_when_nothing_is_activated(self, ctx):
+        composed = await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+        assert not any("<activated_skills>" in str(m.get("content", "")) for m in composed.messages)

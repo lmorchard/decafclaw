@@ -16,7 +16,6 @@ from decafclaw.compaction import (
     _extract_previous_summary,
     _run_memory_sweep,
     _split_into_turns,
-    _turn_has_protected_tool,
     compact_history,
     estimate_history_tokens,
     estimate_tokens,
@@ -587,59 +586,16 @@ class TestCompactHistory:
         assert result is False
 
 
-class TestTurnHasProtectedTool:
-    def test_detects_activate_skill(self):
-        turn = [
-            {"role": "user", "content": "activate tabstack"},
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {"id": "tc1", "function": {"name": "activate_skill", "arguments": '{"name": "tabstack"}'}}
-                ],
-            },
-            {"role": "tool", "tool_call_id": "tc1", "content": "skill body here"},
-        ]
-        assert _turn_has_protected_tool(turn) is True
-
-    def test_ignores_regular_tools(self):
-        turn = [
-            {"role": "user", "content": "run ls"},
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{"id": "tc1", "function": {"name": "shell", "arguments": '{"command": "ls"}'}}],
-            },
-            {"role": "tool", "tool_call_id": "tc1", "content": "file1.txt"},
-        ]
-        assert _turn_has_protected_tool(turn) is False
-
-    def test_handles_none_tool_calls(self):
-        """tool_calls: None is a valid LLM response shape — should not crash."""
-        turn = [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi", "tool_calls": None},
-        ]
-        assert _turn_has_protected_tool(turn) is False
-
-    def test_handles_no_tool_calls(self):
-        turn = [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi"},
-        ]
-        assert _turn_has_protected_tool(turn) is False
-
-
-class TestSkillProtectionDuringCompaction:
+class TestSkillActivationTurnsCompact:
     @pytest.fixture
-    def archive_with_skill(self, config):
-        """Create an archive with a skill activation in turn 1 (of 8)."""
+    def archive_with_mixed_turn(self, config):
+        """Turn 1 activates a skill and then produces heavy unrelated output."""
         conv_id = "test-conv"
         # Turn 0: regular
         append_message(config, conv_id, {"role": "user", "content": "hello"})
         append_message(config, conv_id, {"role": "assistant", "content": "hi"})
-        # Turn 1: skill activation
-        append_message(config, conv_id, {"role": "user", "content": "activate tabstack"})
+        # Turn 1: activate_skill followed by a large shell result
+        append_message(config, conv_id, {"role": "user", "content": "activate tabstack and run the suite"})
         append_message(
             config,
             conv_id,
@@ -657,7 +613,7 @@ class TestSkillProtectionDuringCompaction:
             {
                 "role": "tool",
                 "tool_call_id": "tc1",
-                "content": "# Tabstack Skill\nFull skill body with instructions...",
+                "content": "Activated skill 'tabstack'.",
             },
         )
         append_message(
@@ -665,9 +621,20 @@ class TestSkillProtectionDuringCompaction:
             conv_id,
             {
                 "role": "assistant",
-                "content": "Tabstack is now active.",
+                "content": None,
+                "tool_calls": [{"id": "tc2", "function": {"name": "shell", "arguments": '{"command": "make test"}'}}],
             },
         )
+        append_message(
+            config,
+            conv_id,
+            {
+                "role": "tool",
+                "tool_call_id": "tc2",
+                "content": "UNRELATED TOOL OUTPUT " * 2000,
+            },
+        )
+        append_message(config, conv_id, {"role": "assistant", "content": "Tests passed."})
         # Turns 2-7: regular
         for i in range(2, 8):
             append_message(config, conv_id, {"role": "user", "content": f"message {i}"})
@@ -675,8 +642,9 @@ class TestSkillProtectionDuringCompaction:
         return conv_id
 
     @pytest.mark.asyncio
-    async def test_skill_turn_preserved(self, ctx, archive_with_skill):
-        """Skill activation turn should survive compaction."""
+    async def test_activate_skill_turn_is_summarized(self, ctx, archive_with_mixed_turn):
+        """A turn that called activate_skill no longer protects its unrelated
+        tool output from compaction (#1823-A)."""
         ctx.config.compaction.preserve_turns = 5
         history = [{"role": "user", "content": "placeholder"}]
 
@@ -691,15 +659,40 @@ class TestSkillProtectionDuringCompaction:
             result = await compact_history(ctx, history)
 
         assert result is True
-        # History should be: summary + protected skill turn + 5 recent turns
         assert history[0]["content"].startswith(SUMMARY_PREFIX)
-        # Find the skill content in the protected messages
-        skill_content = [m for m in history if (m.get("content") or "").startswith("# Tabstack Skill")]
-        assert len(skill_content) == 1, "Skill body should be preserved verbatim"
+        # Only the summary plus the five recent turns (10 messages) survive.
+        assert len(history) == 11
+        # Neither the activation ack nor the unrelated shell output survives.
+        assert not any("UNRELATED TOOL OUTPUT" in (m.get("content") or "") for m in history)
+        assert not any("Activated skill" in (m.get("content") or "") for m in history)
 
     @pytest.mark.asyncio
-    async def test_all_old_turns_protected_skips(self, ctx, config):
-        """If every old turn is a skill activation, compaction should skip."""
+    async def test_mixed_turn_shrinks_the_transcript(self, ctx, archive_with_mixed_turn):
+        """The old protected-turn path left the heavy output in place, so the
+        next turn breached the threshold again (#1823)."""
+        from decafclaw.archive import read_archive
+
+        ctx.config.compaction.preserve_turns = 5
+        history = [{"role": "user", "content": "placeholder"}]
+        before = estimate_history_tokens(read_archive(ctx.config, "test-conv"))
+
+        mock_response = {
+            "content": "Summary of earlier conversation.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        assert estimate_history_tokens(history) < before // 2
+
+    @pytest.mark.asyncio
+    async def test_skill_only_old_turns_still_compact(self, ctx, config):
+        """The removed "all old turns are protected" early return made this a
+        no-op. A skill-activation turn is now ordinary summarizable history."""
         conv_id = "test-conv"
         # Turn 0: skill activation
         append_message(config, conv_id, {"role": "user", "content": "activate tabstack"})
@@ -720,7 +713,7 @@ class TestSkillProtectionDuringCompaction:
             {
                 "role": "tool",
                 "tool_call_id": "tc1",
-                "content": "skill body",
+                "content": "Activated skill 'tabstack'.",
             },
         )
         append_message(config, conv_id, {"role": "assistant", "content": "activated"})
@@ -732,8 +725,17 @@ class TestSkillProtectionDuringCompaction:
         ctx.config.compaction.preserve_turns = 5
         history = [{"role": "user", "content": "placeholder"}]
 
-        result = await compact_history(ctx, history)
-        assert result is False
+        mock_response = {
+            "content": "Summary of the activation turn.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        assert history[0]["content"].startswith(SUMMARY_PREFIX)
 
 
 class TestMemorySweep:
