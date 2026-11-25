@@ -11,6 +11,17 @@ cd "$REPO_DIR"
 
 echo "=== DecafClaw Deploy ==="
 
+# Quiesced backup before changing code. Same script as the scheduled timer;
+# --force because a deploy is already a deliberate, human-initiated action.
+echo "Backing up..."
+/usr/bin/python3 "$REPO_DIR/scripts/backup.py" --force \
+    --data-home "$HOME/.decafclaw/decafclaw" \
+    --repo-dir "$REPO_DIR" \
+    --backup-dir "$HOME/.decafclaw/decafclaw/backups" || {
+    echo "Backup failed; aborting deploy."
+    exit 1
+}
+
 # Pull latest code
 echo "Pulling latest..."
 git pull --ff-only
