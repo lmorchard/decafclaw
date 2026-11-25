@@ -1,12 +1,14 @@
-"""One-shot model completion — the llm_query tool (#1258).
+"""Model completion — the llm_query tool (#1258).
 
-Runs single-shot completions against a named model with no tool schemas
-and no agent scaffolding. The request carries only the system and prompt
-text, so small local models (Ollama/Otari endpoints) can do extraction,
-summarization, and classification without tool hallucination.
+Runs completions against a named model with no tool schemas and no agent
+scaffolding. A call carries system text plus either a single prompt or a
+multi-turn ``messages`` history, so small local models (Ollama/Otari
+endpoints) can do extraction, summarization, and classification without
+tool hallucination, and skills can drive dialogue without duplicating
+provider plumbing.
 
-For a subtask that needs tools or multi-turn reasoning, use
-``delegate_task`` instead.
+For a subtask that needs tools or its own context, use ``delegate_task``
+instead.
 """
 
 import asyncio
@@ -77,6 +79,102 @@ def _resolve_target(ctx: "Context", model: str) -> "ResolvedModel | ToolResult":
         return ToolResult(text=f"[error: no model available for llm_query: {exc}]")
 
 
+_MESSAGE_ROLES = frozenset({"system", "user", "assistant"})
+
+
+def _validate_messages(messages: Any) -> list[dict[str, str]] | ToolResult:
+    """Validate a caller-supplied chat history.
+
+    Only ``role``/``content`` string pairs are accepted: the tool has no
+    tool-call protocol, so extra keys would be silently dropped.
+    """
+    if not isinstance(messages, list) or not messages:
+        return ToolResult(text="[error: messages must be a non-empty list of {'role', 'content'} objects]")
+    for i, message in enumerate(messages):
+        if not isinstance(message, dict):
+            return ToolResult(text=f"[error: messages[{i}] must be an object]")
+        extra = sorted(set(message) - {"role", "content"})
+        if extra:
+            return ToolResult(text=f"[error: messages[{i}] has unsupported keys: {', '.join(extra)}]")
+        if message.get("role") not in _MESSAGE_ROLES:
+            return ToolResult(text=f"[error: messages[{i}].role must be one of system, user, assistant]")
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return ToolResult(text=f"[error: messages[{i}].content must be a non-empty string]")
+    return [{"role": m["role"], "content": m["content"]} for m in messages]
+
+
+def _assemble_messages(
+    system: str,
+    base: list[dict[str, str]] | None,
+    prompt: str | None,
+) -> list[dict[str, str]]:
+    """Combine system text, an optional history, and an optional final user turn.
+
+    ``system`` merges into a leading system message or is prepended;
+    ``prompt`` is appended as the final user turn.
+    """
+    messages = [dict(m) for m in base] if base else []
+    if system:
+        if messages and messages[0]["role"] == "system":
+            messages[0]["content"] = f"{system}\n\n{messages[0]['content']}"
+        else:
+            messages.insert(0, {"role": "system", "content": system})
+    if prompt is not None:
+        messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+def _apply_schema_instruction(
+    messages: list[dict[str, Any]],
+    return_schema: dict | None,
+) -> list[dict[str, Any]]:
+    """Add the structured-output instruction to the system message."""
+    if return_schema is None:
+        return messages
+    addendum = _render_schema_addendum(return_schema)
+    if not addendum:
+        return messages
+    if messages and messages[0]["role"] == "system":
+        messages[0]["content"] = f"{messages[0]['content']}\n\n{addendum}"
+    else:
+        messages.insert(0, {"role": "system", "content": addendum})
+    return messages
+
+
+def _validate_sampler(
+    temperature: Any,
+    top_p: Any,
+    max_tokens: Any,
+    stop: Any,
+) -> dict[str, Any] | ToolResult:
+    """Validate per-call sampler overrides and return provider kwargs.
+
+    The result merges over the model configuration's completion options,
+    so a caller can vary sampling per call without duplicating a model
+    entry. An empty ``stop`` list means no stop sequences.
+    """
+    options: dict[str, Any] = {}
+    if temperature is not None:
+        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not 0.0 <= temperature <= 2.0:
+            return ToolResult(text="[error: temperature must be a number between 0.0 and 2.0]")
+        options["temperature"] = float(temperature)
+    if top_p is not None:
+        if isinstance(top_p, bool) or not isinstance(top_p, (int, float)) or not 0.0 < top_p <= 1.0:
+            return ToolResult(text="[error: top_p must be a number greater than 0.0 and at most 1.0]")
+        options["top_p"] = float(top_p)
+    if max_tokens is not None:
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0:
+            return ToolResult(text="[error: max_tokens must be a positive integer]")
+        options["max_tokens"] = max_tokens
+    if stop is not None:
+        if not isinstance(stop, list) or any(not isinstance(s, str) or not s for s in stop):
+            return ToolResult(text="[error: stop must be a list of non-empty strings]")
+        if stop:
+            options["stop"] = list(stop)
+    return options
+
+
 def _record_usage(ctx: "Context", usage: dict | None) -> None:
     """Accumulate a completion's reported usage into the token counters.
 
@@ -107,11 +205,10 @@ def _record_usage(ctx: "Context", usage: dict | None) -> None:
 async def _run_one(
     ctx: "Context",
     *,
-    prompt_text: str,
+    messages: list[dict[str, Any]],
     idx: int | None,
     provider: Any,
     model_id: str,
-    system: str,
     return_schema: dict | None,
     strict: bool,
     timeout: int,
@@ -133,20 +230,11 @@ async def _run_one(
     """
 
     async def _call() -> dict:
-        system_text = system
-        if return_schema is not None:
-            addendum = _render_schema_addendum(return_schema)
-            if addendum:
-                system_text = f"{system}\n\n{addendum}" if system else addendum
-
-        messages: list[dict[str, Any]] = []
-        if system_text:
-            messages.append({"role": "system", "content": system_text})
-        messages.append({"role": "user", "content": prompt_text})
+        request_messages = _apply_schema_instruction([dict(m) for m in messages], return_schema)
 
         response = await provider.complete(
             model_id,
-            messages,
+            request_messages,
             tools=None,
             timeout=timeout,
             **completion_options,
@@ -230,21 +318,34 @@ async def _run_one(
 
 async def tool_llm_query(
     ctx: "Context",
-    prompt: str | list[str],
+    prompt: str | list[str] | None = None,
     model: str = "",
     system: str = "",
+    messages: list[dict[str, str]] | None = None,
     return_schema: dict | None = None,
     strict: bool = False,
     timeout: int = 60,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
+    stop: list[str] | None = None,
 ) -> ToolResult:
-    """Run one or more single-shot completions against a named model.
+    """Run one or more completions against a named model.
 
-    No tool schemas, no conversation history: the model sees only
-    ``system`` (when non-empty) and ``prompt``. A list prompt batches the
-    items concurrently under an internal semaphore (max 25 per call).
+    No tool schemas: the model sees ``system`` (when non-empty), an
+    optional ``messages`` history, and an optional final ``prompt`` user
+    turn. A list prompt batches independent items concurrently under an
+    internal semaphore (max 25 per call); ``messages`` is a single
+    conversation and cannot be combined with a batch.
+
+    Per-call sampler overrides (``temperature``, ``top_p``,
+    ``max_tokens``, ``stop``) merge over the model configuration's
+    completion options for this call only.
     """
 
     if isinstance(prompt, list):
+        if messages is not None:
+            return ToolResult(text="[error: messages cannot be combined with a prompt list]")
         if not prompt:
             return ToolResult(text="[error: prompt must be a non-empty string or list]")
         if len(prompt) > MAX_PROMPTS_PER_CALL:
@@ -257,11 +358,25 @@ async def tool_llm_query(
         for i, p in enumerate(prompt):
             if not isinstance(p, str) or not p.strip():
                 return ToolResult(text=f"[error: prompt[{i}] must be a non-empty string]")
-    elif not isinstance(prompt, str) or not prompt.strip():
-        return ToolResult(text="[error: prompt must be a non-empty string]")
+    elif prompt is not None:
+        if not isinstance(prompt, str) or not prompt.strip():
+            return ToolResult(text="[error: prompt must be a non-empty string]")
+
+    if messages is not None:
+        validated = _validate_messages(messages)
+        if isinstance(validated, ToolResult):
+            return validated
+        messages = validated
+
+    if prompt is None and messages is None:
+        return ToolResult(text="[error: prompt or messages is required]")
 
     if not isinstance(timeout, int) or timeout <= 0:
         return ToolResult(text="[error: timeout must be a positive integer number of seconds]")
+
+    sampler = _validate_sampler(temperature, top_p, max_tokens, stop)
+    if isinstance(sampler, ToolResult):
+        return sampler
 
     target = _resolve_target(ctx, model)
     if isinstance(target, ToolResult):
@@ -276,15 +391,15 @@ async def tool_llm_query(
     )
 
     completion_options = target.completion_options()
+    completion_options.update(sampler)
 
-    if isinstance(prompt, str):
+    if not isinstance(prompt, list):
         entry = await _run_one(
             ctx,
-            prompt_text=prompt,
+            messages=_assemble_messages(system, messages, prompt),
             idx=None,
             provider=target.provider,
             model_id=target.model,
-            system=system,
             return_schema=return_schema,
             strict=strict,
             timeout=timeout,
@@ -303,11 +418,10 @@ async def tool_llm_query(
     coros = [
         _run_one(
             ctx,
-            prompt_text=p,
+            messages=_assemble_messages(system, None, p),
             idx=i,
             provider=target.provider,
             model_id=target.model,
-            system=system,
             return_schema=return_schema,
             strict=strict,
             timeout=timeout,
@@ -464,16 +578,20 @@ LLM_TOOL_DEFINITIONS = [
         "timeout": None,
         # No side effects beyond the LLM call itself: runs concurrently.
         "writes": False,
-        "summary": "Run a single-shot completion on a named model, with no tools.",
+        "summary": "Run a completion on a named model, with no tools.",
         "function": {
             "name": "llm_query",
             "description": (
-                "Run one or more single-shot completions against a named model with no tools and no agent scaffolding. "
+                "Run one or more completions against a named model with no tools and no agent scaffolding. "
                 "Use for narrow text transformation: extraction, summarization, classification, reformatting — especially against a small local model "
-                "(a config.model_configs entry pointing at an Ollama or Otari endpoint). The model sees only your system and prompt text; it cannot call tools. "
-                "For a subtask that needs tools, multi-turn reasoning, or its own context, use delegate_task instead.\n\n"
+                "(a config.model_configs entry pointing at an Ollama or Otari endpoint). The model cannot call tools. "
+                "For a subtask that needs tools or its own context, use delegate_task instead.\n\n"
                 "prompt accepts a single string or a list of strings (batched concurrently, max 25 per call). "
+                "messages supplies a real multi-turn history ([{'role': 'system'|'user'|'assistant', 'content': '...'}]) instead of a single prompt; "
+                "prompt may still be given to append a final user turn. system merges into a leading system message or is prepended. "
+                "messages cannot be combined with a prompt list. "
                 "model names an entry in config.model_configs (call llm_models to list them); empty inherits the conversation's active model. An unknown name is an error, never a silent fallback. "
+                "Per-call sampler overrides (temperature 0.0-2.0, top_p >0.0-1.0, max_tokens, stop) apply to this call only and override the model configuration. "
                 "With return_schema (a flat field-to-type map), a compliant fenced JSON block in the response parses to ToolResult.data; "
                 "strict=true turns non-compliant output into an error with field-level feedback, while strict=false falls back to the raw text. "
                 "Batch results arrive on ToolResult.data as {'summary': {'total', 'ok', 'failed'}, 'results': [{'index', 'ok', ...}]}, ordered by input index."
@@ -485,7 +603,7 @@ LLM_TOOL_DEFINITIONS = [
                         "anyOf": [
                             {
                                 "type": "string",
-                                "description": "Single prompt text for one completion.",
+                                "description": "Single prompt text for one completion; appended as the final user turn when messages is also given.",
                             },
                             {
                                 "type": "array",
@@ -496,6 +614,21 @@ LLM_TOOL_DEFINITIONS = [
                             },
                         ],
                     },
+                    "messages": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "role": {"type": "string", "enum": ["system", "user", "assistant"]},
+                                "content": {"type": "string"},
+                            },
+                            "required": ["role", "content"],
+                        },
+                        "description": (
+                            "Multi-turn chat history, in order. Used as the base message list; system merges into a leading "
+                            "system message and prompt appends a final user turn. Cannot be combined with a prompt list."
+                        ),
+                    },
                     "model": {
                         "type": "string",
                         "description": (
@@ -505,6 +638,25 @@ LLM_TOOL_DEFINITIONS = [
                     "system": {
                         "type": "string",
                         "description": ("System prompt for the completion. Empty sends none."),
+                    },
+                    "temperature": {
+                        "type": "number",
+                        "description": "Sampling temperature for this call (0.0-2.0). Overrides the model configuration.",
+                    },
+                    "top_p": {
+                        "type": "number",
+                        "description": "Nucleus sampling probability for this call (>0.0-1.0). Overrides the model configuration.",
+                    },
+                    "max_tokens": {
+                        "type": "integer",
+                        "description": "Completion token cap for this call. Overrides the model configuration.",
+                    },
+                    "stop": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Stop sequences: generation ends when one is produced. Not supported by openai-responses providers."
+                        ),
                     },
                     "return_schema": {
                         "type": "object",
@@ -525,7 +677,7 @@ LLM_TOOL_DEFINITIONS = [
                         "description": ("Per-item timeout in seconds. Default 60."),
                     },
                 },
-                "required": ["prompt"],
+                "required": [],
             },
         },
     },

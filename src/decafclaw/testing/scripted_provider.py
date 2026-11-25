@@ -56,7 +56,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Sequence
 
 from ..llm import register_provider, unregister_provider
@@ -117,6 +117,7 @@ class ScriptedRequest:
     tools: list[dict[str, Any]] | None
     streaming: bool
     call_index: int
+    options: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -388,6 +389,7 @@ class ScriptedProvider:
             tools=list(tools) if tools else None,
             streaming=streaming,
             call_index=self._call_index,
+            options=dict(kwargs),
         )
         if not self._queue:
             if self._factory is None:

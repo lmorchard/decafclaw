@@ -136,8 +136,13 @@ class VertexProvider:
         on_chunk: StreamCallback | None = None,
         cancel_event: asyncio.Event | None = None,
         timeout: int = 300,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_tokens: int | None = None,
+        stop: list[str] | None = None,
         **kwargs,
     ) -> dict:
+        generation_config = _generation_config(temperature=temperature, top_p=top_p, max_tokens=max_tokens, stop=stop)
         if streaming:
             return await self._complete_streaming(
                 model,
@@ -146,12 +151,14 @@ class VertexProvider:
                 on_chunk=on_chunk,
                 cancel_event=cancel_event,
                 timeout=timeout,
+                generation_config=generation_config,
             )
         return await self._complete_nonstreaming(
             model,
             messages,
             tools=tools,
             timeout=timeout,
+            generation_config=generation_config,
         )
 
     async def _complete_nonstreaming(
@@ -161,9 +168,10 @@ class VertexProvider:
         *,
         tools=None,
         timeout=300,
+        generation_config: dict | None = None,
     ) -> dict:
         url = f"{self._base_url(model)}:generateContent"
-        body = _build_request_body(messages, tools)
+        body = _build_request_body(messages, tools, generation_config=generation_config)
 
         log.debug("Vertex request: model=%s, messages=%d, tools=%d", model, len(messages), len(tools) if tools else 0)
         log.debug("Vertex request body: %s", json.dumps(body)[:2000])
@@ -190,9 +198,10 @@ class VertexProvider:
         on_chunk=None,
         cancel_event=None,
         timeout=300,
+        generation_config: dict | None = None,
     ) -> dict:
         url = f"{self._base_url(model)}:streamGenerateContent?alt=sse"
-        body = _build_request_body(messages, tools)
+        body = _build_request_body(messages, tools, generation_config=generation_config)
 
         log.debug(
             "Vertex streaming request: model=%s, messages=%d, tools=%d",
@@ -875,9 +884,30 @@ def _content_to_parts(content) -> list[dict]:
     return parts
 
 
+def _generation_config(
+    *,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
+    stop: list[str] | None = None,
+) -> dict:
+    """Map per-call sampler overrides to Gemini generationConfig fields."""
+    config: dict = {}
+    if temperature is not None:
+        config["temperature"] = temperature
+    if top_p is not None:
+        config["topP"] = top_p
+    if max_tokens is not None:
+        config["maxOutputTokens"] = max_tokens
+    if stop is not None:
+        config["stopSequences"] = list(stop)
+    return config
+
+
 def _build_request_body(
     messages: list[dict],
     tools: list[dict] | None = None,
+    generation_config: dict | None = None,
 ) -> dict:
     """Translate OpenAI-format messages to Gemini request body."""
     contents = []
@@ -957,6 +987,9 @@ def _build_request_body(
                 contents.append({"role": "user", "parts": [fr_part]})
 
     body: dict = {"contents": contents}
+
+    if generation_config:
+        body["generationConfig"] = generation_config
 
     if system_parts:
         body["systemInstruction"] = {"parts": system_parts}

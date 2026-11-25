@@ -48,6 +48,26 @@ def _clean_messages(messages: list) -> list:
     return [{k: v for k, v in m.items() if k != "thinking"} for m in without_provider_data(messages)]
 
 
+def _sampler_body(
+    *,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
+    stop: list[str] | None = None,
+) -> dict[str, Any]:
+    """Map per-call sampler overrides to OpenAI chat-completions fields."""
+    body: dict[str, Any] = {}
+    if temperature is not None:
+        body["temperature"] = temperature
+    if top_p is not None:
+        body["top_p"] = top_p
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
+    if stop is not None:
+        body["stop"] = list(stop)
+    return body
+
+
 # ---------------------------------------------------------------------------
 # Model-listing payload parsing (#1211)
 # ---------------------------------------------------------------------------
@@ -286,8 +306,13 @@ class OpenAICompatProvider:
         on_chunk: StreamCallback | None = None,
         cancel_event: asyncio.Event | None = None,
         timeout: int = 300,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_tokens: int | None = None,
+        stop: list[str] | None = None,
         **kwargs,
     ) -> dict:
+        sampler = _sampler_body(temperature=temperature, top_p=top_p, max_tokens=max_tokens, stop=stop)
         if streaming:
             return await self._complete_streaming(
                 model,
@@ -296,12 +321,14 @@ class OpenAICompatProvider:
                 on_chunk=on_chunk,
                 cancel_event=cancel_event,
                 timeout=timeout,
+                sampler=sampler,
             )
         return await self._complete_nonstreaming(
             model,
             messages,
             tools=tools,
             timeout=timeout,
+            sampler=sampler,
         )
 
     async def _complete_nonstreaming(
@@ -311,9 +338,12 @@ class OpenAICompatProvider:
         *,
         tools=None,
         timeout=300,
+        sampler: dict[str, Any] | None = None,
     ) -> dict:
         url = self._completions_url()
         body: dict = {"model": model, "messages": _clean_messages(messages)}
+        if sampler:
+            body.update(sampler)
         if tools:
             body["tools"] = tools
 
@@ -378,6 +408,7 @@ class OpenAICompatProvider:
         on_chunk=None,
         cancel_event=None,
         timeout=300,
+        sampler: dict[str, Any] | None = None,
     ) -> dict:
         url = self._completions_url()
         body: dict = {
@@ -386,6 +417,8 @@ class OpenAICompatProvider:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if sampler:
+            body.update(sampler)
         if tools:
             body["tools"] = tools
 
