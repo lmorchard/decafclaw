@@ -264,6 +264,27 @@ def test_effective_compaction_threshold_lowered_beats_ratio(ctx, config):
 
 
 @pytest.mark.asyncio
+async def test_maybe_compact_clears_for_skip_mode_even_with_preserve(ctx, config, monkeypatch):
+    """Non-interactive modes clear tool results even when interactive history is preserved."""
+    from decafclaw.context_cleanup import ClearStats
+    from decafclaw.context_types import ComposerMode, TaskMode
+
+    mock_clear = MagicMock(return_value=ClearStats())
+    monkeypatch.setattr("decafclaw.agent.clear_old_tool_results", mock_clear)
+    monkeypatch.setattr("decafclaw.extensions.compaction.find_compaction_extension", lambda ctx: None)
+
+    config.cleanup.preserve_prompt_cache = True
+    ctx.task_mode = TaskMode.INTERACTIVE
+    await _maybe_compact(ctx, config, [], prompt_tokens=0)
+    mock_clear.assert_not_called()
+
+    ctx.task_mode = TaskMode.HEARTBEAT
+    await _maybe_compact(ctx, config, [], prompt_tokens=0)
+    mock_clear.assert_called_once()
+    assert mock_clear.call_args.kwargs["mode"] is ComposerMode.HEARTBEAT
+
+
+@pytest.mark.asyncio
 async def test_maybe_compact_fires_on_ratio_threshold(ctx, config, monkeypatch):
     """Compaction fires when prompt_tokens exceed the ratio-derived threshold."""
     mock_compact = AsyncMock()

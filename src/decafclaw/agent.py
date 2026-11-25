@@ -162,7 +162,7 @@ async def _maybe_compact(ctx: "Context", config, history, prompt_tokens, lowered
     # size/age clear inside is mode-independent.
     try:
         mode = _composer_mode_for(ctx)
-        if not config.cleanup.preserve_prompt_cache or mode != ComposerMode.INTERACTIVE:
+        if not config.cleanup.preserve_prompt_cache or mode.is_skip:
             delta = clear_old_tool_results(history, config, mode=mode)
             ctx.composer.cleanup_cleared_count += delta.cleared_count
             ctx.composer.cleanup_cleared_bytes += delta.cleared_bytes
