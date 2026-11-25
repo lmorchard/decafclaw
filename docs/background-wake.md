@@ -267,6 +267,19 @@ further background jobs, etc. Only the outgoing chat message is suppressed. The
 normally) but carries `suppress_user_message: true`. Transports check this flag
 and skip posting to Mattermost, web UI chat, and terminal output.
 
+**The suppression is persisted, not re-derived on replay (#1852).** The final
+assistant row is archived with `suppress_user_message: true` and the sentinel
+stripped from its content; any trailing body stays for the expandable row. A
+re-rendered web conversation shows `◇ wake · silent` as a collapsed status row,
+and conversation export renders the same row. Mattermost has no transcript
+re-render; its thread-fork history comes from `restore_history`, which reads
+the normalized row. The provider-history assembler drops the archive-only flag
+before an LLM call. Compaction skips `wake_trigger` rows (the synthetic prompt
+contains the literal sentinel) and summarizes the stripped body, so the model
+never learns the marker from its own summary. Archives written before the flag
+existed are normalized on read using the surrounding `wake_trigger` turn, not a
+bare text match outside a wake.
+
 ## Rate limiting
 
 Wakes are rate-limited per conversation to prevent a burst of rapid job

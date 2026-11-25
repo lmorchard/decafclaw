@@ -193,6 +193,25 @@ def test_load_history_with_messages(config):
     assert has_more is False
 
 
+def test_load_history_preserves_silent_wake_flag(config):
+    """REST/mobile history gets the persisted flag and a sentinel-free body (#1852)."""
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    config.workspace_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    conv = index.create("alice")
+
+    append_message(config, conv.conv_id, {"role": "wake_trigger", "content": "reply with BACKGROUND_WAKE_OK"})
+    append_message(
+        config, conv.conv_id, {"role": "assistant", "content": "BACKGROUND_WAKE_OK — log rotation completed."}
+    )
+
+    messages, _ = index.load_history(conv.conv_id, limit=50)
+
+    assistant = next(m for m in messages if m.get("role") == "assistant")
+    assert assistant["content"] == "log rotation completed."
+    assert assistant["suppress_user_message"] is True
+
+
 def test_load_history_pagination(config):
     config.agent_path.mkdir(parents=True, exist_ok=True)
     config.workspace_path.mkdir(parents=True, exist_ok=True)

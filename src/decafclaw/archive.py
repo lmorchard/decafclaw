@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .conversation_paths import sidecar_path
+from .wake_replay import normalize_suppressed_wakes
 
 log = logging.getLogger(__name__)
 
@@ -117,6 +118,8 @@ def read_archive_file(path: Path) -> list[dict]:
 
     Path-based counterpart to :func:`read_archive` for callers that already
     hold an archive path (offline scans, surveys) rather than a conv id.
+    Silent-wake rows are normalized on read so every replay surface sees the
+    persisted suppression flag and never the raw sentinel (#1852).
     """
     messages = []
     with open(path) as f:
@@ -128,7 +131,7 @@ def read_archive_file(path: Path) -> list[dict]:
                 messages.append(json.loads(line))
             except json.JSONDecodeError:
                 log.warning("Skipping corrupt JSONL line %d in %s", lineno, path)
-    return messages
+    return normalize_suppressed_wakes(messages)
 
 
 def read_compacted_history(config, conv_id: str) -> list[dict] | None:

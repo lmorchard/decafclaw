@@ -21,6 +21,7 @@ from .llm import call_llm
 from .model_catalog import effective_default_model
 from .prompts import wrap_xml
 from .util import estimate_tokens
+from .wake_replay import normalize_suppressed_wakes
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -356,6 +357,7 @@ def _split_into_turns(messages: list[dict]) -> list[list[dict]]:
 
 def flatten_messages(messages: list[dict]) -> str:
     """Flatten messages into a readable text format for the compaction LLM."""
+    messages = normalize_suppressed_wakes(messages)
     lines = []
     for msg in messages:
         role = msg.get("role", "unknown")
@@ -363,9 +365,16 @@ def flatten_messages(messages: list[dict]) -> str:
 
         if role in ("compaction", "model", "mode"):
             continue
+        elif role == "wake_trigger":
+            # Synthetic wake prompts contain the literal BACKGROUND_WAKE_OK
+            # instruction. Summarizing them teaches the model to emit the
+            # sentinel more often (#1852).
+            continue
         elif role == "user":
             lines.append(f"User: {content}")
         elif role == "assistant":
+            if not content and msg.get("suppress_user_message"):
+                content = "[silent wake]"
             tool_calls = msg.get("tool_calls")
             if tool_calls:
                 names = [tc["function"]["name"] for tc in tool_calls]

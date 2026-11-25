@@ -529,7 +529,7 @@ _SCHEDULE_ESCAPE_HATCH_TOOLS = frozenset({"tool_search", "activate_skill"})
 # A scheduled response starting with this suppresses notification delivery — no
 # inbox entry, so no channel delivers either (every adapter subscribes to the
 # notification). Start-anchored like every other sentinel; see
-# heartbeat.response_starts_with_sentinel.
+# sentinels.response_starts_with_sentinel.
 #
 # Inert unless a task's own body asks for it. Deliberately NOT added to
 # build_task_preamble: telling every scheduled task to consider suppressing

@@ -53,6 +53,7 @@ from .skills import activate_always_loaded
 from .telemetry import get_tracer
 from .tool_definitions import build_tool_list, reconcile_mcp_tools, refresh_dynamic_tools
 from .tool_execution import execute_tool_calls
+from .wake_replay import silent_wake_body
 
 _tracer = get_tracer(__name__)
 
@@ -1232,7 +1233,8 @@ class TurnRunner:
                 content = verdict.text
             archive_messages = verdict.archive_messages
 
-        final_msg = assistant_message(response, content)
+        result = self._extract_workspace_media(content, thinking=response.get("thinking"))
+        final_msg = self._final_assistant_message(response, content, result)
         self._attach_turn_provenance(final_msg)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
@@ -1246,7 +1248,7 @@ class TurnRunner:
             self.prompt_tokens,
             lowered=self.lowered_compaction_threshold,
         )
-        return _Final(result=self._extract_workspace_media(content, thinking=response.get("thinking")))
+        return _Final(result=result)
 
     def _attach_turn_provenance(self, msg: dict) -> dict:
         """Attach this turn's passive context provenance to a delivered assistant row.
@@ -1324,7 +1326,8 @@ class TurnRunner:
             # contract). _finalize_max_iterations will archive the notice.
             log.warning("Grace-turn LLM call returned empty content — falling back to notice")
             return None
-        final_msg = assistant_message(response, content)
+        result = self._extract_workspace_media(content)
+        final_msg = self._final_assistant_message(response, content, result)
         self._attach_turn_provenance(final_msg)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
@@ -1335,7 +1338,7 @@ class TurnRunner:
             self.prompt_tokens,
             lowered=self.lowered_compaction_threshold,
         )
-        return self._extract_workspace_media(content)
+        return result
 
     def _steering_interrupt_result(self) -> "ToolResult":
         """End a steering-interrupted turn without repeating the turn.
@@ -1442,7 +1445,7 @@ class TurnRunner:
         Two later changes made this ordering belt-and-braces rather than the
         sole defence: #710 makes `is_heartbeat_ok` return False outright when
         the response carries an abnormal-termination marker anywhere, and #450
-        start-anchored the sentinels (`heartbeat.response_starts_with_sentinel`)
+        start-anchored the sentinels (`sentinels.response_starts_with_sentinel`)
         so a mid-response mention no longer matches at all. Keep the ordering
         anyway: it costs nothing, and it keeps the abnormal-termination note
         where a reader looks first.
@@ -1465,6 +1468,23 @@ class TurnRunner:
             lowered=self.lowered_compaction_threshold,
         )
         return ToolResult(text=delivered, termination_reason=termination_reason)
+
+    def _final_assistant_message(self, response: dict, content: str, result: "ToolResult") -> dict:
+        """Build the archived final assistant row, marking a silent wake once.
+
+        The archive is the transcript of record: replay must not re-derive
+        suppression from text (#1852). For a wake turn that the live path will
+        suppress, strip the sentinel and persist ``suppress_user_message`` so a
+        re-render reads the decision instead of the marker. The returned
+        ``ToolResult`` keeps the raw text for the manager's live suppression.
+        """
+        silent_body = None
+        if self.ctx.task_mode is TaskMode.BACKGROUND_WAKE and result.termination_reason is None:
+            silent_body = silent_wake_body(result.text)
+        final_msg = assistant_message(response, silent_body if silent_body is not None else content)
+        if silent_body is not None:
+            final_msg["suppress_user_message"] = True
+        return final_msg
 
     def _extract_workspace_media(self, content: str, thinking: str | None = None) -> "ToolResult":
         """Extract workspace:// refs only for channels that need it.

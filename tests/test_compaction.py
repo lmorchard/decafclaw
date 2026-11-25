@@ -117,6 +117,18 @@ class TestFlattenMessages:
         assert "..." in result
         assert len(result) < 1000
 
+    def test_wake_sentinel_never_reaches_the_summary(self):
+        messages = [
+            {"role": "wake_trigger", "content": "reply with BACKGROUND_WAKE_OK to remain silent"},
+            {"role": "assistant", "content": "BACKGROUND_WAKE_OK — log rotation completed."},
+            {"role": "assistant", "content": "", "suppress_user_message": True},
+        ]
+        result = flatten_messages(messages)
+        assert "BACKGROUND_WAKE_OK" not in result
+        assert "wake_trigger" not in result
+        assert "log rotation completed." in result
+        assert "Assistant: [silent wake]" in result
+
     def test_truncates_long_vault_retrieval_and_references(self):
         messages = [
             {"role": "vault_retrieval", "content": "v" * 1000},
