@@ -14,7 +14,8 @@ ExecStart=/usr/bin/python3 %h/decafclaw/scripts/deploy_runner.py \
     --state-file %h/.local/state/decafclaw-deploy/state.json \
     --health-url http://127.0.0.1:18880/health \
     --notify-file %h/.decafclaw/decafclaw/workspace/notifications/inbox.jsonl \
-    --backup-cmd %h/decafclaw/scripts/backup.sh
+    --backup-cmd %h/decafclaw/scripts/backup.sh \
+    --defer-busy
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=-%h/decafclaw/.env
 StandardOutput=journal

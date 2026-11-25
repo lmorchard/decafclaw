@@ -121,13 +121,43 @@ systemctl --user daemon-reload
 systemctl --user enable --now decafclaw-deploy.timer
 ```
 
-**Guard.** The candidate is deployable when it is ahead of `HEAD` and its SHA
-is not quarantined. The runner compares SHA membership, never commit
-timestamps: rebases preserve author dates, so a timestamp rule can starve a
-genuine fix forever. `~/.local/state/decafclaw-deploy/state.json` holds
-`last_good` (the rollback target), `quarantined` (SHA → reason), and
-`last_attempt` (SHA + consecutive failures). After `--max-attempts` failures
-(default 2: one retry) the SHA is quarantined; delete its entry to retry.
+**Guard and poll policy.** The candidate is `origin/production` when it is
+ahead of `HEAD` and its SHA is not quarantined. The runner compares SHA
+membership, never commit timestamps: rebases preserve author dates, so a
+timestamp rule can starve a genuine fix forever. With `--defer-busy` (the
+timer's mode) a busy turn skips the tick and the next tick re-derives
+everything; a manual run without it waits up to `--idle-timeout`. A candidate
+that stays busy past `--deferral-cap-hours` (default 6) produces exactly one
+notification, so starvation is loud rather than silent.
+
+`~/.local/state/decafclaw-deploy/state.json` holds `last_good` (the rollback
+target), `quarantined` (SHA → reason), `last_attempt` (SHA + consecutive
+failures), `first_seen` (when a busy candidate was first skipped), and
+`deferral_notified` (which candidates have already been surfaced). A corrupt
+or unreadable state file refuses to deploy and notifies; it never silently
+resets, which would clear the quarantine and re-deploy a known-bad commit.
+After `--max-attempts` failures (default 2: one retry) the SHA is quarantined;
+delete its entry to retry.
+
+**Production branch and timer.** Create `production` from `main`, protect it
+(require review, no direct pushes), and check the live checkout out on
+`production` tracking `origin/production`. Pushing to `production` then
+becomes the deploy capability: the human checkpoint moves from `/update
+confirm` to the PR merge. Do not enable the timer on a repository where the
+deploy branch is unprotected.
+
+```bash
+git switch -c production main
+git push -u origin production
+# Protect `production` in the repository settings before enabling this.
+systemctl --user enable --now decafclaw-deploy.timer
+systemctl --user disable --now decafclaw-deploy.timer   # stop polling
+```
+
+The timer fires every five minutes with up to a minute of jitter and is
+`Persistent=false`: a missed tick is recovered by the next one. With no
+candidate the run is silent (no notification, no journal noise beyond the
+fetch).
 
 **Verification.** The deploy gate requires the serving process to report the
 target commit, `status: "ok"`, and no regression in the MCP connected-server
