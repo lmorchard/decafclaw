@@ -6,6 +6,7 @@ import fnmatch
 import io
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -1720,7 +1721,7 @@ async def tool_shell(ctx: "Context", command: str, cwd: str | None = None, purpo
     if budget is not None and budget > 0:
         output = await _execute_command_with_handoff(ctx, command, cwd=str(workdir))
     else:
-        output = await _execute_command(ctx, command, cwd=str(workdir))
+        output = await _execute_command(ctx, command, timeout=ctx.config.shell.max_runtime_sec, cwd=str(workdir))
     advisory = _single_line(result.get("advisory") or "")
     if advisory:
         # A native-tool suggestion is advice on an allowed command (#1641
@@ -2103,10 +2104,13 @@ async def _execute_command_with_handoff(ctx: "Context", command: str, cwd: str |
         from decafclaw.skills.background.tools import JobStatus, _get_job_manager
     except Exception as exc:  # noqa: BLE001 - fail open to the legacy path
         log.warning(f"[tool:shell] background runner unavailable ({exc}); using blocking execution")
-        return await _execute_command(ctx, command, cwd=cwd)
+        return await _execute_command(ctx, command, timeout=ctx.config.shell.max_runtime_sec, cwd=cwd)
 
     budget = ctx.config.shell.foreground_wait_budget_sec
-    max_runtime = ctx.config.shell.max_runtime_sec
+    # A handed-off command gets the background lifetime, not the foreground
+    # runtime limit (#1838). max_runtime_sec bounds the blocking path only.
+    default_lifetime = ctx.config.background.default_max_lifetime_sec
+    max_lifetime = math.inf if default_lifetime == 0 else default_lifetime
     env = {**os.environ, "DECAFCLAW_WORKSPACE": str(ctx.config.workspace_path)}
 
     manager = _get_job_manager(ctx)
@@ -2114,7 +2118,7 @@ async def _execute_command_with_handoff(ctx: "Context", command: str, cwd: str |
         job = await manager.start(
             command,
             cwd or str(ctx.config.workspace_path),
-            max_lifetime=max_runtime,
+            max_lifetime=max_lifetime,
             config=ctx.config,
             conv_id=ctx.conv_id,
             event_bus=ctx.event_bus,
@@ -2138,6 +2142,9 @@ async def _execute_command_with_handoff(ctx: "Context", command: str, cwd: str |
         # between read and write) means the reader's later finally sees
         # foreground=False and runs _finalize_job exactly once.
         job.foreground = False
+        # Start the lifetime clock at the handoff, not at spawn: the time spent
+        # in the foreground must not eat into the job's budget (#1838).
+        job.lifetime_started_at = time.monotonic()
         log.info(
             f"[tool:shell] command exceeded the {budget:.0f}s foreground budget; "
             f"handed off to background job {job.job_id} (pid={job.pid})"

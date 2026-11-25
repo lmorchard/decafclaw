@@ -12,6 +12,7 @@ test, not synchronization: completion is awaited via reader tasks.
 """
 
 import asyncio
+import math
 import os
 import sys
 import time
@@ -192,32 +193,94 @@ async def test_handoff_completion_fires_exactly_once(ctx):
 
 
 @pytest.mark.asyncio
-async def test_handed_off_job_uses_max_runtime(ctx):
-    """A handed-off job's lifetime is the configured total runtime limit."""
+async def test_handed_off_job_uses_background_default_lifetime(ctx):
+    """A handed-off job gets the background lifetime, not max_runtime_sec (#1838)."""
     _prepare_workspace(ctx)
     ctx.task_mode = TaskMode.SCHEDULED
     ctx.config.shell.foreground_wait_budget_sec = 0.1
     ctx.config.shell.max_runtime_sec = 2.0
+    ctx.config.background.default_max_lifetime_sec = 123.0
     _save_allow_pattern(ctx.config, "sleep 30")
 
     result = await tool_shell(ctx, "sleep 30")
-    job_id = result.data["job_id"]
     manager = bg_tools._managers[ctx.conv_id]
-    job = manager.get(job_id)
-    assert job.max_lifetime == 2.0
+    job = manager.get(result.data["job_id"])
 
-    # The existing expiry policy kills it once the lifetime elapses and settles
-    # it exactly once (the reader is cancelled, so finalize runs explicitly).
+    assert job.max_lifetime == 123.0
+    assert job.max_lifetime != ctx.config.shell.max_runtime_sec
+    await tool_shell_background_stop(ctx, job.job_id)
+
+
+@pytest.mark.asyncio
+async def test_handoff_with_zero_default_lifetime_disables_expiry(ctx):
+    _prepare_workspace(ctx)
+    ctx.task_mode = TaskMode.SCHEDULED
+    ctx.config.shell.foreground_wait_budget_sec = 0.1
+    ctx.config.background.default_max_lifetime_sec = 0
+    _save_allow_pattern(ctx.config, "sleep 30")
+
+    result = await tool_shell(ctx, "sleep 30")
+    job = bg_tools._managers[ctx.conv_id].get(result.data["job_id"])
+
+    assert math.isinf(job.max_lifetime)
+    await tool_shell_background_stop(ctx, job.job_id)
+
+
+@pytest.mark.asyncio
+async def test_handoff_resets_lifetime_clock(ctx):
+    """Time spent waiting in the foreground does not burn the job's budget (#1838)."""
+    _prepare_workspace(ctx)
+    ctx.task_mode = TaskMode.SCHEDULED
+    ctx.config.shell.foreground_wait_budget_sec = 0.1
+    ctx.config.background.default_max_lifetime_sec = 5.0
+    _save_allow_pattern(ctx.config, "sleep 30")
+
+    result = await tool_shell(ctx, "sleep 30")
+    manager = bg_tools._managers[ctx.conv_id]
+    job = manager.get(result.data["job_id"])
+    assert job.lifetime_started_at is not None
+
+    # Spawn time alone does not expire the job.
+    job.started_at = time.monotonic() - 60.0
+    await manager.cleanup_expired()
+    assert job.status == JobStatus.RUNNING
+
+    # The handoff clock does.
     with (
         patch("decafclaw.archive.append_message") as mock_append,
         patch("decafclaw.notifications.notify", new_callable=AsyncMock) as mock_notify,
     ):
-        job.started_at = time.monotonic() - 3.0  # age it past max_lifetime
+        job.lifetime_started_at = time.monotonic() - 6.0
         await manager.cleanup_expired()
 
     assert job.status == JobStatus.EXPIRED
     assert mock_append.call_count == 1
     assert mock_notify.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_blocking_path_uses_max_runtime_timeout(ctx):
+    """max_runtime_sec bounds the blocking foreground run."""
+    _prepare_workspace(ctx)
+    ctx.config.shell.foreground_wait_budget_sec = None
+    ctx.config.shell.max_runtime_sec = 12.5
+
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.check_shell_approval",
+            new_callable=AsyncMock,
+            return_value={"approved": True},
+        ),
+        patch(
+            "decafclaw.tools.shell_tools._execute_command",
+            new_callable=AsyncMock,
+            return_value=ToolResult(text="ok"),
+        ) as mock_exec,
+    ):
+        result = await tool_shell(ctx, "true")
+
+    assert result.text == "ok"
+    assert mock_exec.await_args.kwargs["timeout"] == 12.5
 
 
 # -- failure paths leave no orphans --------------------------------------------
