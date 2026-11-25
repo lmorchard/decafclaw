@@ -10,7 +10,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from dataclasses import fields as dc_fields
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable
 from uuid import uuid4
@@ -24,7 +24,7 @@ from .confirmations import (
 )
 from .context import TaskMode, TokenUsage
 from .context_types import ROLE_REMAP, InjectionCursors
-from .conversation_paths import iter_conversation_archives
+from .conversation_paths import iter_conversation_archives, iter_conversation_dirs
 from .heartbeat import is_background_wake_ok
 from .llm import call_llm_streaming
 from .llm.history import without_provider_data
@@ -34,6 +34,14 @@ from .workflow.journal import load_journal, save_journal
 from .workflow.paths import workflow_path
 
 log = logging.getLogger(__name__)
+
+# Startup recovery (#1645). The confirmation scan already ignores requests
+# older than 24h, so an archive untouched for longer cannot hold one worth
+# recovering. Skipping those tail reads keeps boot cost tied to recent
+# activity instead of every conversation ever created; the margin absorbs
+# clock skew between the writer and this process.
+_CONFIRMATION_MAX_AGE = timedelta(hours=24)
+_CONFIRMATION_MTIME_MARGIN = timedelta(hours=2)
 
 
 # Canonical archive text written when a user cancels an in-progress agent
@@ -619,6 +627,15 @@ class ConversationManager:
 
         self._conversations: dict[str, ConversationState] = {}
 
+        # Startup recovery gate (#1645). The runner starts the conversation
+        # scan in the background so the HTTP listener is available first.
+        # The gate starts open (no recovery scheduled); the runner closes it
+        # with begin_startup_recovery() before starting the scan. Turns and
+        # confirmation responses wait here so they never race recovery's
+        # archive reads.
+        self._recovery_complete = asyncio.Event()
+        self._recovery_complete.set()
+
         # Circuit breaker config (from Mattermost config for now —
         # these should move to a transport-agnostic config section)
         self._cb_max_turns = getattr(config.mattermost, "circuit_breaker_max", 10)
@@ -659,6 +676,27 @@ class ConversationManager:
     def ensure_state(self, conv_id: str) -> ConversationState:
         """Get conversation state, creating it if needed."""
         return self._get_or_create(conv_id)
+
+    # -- Startup recovery gate (#1645) -----------------------------------------
+
+    def begin_startup_recovery(self) -> None:
+        """Close the gate before the background startup scan starts.
+
+        Called by the runner before the scan task is created. The gate starts
+        open, so callers that never run a startup scan (tests, one-off
+        managers) are unaffected.
+        """
+        self._recovery_complete.clear()
+
+    def finish_startup_recovery(self) -> None:
+        """Open the gate after recovery's reads finish (or recovery fails)."""
+        self._recovery_complete.set()
+
+    async def wait_for_startup_recovery(self) -> None:
+        """Wait until startup recovery finishes, if it is running."""
+        if not self._recovery_complete.is_set():
+            log.debug("Waiting for startup recovery before dispatching work")
+            await self._recovery_complete.wait()
 
     def _circuit_breaker_tripped(self, state: ConversationState) -> bool:
         """Check if the circuit breaker has tripped for a conversation.
@@ -713,6 +751,10 @@ class ConversationManager:
     ) -> asyncio.Future:
         """Submit a turn of any kind. Returns an awaitable that resolves
         when the turn completes."""
+        # Startup recovery reads archives and inboxes directly; a turn that
+        # starts mid-scan could race those reads (#1645). Transports are
+        # already listening, so requests wait here instead of blocking boot.
+        await self.wait_for_startup_recovery()
         state = self._get_or_create(conv_id)
         future: asyncio.Future = asyncio.get_running_loop().create_future()
 
@@ -919,6 +961,9 @@ class ConversationManager:
         emit awaits subscribers (arbitrary I/O) and the recovery
         handler may also do arbitrary I/O.
         """
+        # A click can arrive from a restored UI before recovery has
+        # repopulated pending confirmations (#1645).
+        await self.wait_for_startup_recovery()
         state = self._conversations.get(conv_id)
         if not state:
             log.warning("No pending confirmation for conv %s", conv_id)
@@ -1095,6 +1140,7 @@ class ConversationManager:
         denial that contradicts an already-emitted approval
         (Copilot review on #484).
         """
+        await self.wait_for_startup_recovery()
         state = self._conversations.get(conv_id)
         if not state:
             return False
@@ -2569,52 +2615,91 @@ class ConversationManager:
 
     # -- Startup recovery ------------------------------------------------------
 
-    async def startup_scan(self) -> int:
-        """Scan conversation archives for interrupted confirmations.
+    async def startup_scan(self, *, recover_workflows: bool = False) -> int:
+        """Recover interrupted work in one pass over conversation directories.
 
-        Called on server startup before transports connect. Finds
-        conversations where the last message is a confirmation_request
-        with no matching confirmation_response, and registers them as
-        pending confirmations in the manager's state.
+        Called on server startup. The runner starts it as a background task
+        so the HTTP listener is available first; turns and confirmation
+        responses wait on the recovery gate until the scan's reads finish
+        (#1645).
+
+        One enumeration covers pending confirmations (archive tail),
+        pending inbox turns, and — when ``recover_workflows`` — running
+        workflow journals. Archive tail reads are limited to archives
+        modified inside the confirmation staleness window, so cost tracks
+        recent activity rather than every conversation ever created.
 
         Returns the number of recovered confirmations.
         """
-        from datetime import datetime, timedelta
-
-        # Staleness threshold: ignore confirmations older than 24 hours
-        stale_cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
+        started = time.monotonic()
+        stale_cutoff = (datetime.now() - _CONFIRMATION_MAX_AGE).isoformat()
+        mtime_cutoff = (datetime.now() - _CONFIRMATION_MAX_AGE - _CONFIRMATION_MTIME_MARGIN).timestamp()
         recovered = 0
+        inbox_resumed = 0
+        scanned = 0
+        workflow_candidates: list[str] = []
 
-        for conv_id, archive_file in iter_conversation_archives(self.config):
-            try:
-                pending = self._scan_archive_for_pending(archive_file, stale_cutoff, conv_id)
-                if pending:
-                    state = self._get_or_create(conv_id)
-                    state.pending_confirmation = pending
-                    log.info("Recovered pending confirmation for conv %s: %s", conv_id[:8], pending.action_type.value)
-                    recovered += 1
-            except Exception as e:
-                log.warning("Error scanning archive %s: %s", conv_id, e)
-
-        if recovered:
-            log.info("Startup scan: recovered %d pending confirmation(s)", recovered)
-
-        # Phase 3: Resume pending inbox turns
         from .inbox import _read_inbox
 
-        for conv_id, archive_file in iter_conversation_archives(self.config):
-            msgs = _read_inbox(self.config, conv_id)
-            if msgs:
-                state = self._get_or_create(conv_id)
-                log.info("Startup scan: resuming %d pending turns for conv %s", len(msgs), conv_id[:8])
-                # We can't await _drain_pending directly in a synchronous context,
-                # but startup_scan is async!
-                await self._drain_pending(state)
+        try:
+            for conv_id, conv_dir in iter_conversation_dirs(self.config):
+                scanned += 1
+                archive_file = conv_dir / "archive.jsonl"
+                try:
+                    archive_stat = archive_file.stat()
+                except OSError:
+                    # A crash between the inbox append and the first archive
+                    # write leaves a conversation with queued work but no
+                    # archive; keep checking its sidecars below.
+                    archive_stat = None
 
-        # Phase 4: Resume pending scheduled wakes (#1103) and file watches (#1560)
+                if archive_stat is not None and archive_stat.st_size and archive_stat.st_mtime >= mtime_cutoff:
+                    try:
+                        pending = self._scan_archive_for_pending(archive_file, stale_cutoff, conv_id)
+                        if pending:
+                            state = self._get_or_create(conv_id)
+                            state.pending_confirmation = pending
+                            log.info(
+                                "Recovered pending confirmation for conv %s: %s",
+                                conv_id[:8],
+                                pending.action_type.value,
+                            )
+                            recovered += 1
+                    except Exception as e:
+                        log.warning("Error scanning archive %s: %s", conv_id, e)
+
+                if (conv_dir / "inbox.jsonl").exists():
+                    msgs = _read_inbox(self.config, conv_id)
+                    if msgs:
+                        state = self._get_or_create(conv_id)
+                        log.info("Startup scan: resuming %d pending turns for conv %s", len(msgs), conv_id[:8])
+                        await self._drain_pending(state)
+                        inbox_resumed += 1
+
+                if recover_workflows and (conv_dir / "workflow.json").exists():
+                    workflow_candidates.append(conv_id)
+        finally:
+            # Recovery's direct reads are done. Turns and confirmation
+            # responses can proceed even if a later step fails.
+            self.finish_startup_recovery()
+
+        # Workflow resumes enqueue turns, so they run after the gate opens.
+        resumed_workflows = 0
+        for conv_id in workflow_candidates:
+            resumed_workflows += await self._recover_workflow(conv_id)
+
+        # Resume pending scheduled wakes (#1103) and file watches (#1560)
         await self.startup_scan_scheduled_wakes()
         await self.startup_scan_file_watches()
 
+        log.info(
+            "Startup recovery: scanned %d conversation(s) in %.2fs (confirmations=%d, inbox=%d, workflows=%d)",
+            scanned,
+            time.monotonic() - started,
+            recovered,
+            inbox_resumed,
+            resumed_workflows,
+        )
         return recovered
 
     async def startup_scan_scheduled_wakes(self) -> int:
@@ -2687,78 +2772,81 @@ class ConversationManager:
     async def startup_scan_workflows(self) -> int:
         """Recover workflows in status='running' by re-enqueueing them (#581).
 
-        Called on server startup after ``startup_scan()``. Walks each
-        conversation directory; for every ``workflow.json`` still marked
-        ``running``, bumps the persistent ``attempts`` counter and re-enqueues
-        a ``TurnKind.WORKFLOW`` turn so the durable replay engine can pick up
-        where it left off. If a run exceeds ``config.workflow.max_resume_attempts``
-        the journal is flipped to ``status='error'`` and left alone — the cap
-        bounds a crash loop from replaying forever.
+        Standalone walk used by tests and one-off callers; the runner's
+        startup path folds this into ``startup_scan(recover_workflows=True)``
+        so the tree is enumerated once (#1645).
 
-        Per-conversation errors (unreadable / corrupt journal) log a warning
-        and continue; fail-open on the loop itself keeps one bad row from
-        stalling startup. The persisted ``attempts`` increment happens before
-        ``enqueue_turn`` so a crash inside the turn still consumes an attempt.
+        For every ``workflow.json`` still marked ``running``, bumps the
+        persistent ``attempts`` counter and re-enqueues a
+        ``TurnKind.WORKFLOW`` turn so the durable replay engine can pick up
+        where it left off. If a run exceeds
+        ``config.workflow.max_resume_attempts`` the journal is flipped to
+        ``status='error'`` and left alone — the cap bounds a crash loop from
+        replaying forever.
 
         Returns the number of workflows re-enqueued (not counting those that
         hit the cap).
         """
         resumed = 0
-        cap = self.config.workflow.max_resume_attempts
         for conv_id, _archive in iter_conversation_archives(self.config):
-            path = workflow_path(self.config, conv_id)
-            if not path.exists():
-                continue
-            try:
-                journal = load_journal(self.config, conv_id)
-            except Exception as exc:
-                log.warning("Failed to load workflow journal for %s: %s", conv_id, exc)
-                continue
-            if journal is None:
-                continue
-
-            if journal.status != "running":
-                continue
-
-            if journal.attempts >= cap:
-                log.warning(
-                    "Workflow %r in %s exceeded resume attempts (%d), marked as error.",
-                    journal.workflow_name,
-                    conv_id,
-                    cap,
-                )
-                journal.status = "error"
-                save_journal(self.config, conv_id, journal)
-                continue
-
-            journal.attempts += 1
-            save_journal(self.config, conv_id, journal)
-
-            log.info(
-                "Resuming workflow %r in %s (attempt %d/%d)", journal.workflow_name, conv_id, journal.attempts, cap
-            )
-
-            try:
-                await self.enqueue_turn(
-                    conv_id,
-                    kind=TurnKind.WORKFLOW,
-                    prompt="",
-                    metadata={
-                        "workflow_name": journal.workflow_name,
-                        "resume": True,
-                    },
-                )
-            except Exception as exc:
-                # Fail-open per conversation: attempts already incremented on
-                # disk, so the crash-safety guarantee still holds. Skip to the
-                # next conversation rather than block startup.
-                log.warning("Failed to enqueue workflow resume for %s: %s", conv_id, exc)
-                continue
-            resumed += 1
+            resumed += await self._recover_workflow(conv_id)
 
         if resumed:
             log.info("Startup scan: resumed %d workflow(s)", resumed)
         return resumed
+
+    async def _recover_workflow(self, conv_id: str) -> int:
+        """Re-enqueue one running workflow journal. Returns 1 when resumed.
+
+        Per-conversation errors (unreadable / corrupt journal) log a warning
+        and return 0; fail-open keeps one bad row from stalling startup. The
+        persisted ``attempts`` increment happens before ``enqueue_turn`` so a
+        crash inside the turn still consumes an attempt.
+        """
+        path = workflow_path(self.config, conv_id)
+        if not path.exists():
+            return 0
+        try:
+            journal = load_journal(self.config, conv_id)
+        except Exception as exc:
+            log.warning("Failed to load workflow journal for %s: %s", conv_id, exc)
+            return 0
+        if journal is None or journal.status != "running":
+            return 0
+
+        cap = self.config.workflow.max_resume_attempts
+        if journal.attempts >= cap:
+            log.warning(
+                "Workflow %r in %s exceeded resume attempts (%d), marked as error.",
+                journal.workflow_name,
+                conv_id,
+                cap,
+            )
+            journal.status = "error"
+            save_journal(self.config, conv_id, journal)
+            return 0
+
+        journal.attempts += 1
+        save_journal(self.config, conv_id, journal)
+
+        log.info("Resuming workflow %r in %s (attempt %d/%d)", journal.workflow_name, conv_id, journal.attempts, cap)
+
+        try:
+            await self.enqueue_turn(
+                conv_id,
+                kind=TurnKind.WORKFLOW,
+                prompt="",
+                metadata={
+                    "workflow_name": journal.workflow_name,
+                    "resume": True,
+                },
+            )
+        except Exception as exc:
+            # Fail-open per conversation: attempts already incremented on
+            # disk, so the crash-safety guarantee still holds.
+            log.warning("Failed to enqueue workflow resume for %s: %s", conv_id, exc)
+            return 0
+        return 1
 
     def _scan_archive_for_pending(self, archive_path, stale_cutoff: str, conv_id: str) -> ConfirmationRequest | None:
         """Read the tail of an archive file looking for an unresolved confirmation."""

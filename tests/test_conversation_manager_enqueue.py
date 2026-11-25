@@ -6,6 +6,8 @@ Split from the former monolithic ``test_conversation_manager.py`` by concern
 (#1421)."""
 
 import asyncio
+import time
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -268,6 +270,157 @@ async def test_startup_scan_workflows_multiple_conversations(manager):
     for call in mock_eq.await_args_list:
         assert call.kwargs["kind"] is TurnKind.WORKFLOW
         assert call.kwargs["metadata"]["resume"] is True
+
+
+# -- Combined startup recovery (#1645) ---------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_recovers_everything_in_one_pass(manager, monkeypatch):
+    """One tree walk covers confirmations, inbox turns, and workflows (#1645)."""
+    import decafclaw.conversation_manager as cm
+    from decafclaw.archive import append_message
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    from decafclaw.conversation_paths import iter_conversation_dirs as real_iter_dirs
+    from decafclaw.inbox import _append_inbox
+    from decafclaw.workflow.journal import Journal, save_journal
+
+    conv_id = "conv-all"
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+    )
+    append_message(manager.config, conv_id, request.to_archive_message())
+    _append_inbox(manager.config, conv_id, {"turn_id": "t1", "kind": "user", "text": "hi"})
+    save_journal(manager.config, conv_id, Journal(workflow_name="wf", status="running"))
+
+    walks = []
+
+    def counting_dirs(config):
+        walks.append(1)
+        yield from real_iter_dirs(config)
+
+    monkeypatch.setattr(cm, "iter_conversation_dirs", counting_dirs)
+
+    with (
+        patch.object(manager, "_drain_pending", new_callable=AsyncMock) as mock_drain,
+        patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq,
+    ):
+        recovered = await manager.startup_scan(recover_workflows=True)
+
+    assert len(walks) == 1
+    assert recovered == 1
+    assert manager.get_state(conv_id).pending_confirmation.confirmation_id == request.confirmation_id
+    mock_drain.assert_awaited_once()
+    mock_eq.assert_awaited_once()
+    assert mock_eq.await_args.kwargs["kind"] is TurnKind.WORKFLOW
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_skips_archives_outside_confirmation_window(manager, monkeypatch):
+    """Archives untouched past the 24h staleness window are not tail-read (#1645)."""
+    import os
+
+    from decafclaw.archive import append_message
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    from decafclaw.conversation_paths import sidecar_path
+
+    recent_id, old_id = "conv-recent", "conv-old"
+    for conv_id in (recent_id, old_id):
+        request = ConfirmationRequest(
+            action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+            action_data={"command": "ls"},
+            message="Allow?",
+        )
+        append_message(manager.config, conv_id, request.to_archive_message())
+
+    old_archive = sidecar_path(manager.config, old_id, "archive.jsonl")
+    old_ts = time.time() - 48 * 3600
+    os.utime(old_archive, (old_ts, old_ts))
+
+    scanned = []
+    real_scan = manager._scan_archive_for_pending
+
+    def spy(archive_path, *args, **kwargs):
+        scanned.append(Path(archive_path).parent.name)
+        return real_scan(archive_path, *args, **kwargs)
+
+    monkeypatch.setattr(manager, "_scan_archive_for_pending", spy)
+
+    recovered = await manager.startup_scan()
+
+    assert recovered == 1
+    assert scanned == [recent_id]
+    assert manager.get_state(recent_id).pending_confirmation is not None
+    assert manager.get_state(old_id) is None
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_recovers_inbox_without_archive(manager):
+    """A crash before the first archive write still leaves queued work to drain."""
+    from decafclaw.inbox import _append_inbox
+
+    conv_id = "conv-inbox-only"
+    _append_inbox(manager.config, conv_id, {"turn_id": "t1", "kind": "user", "text": "hi"})
+
+    with patch.object(manager, "_drain_pending", new_callable=AsyncMock) as mock_drain:
+        recovered = await manager.startup_scan()
+
+    assert recovered == 0
+    mock_drain.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_does_not_read_archives_for_empty_dirs(manager, monkeypatch):
+    """Boot cost must not scale with empty conversation directories (#1645)."""
+    from decafclaw.archive import append_message
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    from decafclaw.conversation_paths import sessions_root
+
+    root = sessions_root(manager.config)
+    for i in range(250):
+        empty = root / f"empty-{i:03d}"
+        empty.mkdir(parents=True)
+        (empty / "archive.jsonl").touch()
+
+    conv_id = "conv-recent"
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+    )
+    append_message(manager.config, conv_id, request.to_archive_message())
+
+    scanned = []
+    real_scan = manager._scan_archive_for_pending
+
+    def spy(archive_path, *args, **kwargs):
+        scanned.append(Path(archive_path).parent.name)
+        return real_scan(archive_path, *args, **kwargs)
+
+    monkeypatch.setattr(manager, "_scan_archive_for_pending", spy)
+
+    recovered = await manager.startup_scan()
+
+    assert recovered == 1
+    assert scanned == [conv_id]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_turn_waits_for_startup_recovery(manager):
+    """A request that arrives before recovery finishes queues instead of racing it (#1645)."""
+    manager.begin_startup_recovery()
+
+    with patch.object(manager, "_start_turn", new_callable=AsyncMock) as mock_start:
+        task = asyncio.create_task(manager.enqueue_turn("conv-gate", kind=TurnKind.USER, prompt="hi"))
+        await asyncio.sleep(0)
+        assert not task.done()
+
+        manager.finish_startup_recovery()
+        await asyncio.wait_for(task, timeout=2.0)
+
+    assert mock_start.await_count == 1
 
 
 # -- Drain pending-------------------------------------------------------------

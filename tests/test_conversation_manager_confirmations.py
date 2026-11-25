@@ -396,6 +396,19 @@ async def test_startup_scan_empty_archive(manager):
     assert recovered == 0
 
 
+@pytest.mark.asyncio
+async def test_respond_to_confirmation_waits_for_startup_recovery(manager):
+    """A response from a restored UI waits until recovery repopulates state (#1645)."""
+    manager.begin_startup_recovery()
+
+    task = asyncio.create_task(manager.respond_to_confirmation("conv-late", "missing-id", approved=True))
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    manager.finish_startup_recovery()
+    await asyncio.wait_for(task, timeout=2.0)
+
+
 # -- Responding to recovered confirmations-------------------------------------
 
 

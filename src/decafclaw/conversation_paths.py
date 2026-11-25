@@ -207,12 +207,24 @@ def _add_session_children(found: dict[str, Path], session_path: Path) -> None:
             found[sub.name] = sub
 
 
+def iter_conversation_dirs(config) -> Iterator[tuple[str, Path]]:
+    """Yield (conv_id, conversation_dir) for every conversation directory.
+
+    One enumeration of both roots (#1645). Callers that need several
+    per-conversation sidecars — startup recovery checks the archive, inbox,
+    and workflow journal — should walk this once instead of re-listing the
+    tree per sidecar.
+    """
+    for child in _conversation_dirs(config):
+        yield child.name, child
+
+
 def iter_conversation_archives(config) -> Iterator[tuple[str, Path]]:
     """Yield (conv_id, archive_path) for every conversation directory."""
-    for child in _conversation_dirs(config):
+    for conv_id, child in iter_conversation_dirs(config):
         archive = child / "archive.jsonl"
         if archive.exists():
-            yield child.name, archive
+            yield conv_id, archive
 
 
 def delete_conversation_files(config, conv_id: str) -> None:

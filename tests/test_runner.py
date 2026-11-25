@@ -168,6 +168,63 @@ async def test_runner_late_mcp_registration(config):
         await shutdown_mcp()
 
 
+@pytest.mark.asyncio
+async def test_runner_serves_http_before_startup_recovery(config):
+    """The listener starts while startup recovery is still walking (#1645)."""
+    config.http.enabled = True
+    config.heartbeat.interval = ""
+    config.schedules.enabled = False
+    bus = EventBus()
+    ctx = Context(config=config, event_bus=bus)
+
+    recovery_release = asyncio.Event()
+    scan_started = asyncio.Event()
+    http_started = asyncio.Event()
+    http_stop = asyncio.Event()
+
+    async def slow_startup_scan(self, **kwargs):
+        scan_started.set()
+        await recovery_release.wait()
+
+    async def mock_run_http_server(*args, **kwargs):
+        http_started.set()
+        await http_stop.wait()
+
+    async def mock_shutdown_http_server():
+        http_stop.set()
+
+    with (
+        patch("decafclaw.mcp_client.load_mcp_config", return_value=[]),
+        patch.object(ConversationManager, "startup_scan", slow_startup_scan),
+        patch.object(ConversationManager, "startup_scan_scheduled_wakes", new_callable=AsyncMock),
+        patch.object(ConversationManager, "startup_scan_file_watches", new_callable=AsyncMock),
+        patch.object(ConversationManager, "startup_scan_restart_wakes", new_callable=AsyncMock),
+        patch("decafclaw.http_server.run_http_server", side_effect=mock_run_http_server),
+        patch("decafclaw.http_server.shutdown_http_server", side_effect=mock_shutdown_http_server),
+        patch("decafclaw.workspace_index.start_workspace_index_loop"),
+        patch.object(asyncio.get_event_loop(), "add_signal_handler"),
+        patch("decafclaw.runner.signal.SIGTERM", 15),
+        patch("decafclaw.runner.signal.SIGINT", 2),
+    ):
+        runner_task = asyncio.create_task(run_all(ctx))
+        try:
+            await asyncio.wait_for(http_started.wait(), timeout=5.0)
+            await asyncio.wait_for(scan_started.wait(), timeout=5.0)
+
+            # The listener is up while recovery is still blocked on its walk.
+            assert ctx.manager is not None
+            assert ctx.manager._recovery_complete.is_set() is False
+
+            recovery_release.set()
+            await asyncio.wait_for(ctx.manager.wait_for_startup_recovery(), timeout=5.0)
+        finally:
+            runner_task.cancel()
+            try:
+                await asyncio.wait_for(runner_task, timeout=5.0)
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
 def _schedule_switch_mocks(schedule_timer):
     """Shared mocks for the schedule-switch tests: run_all reaches the
     schedule-timer decision, then `post_schedule` is set (the next statement

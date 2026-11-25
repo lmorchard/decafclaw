@@ -8,6 +8,7 @@ from decafclaw.conversation_paths import (
     conversations_root,
     delete_conversation_files,
     iter_conversation_archives,
+    iter_conversation_dirs,
     session_conversation_dir,
     session_dir,
     sessions_root,
@@ -117,6 +118,37 @@ def test_sidecar_path_returns_dir_path_when_file_exists(tmp_path):
     new.write_text("hi")
     p = sidecar_path(cfg, "abc", "notes.md")
     assert p == new
+
+
+# --- iter_conversation_dirs -------------------------------------------------
+
+
+def test_iter_dirs_includes_dirs_without_archive(tmp_path):
+    # Startup recovery (#1645) walks every conversation dir once and checks
+    # its sidecars; the archive-only iterator hid dirs that could hold a
+    # queued inbox turn but no archive yet.
+    cfg = _cfg(tmp_path)
+    root = sessions_root(cfg)
+    (root / "with-archive").mkdir(parents=True)
+    (root / "with-archive" / "archive.jsonl").write_text("{}\n")
+    (root / "inbox-only").mkdir()
+    (root / "inbox-only" / "inbox.jsonl").write_text("{}\n")
+
+    assert list(iter_conversation_dirs(cfg)) == [
+        ("inbox-only", root / "inbox-only"),
+        ("with-archive", root / "with-archive"),
+    ]
+
+
+def test_iter_dirs_fails_open_on_oserror(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    sessions_root(cfg).mkdir(parents=True)
+
+    def _boom(self):
+        raise OSError("simulated listing failure")
+
+    monkeypatch.setattr(Path, "iterdir", _boom)
+    assert list(iter_conversation_dirs(cfg)) == []
 
 
 # --- iter_conversation_archives --------------------------------------------
