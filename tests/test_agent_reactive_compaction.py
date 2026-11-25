@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from decafclaw.agent import TurnRunner, _Continue, _Final, _maybe_compact
+from decafclaw.config_types import ModelConfig
 from decafclaw.context_types import effective_compaction_threshold
 from decafclaw.conversation_manager import ConversationManager, TurnKind
 from decafclaw.events import EventBus
@@ -149,6 +150,29 @@ async def test_reactive_overflow_clears_compaction_estimate_on_next_usage(ctx, c
     assert isinstance(outcome, _Final)
     assert runner.ctx.tokens.last_prompt == 4321
     assert runner.ctx.tokens.last_compaction_estimate is None
+
+
+@pytest.mark.asyncio
+async def test_message_complete_context_limit_uses_model_window(manager, monkeypatch):
+    """A known model window is the meter's denominator, not the compaction cap (#1275)."""
+    manager.config.compaction.max_tokens = 10000
+    manager.config.model_configs["big"] = ModelConfig(provider="scripted", model="x", context_window_size=200_000)
+    manager.config.default_model = "big"
+
+    async def mock_call_llm_with_events(ctx, config, messages, tools, **kwargs):
+        return {"content": "Hello", "role": "assistant"}
+
+    monkeypatch.setattr("decafclaw.agent._call_llm_with_events", mock_call_llm_with_events)
+
+    events = []
+    manager.subscribe("c1", lambda e: events.append(e))
+    fut = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.USER, prompt="hi", history=[])
+    await asyncio.wait_for(fut, timeout=5.0)
+
+    complete = [e for e in events if e.get("type") == "message_complete"]
+    assert complete
+    assert complete[-1]["context_limit"] == 200_000
+    assert complete[-1]["context_limit"] != manager.config.compaction.max_tokens
 
 
 @pytest.mark.asyncio
