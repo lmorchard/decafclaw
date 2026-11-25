@@ -24,6 +24,7 @@ from decafclaw.llm.history import without_provider_data
 from decafclaw.model_catalog import (
     MODELS_CHANGED_EVENT_TYPE,
     effective_default_model,
+    effective_turn_model,
     picker_model_groups,
     picker_models,
 )
@@ -459,7 +460,7 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     # conversations with no sidecar.
     from ..context_sidecars import read_context_sidecar
 
-    window_model = current_model or effective_default_model(config)
+    window_model = effective_turn_model(config, current_model or "")
     context_limit = await ensure_model_context_window(config, window_model)
     context_usage = None
     if not before:

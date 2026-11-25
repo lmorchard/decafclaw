@@ -137,7 +137,12 @@ async def _resolve_context_limit(config, active_model: str) -> int:
     :func:`ensure_model_context_window`, so live and reload agree and an
     unknown window keeps today's cap.
     """
-    return await ensure_model_context_window(config, effective_turn_model(config, active_model))
+    try:
+        return await ensure_model_context_window(config, effective_turn_model(config, active_model))
+    except Exception:
+        # The meter must never fail a turn; keep the historical cap as a fallback.
+        log.exception("Could not resolve the context window for the meter; using the compaction cap")
+        return config.compaction.max_tokens
 
 
 def _build_message_complete(
