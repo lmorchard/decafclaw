@@ -6,6 +6,7 @@ import pytest
 
 from decafclaw.llm.providers.vertex import (
     _build_request_body,
+    _generation_config,
     _parse_response,
     _parse_usage,
     _VertexStreamState,
@@ -1045,3 +1046,35 @@ def test_build_request_body_preserves_thought_signature():
     assert part["thoughtSignature"] == "sig_abc123"
     assert "thoughtSignature" not in part["functionCall"]
     assert "thought_signature" not in part["functionCall"]
+
+
+# -- Generation config ---------------------------------------------------------
+
+
+def test_generation_config_maps_sampler_overrides():
+    config = _generation_config(
+        temperature=0.2,
+        top_p=0.9,
+        max_tokens=64,
+        stop=["\nUser:", "\nKorrine:"],
+    )
+
+    assert config == {
+        "temperature": 0.2,
+        "topP": 0.9,
+        "maxOutputTokens": 64,
+        "stopSequences": ["\nUser:", "\nKorrine:"],
+    }
+
+
+def test_generation_config_omits_unset_values():
+    assert _generation_config() == {}
+
+
+def test_request_body_includes_generation_config():
+    body = _build_request_body(
+        [{"role": "user", "content": "Hi"}],
+        generation_config={"temperature": 0.2},
+    )
+
+    assert body["generationConfig"] == {"temperature": 0.2}
