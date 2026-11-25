@@ -243,6 +243,60 @@ async def test_output_buffering(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_stream_hooks_count_absolute_lines(tmp_path):
+    """Line counters survive buffer eviction, so cursor math stays absolute (#1846)."""
+    manager = BackgroundJobManager()
+    job = await manager.start(
+        "for i in $(seq 1 600); do echo line$i; done",
+        cwd=str(tmp_path),
+    )
+    await job.reader_task
+
+    assert job.stdout_total_lines == 600
+    assert len(job.stdout_buffer) == 500
+
+    await manager.cleanup_all()
+
+
+def test_output_window_incremental_and_gap():
+    """Cursor reads return only new lines; a cursor that fell off the buffer is
+    reported as a gap instead of silently losing output (#1846)."""
+    from collections import deque
+
+    buffer = deque([f"line-{i}" for i in range(7, 10)], maxlen=500)
+
+    lines, next_cursor, gap, truncated = tools._output_window(buffer, 10, cursor=8, from_start=False, tail_lines=None)
+    assert lines == ["line-8", "line-9"]
+    assert next_cursor == 10
+    assert gap == 0
+    assert truncated is False
+
+    lines, next_cursor, gap, truncated = tools._output_window(buffer, 10, cursor=0, from_start=False, tail_lines=None)
+    assert lines == ["line-7", "line-8", "line-9"]
+    assert next_cursor == 10
+    assert gap == 7  # lines 0-6 left the 500-line buffer
+
+    lines, next_cursor, gap, truncated = tools._output_window(buffer, 10, cursor=5, from_start=True, tail_lines=None)
+    assert lines == ["line-7", "line-8", "line-9"]
+    assert next_cursor == 5  # from_start never advances the cursor
+
+
+def test_output_window_tail_only_trims_default_reads():
+    """A running-job tail is applied only to full reads, not cursor deltas (#1846)."""
+    from collections import deque
+
+    buffer = deque(f"line-{i}" for i in range(30))
+
+    lines, _next, gap, truncated = tools._output_window(buffer, 30, cursor=None, from_start=False, tail_lines=20)
+    assert lines == [f"line-{i}" for i in range(10, 30)]
+    assert gap == 0
+    assert truncated is False
+
+    lines, _next, _gap, _truncated = tools._output_window(buffer, 30, cursor=25, from_start=False, tail_lines=20)
+    assert lines == [f"line-{i}" for i in range(25, 30)]
+
+
+@pytest.mark.asyncio
 async def test_cleanup_expired(tmp_path):
     """Expired jobs are killed during cleanup."""
     manager = BackgroundJobManager()
@@ -810,6 +864,211 @@ async def test_completion_tail_lines_defaults_from_config(ctx, monkeypatch):
     assert job.completion_tail_lines == 123
 
     await mgr.cleanup_all()
+
+
+# ---------------------------------------------------------------------------
+# Blocking wait + cursor reads (#1846)
+# ---------------------------------------------------------------------------
+
+
+def test_status_schema_advertises_wait_cursor_and_no_tool_timeout():
+    status_def = next(d for d in tools.TOOL_DEFINITIONS if d["function"]["name"] == "shell_background_status")
+    props = status_def["function"]["parameters"]["properties"]
+    assert {"wait", "cursor", "from_start", "tail_lines"} <= set(props)
+    assert status_def["timeout"] is None  # wait= may intentionally block
+
+
+@pytest.mark.asyncio
+async def test_status_wait_returns_on_completion(ctx, monkeypatch):
+    """wait= blocks until the job finishes instead of needing a sleep loop."""
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+
+    from decafclaw.skills.background.tools import (
+        _get_job_manager,
+        tool_shell_background_start,
+        tool_shell_background_status,
+    )
+
+    result = await tool_shell_background_start(ctx, command="sleep 0.05; echo waited-done")
+    mgr = _get_job_manager(ctx)
+    assert result.data["job_id"]
+
+    status = await tool_shell_background_status(ctx, result.data["job_id"], wait=5)
+
+    assert status.data["status"] == JobStatus.COMPLETED
+    assert status.data["wait_timed_out"] is False
+    assert "waited-done" in status.data["stdout"]
+
+    await mgr.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_status_wait_timeout_reports_running(ctx, monkeypatch):
+    """A wait that expires returns the running job and says it timed out."""
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+
+    from decafclaw.skills.background.tools import (
+        _get_job_manager,
+        tool_shell_background_start,
+        tool_shell_background_status,
+    )
+
+    result = await tool_shell_background_start(ctx, command="sleep 30")
+    mgr = _get_job_manager(ctx)
+
+    status = await tool_shell_background_status(ctx, result.data["job_id"], wait=0.01)
+
+    assert status.data["status"] == JobStatus.RUNNING
+    assert status.data["wait_timed_out"] is True
+    assert "Wait timed out" in status.text
+
+    await mgr.stop(result.data["job_id"])
+    await mgr.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_status_running_tail_then_completed_full(ctx, monkeypatch):
+    """A running poll shows a small tail by default; completion returns all."""
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+
+    from decafclaw.skills.background.tools import (
+        _get_job_manager,
+        tool_shell_background_start,
+        tool_shell_background_status,
+    )
+
+    result = await tool_shell_background_start(ctx, command="sleep 30")
+    mgr = _get_job_manager(ctx)
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    job.stdout_buffer.extend(f"line-{i}" for i in range(30))
+    job.stdout_total_lines = 30
+
+    default = await tool_shell_background_status(ctx, job.job_id)
+    assert "line-10" in default.data["stdout"]
+    assert "line-9\n" not in default.data["stdout"]
+    assert "showing the last 20 of 30 captured line(s) while the job runs" in default.text
+
+    short = await tool_shell_background_status(ctx, job.job_id, tail_lines=5)
+    assert short.data["stdout"].splitlines() == [f"line-{i}" for i in range(25, 30)]
+
+    await mgr.stop(job.job_id)
+    completed = await tool_shell_background_status(ctx, job.job_id)
+    assert completed.data["stdout"].splitlines() == [f"line-{i}" for i in range(30)]
+
+    await mgr.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_status_cursor_incremental_and_latched(ctx, monkeypatch):
+    """cursor='auto' returns only new lines, then latches after completion."""
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+
+    from decafclaw.skills.background.tools import (
+        _get_job_manager,
+        tool_shell_background_start,
+        tool_shell_background_status,
+    )
+
+    result = await tool_shell_background_start(ctx, command="printf 'alpha\\nbeta\\n'")
+    mgr = _get_job_manager(ctx)
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    await job.reader_task
+
+    first = await tool_shell_background_status(ctx, job.job_id, cursor="auto")
+    assert first.data["stdout"] == "alpha\nbeta"
+    assert first.data["cursor"]["stdout"] == 2
+
+    second = await tool_shell_background_status(ctx, job.job_id, cursor="auto")
+    assert second.data["stdout"] == ""
+    assert second.data["cursor"]["stdout"] == 2
+    assert "cursor caught up" in second.text
+
+    full = await tool_shell_background_status(ctx, job.job_id, from_start=True)
+    assert full.data["stdout"] == "alpha\nbeta"
+    assert full.data["cursor"]["stdout"] == 2  # from_start does not advance
+
+    await mgr.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_status_caught_up_stopped_job_does_not_claim_no_output(ctx, monkeypatch):
+    """A latched cursor hides already-read lines; it must not read as if the
+    killed job captured nothing (#1746/#1846)."""
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+
+    from decafclaw.skills.background.tools import (
+        _get_job_manager,
+        tool_shell_background_start,
+        tool_shell_background_status,
+    )
+
+    result = await tool_shell_background_start(ctx, command="sleep 30")
+    mgr = _get_job_manager(ctx)
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    job.stdout_buffer.append("partial result")
+    job.stdout_total_lines = 1
+
+    await mgr.stop(job.job_id)
+    first = await tool_shell_background_status(ctx, job.job_id, cursor="auto")
+    assert first.data["stdout"] == "partial result"
+
+    latched = await tool_shell_background_status(ctx, job.job_id, cursor="auto")
+    assert "none captured before termination" not in latched.text
+    assert "cursor caught up" in latched.text
+
+    await mgr.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_status_cursor_gap_is_loud(ctx, monkeypatch):
+    """A cursor that fell behind the 500-line buffer reports the gap (#1846)."""
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+
+    from decafclaw.skills.background.tools import (
+        _get_job_manager,
+        tool_shell_background_start,
+        tool_shell_background_status,
+    )
+
+    result = await tool_shell_background_start(ctx, command="for i in $(seq 1 600); do echo line$i; done")
+    mgr = _get_job_manager(ctx)
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    await job.reader_task
+
+    status = await tool_shell_background_status(ctx, job.job_id, cursor="auto")
+
+    assert status.data["stdout"].splitlines()[0] == "line101"
+    assert status.data["cursor"]["stdout"] == 600
+    assert "cursor gap: 100 line(s)" in status.text
+
+    await mgr.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_status_rejects_invalid_arguments(ctx):
+    """Ambiguous or negative arguments fail loudly instead of guessing."""
+    from decafclaw.skills.background.tools import tool_shell_background_status
+
+    assert "[error: wait must be >= 0]" in (await tool_shell_background_status(ctx, "job", wait=-1)).text
+    assert (
+        "[error: cursor must be empty or 'auto']"
+        in (await tool_shell_background_status(ctx, "job", cursor="since")).text
+    )
+    assert (
+        "[error: cursor and from_start are mutually exclusive]"
+        in (await tool_shell_background_status(ctx, "job", cursor="auto", from_start=True)).text
+    )
+    assert "[error: tail_lines must be >= 0]" in (await tool_shell_background_status(ctx, "job", tail_lines=-1)).text
 
 
 # ---------------------------------------------------------------------------
