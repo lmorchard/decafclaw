@@ -45,3 +45,40 @@ it('marks a failed tool and auto-expands the error text', async () => {
     expect(el.querySelector('.tool-result-detail').textContent).toContain('search backend unavailable');
     el.remove();
 });
+
+it('renders purpose and approval details when present', async () => {
+    const el = document.createElement('tool-message');
+    el.tool = 'shell';
+    el.command = 'git status';
+    el.content = 'clean';
+    el.details = {
+        purpose: 'check <tree>',
+        approval: { decision: 'allow', tier: 'read_only', reason: 'read-only command' },
+    };
+    document.body.append(el);
+    await el.updateComplete;
+    el.querySelector('.tool-result-header').click();
+    await el.updateComplete;
+
+    const details = el.querySelector('.tool-details');
+    expect(details).not.toBeNull();
+    expect(details.textContent).toContain('check <tree>');
+    expect(details.textContent).toContain('allow');
+    expect(details.textContent).toContain('read_only');
+    expect(details.textContent).toContain('read-only command');
+    expect(el.querySelector('tree')).toBeNull();
+    el.remove();
+});
+
+it('keeps the row compact when no details are present', async () => {
+    const el = document.createElement('tool-message');
+    el.tool = 'web_fetch';
+    el.content = 'ok';
+    document.body.append(el);
+    await el.updateComplete;
+    el.querySelector('.tool-result-header').click();
+    await el.updateComplete;
+
+    expect(el.querySelector('.tool-details')).toBeNull();
+    el.remove();
+});

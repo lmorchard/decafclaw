@@ -316,6 +316,21 @@ chat-message .tool-result-detail {
   overflow: auto;
 }
 
+chat-message .tool-details {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+}
+
+chat-message .tool-details strong {
+  color: var(--pico-color);
+}
+
+chat-message .tool-detail-reason {
+  margin-top: 0.15rem;
+}
+
 chat-message .tool-result-detail pre {
   margin: 0;
   font-size: 0.8rem;

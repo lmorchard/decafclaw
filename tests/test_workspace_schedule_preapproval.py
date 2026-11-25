@@ -120,7 +120,7 @@ async def test_admin_tier_still_preapproves(config):
     assert "curl *" in ctx.tools.preapproved_shell_patterns
     with patch("decafclaw.tools.shell_tools.request_confirmation") as confirm:
         result = await check_shell_approval(ctx, "curl https://example.com/x")
-    assert result == {"approved": True}
+    assert result["approved"] is True
     assert confirm.call_count == 0
 
 

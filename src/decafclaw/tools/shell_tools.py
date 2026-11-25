@@ -573,6 +573,8 @@ def _finalize_denial(ctx: "Context", result: dict, *, command: str, purpose: str
     path: the shell card appears in both, so a reviewer's feedback and
     missing-tool flag must be honored wherever it appears.
     """
+    result.setdefault("decision", "allow" if result.get("approved") else "deny")
+    result.setdefault("tier", "human")
     if result.get("approved"):
         return result
     human_feedback = _single_line(str(result.get("feedback") or ""), limit=2000)
@@ -969,6 +971,8 @@ async def check_shell_approval(
         )
         return {
             "approved": False,
+            "decision": "block",
+            "tier": "tier1_block",
             "reason": f"Blocked by security monitor: {tier1.reason}",
         }
 
@@ -978,7 +982,7 @@ async def check_shell_approval(
         await _record_approval(
             ctx, command=command, cwd=cwd, decision="allow", tier="scoped_pattern", activity=activity
         )
-        return {"approved": True}
+        return {"approved": True, "decision": "allow", "tier": "scoped_pattern"}
 
     patterns = _load_allow_patterns(ctx.config)
     if _command_matches_pattern(command, patterns):
@@ -986,7 +990,7 @@ async def check_shell_approval(
         await _record_approval(
             ctx, command=command, cwd=cwd, decision="allow", tier="persisted_pattern", activity=activity
         )
-        return {"approved": True}
+        return {"approved": True, "decision": "allow", "tier": "persisted_pattern"}
 
     # 3. Deterministic read-only tier (#1641 Phase 1): a provably read-only
     # command whose paths stay inside the workspace never reaches a model.
@@ -1004,7 +1008,7 @@ async def check_shell_approval(
     if read_only_enabled and is_read_only_command(command, cwd=shell_cwd, workspace=ctx.config.workspace_path):
         log.info(f"[{tool_name}] auto-approved as read-only: {command}")
         await _record_approval(ctx, command=command, cwd=cwd, decision="allow", tier="read_only", activity=activity)
-        return {"approved": True}
+        return {"approved": True, "decision": "allow", "tier": "read_only"}
 
     # 4. Security monitor evaluation (Tier 1 sensitive patterns + Tier 2 LLM classification)
     decision = await evaluate_command_llm(
@@ -1027,6 +1031,8 @@ async def check_shell_approval(
         )
         return {
             "approved": False,
+            "decision": "block",
+            "tier": "security_monitor",
             "reason": f"Blocked by security monitor: {decision.reason}",
         }
 
@@ -1048,6 +1054,8 @@ async def check_shell_approval(
             )
             return {
                 "approved": False,
+                "decision": "redirect",
+                "tier": "venv_redirect",
                 "redirected": True,
                 "feedback": _VENV_REDIRECT_FEEDBACK,
             }
@@ -1064,6 +1072,8 @@ async def check_shell_approval(
             )
             denial: dict = {
                 "approved": False,
+                "decision": "deny",
+                "tier": "security_monitor_unattended",
                 "reason": f"Security monitor requires explicit confirmation: {decision.reason}",
             }
             if venv_path:
@@ -1107,6 +1117,7 @@ async def check_shell_approval(
             feedback=_VENV_REDIRECT_FEEDBACK if venv_path else "",
             action_data=action_data,
         )
+        result.setdefault("tier", "security_monitor_ask")
         if result.get("approved") and result.get("add_pattern"):
             _save_allow_pattern(ctx.config, suggested_pattern)
         return _finalize_denial(
@@ -1123,7 +1134,7 @@ async def check_shell_approval(
         await _record_approval(
             ctx, command=command, cwd=cwd, decision="allow", tier="blanket_preapproval", activity=activity
         )
-        return {"approved": True}
+        return {"approved": True, "decision": "allow", "tier": "blanket_preapproval"}
 
     # 6. Direction (#1641 Phase 3): a command that starts a new activity asks
     # once, with the direction stated. Drift is priced at one prompt, never
@@ -1203,7 +1214,7 @@ async def check_shell_approval(
             await _record_approval(
                 ctx, command=command, cwd=cwd, decision="allow", tier="aux_memory", activity=activity
             )
-            return {"approved": True}
+            return {"approved": True, "decision": "allow", "tier": "aux_memory"}
 
         try:
             had_guidance = bool(resolve_scope_rule_guidance(ctx, command=command, activity=activity))
@@ -1274,7 +1285,7 @@ async def check_shell_approval(
                     ctx, command=command, cwd=cwd, decision="allow", tier="aux_allow", activity=activity
                 )
 
-                allowed: dict = {"approved": True}
+                allowed: dict = {"approved": True, "decision": "allow", "tier": "aux_allow"}
                 if advisory:
                     allowed["advisory"] = advisory
                 return allowed
@@ -1335,6 +1346,8 @@ async def check_shell_approval(
         )
         return {
             "approved": False,
+            "decision": "redirect",
+            "tier": "aux_redirect",
             "redirected": True,
             "feedback": _single_line(decline_feedback, limit=2000),
         }
@@ -1346,7 +1359,12 @@ async def check_shell_approval(
         # say why rather than letting it look like a user decision.
         log.warning(f"[{tool_name}] denied on unattended turn (task_mode={ctx.task_mode.value}): {command}")
         await _record_approval(ctx, command=command, cwd=cwd, decision="deny", tier="unattended", activity=activity)
-        denial: dict = {"approved": False, "reason": "unattended turn: command matches no allow pattern"}
+        denial: dict = {
+            "approved": False,
+            "decision": "deny",
+            "tier": "unattended",
+            "reason": "unattended turn: command matches no allow pattern",
+        }
         if decline_feedback:
             denial["feedback"] = decline_feedback
         return denial
@@ -1385,6 +1403,7 @@ async def check_shell_approval(
         feedback=decline_feedback,
         action_data=action_data,
     )
+    result.setdefault("tier", "aux_decline_prompt")
     _apply_approval_additions(
         ctx,
         result,
@@ -1705,9 +1724,18 @@ async def tool_shell(ctx: "Context", command: str, cwd: str | None = None, purpo
     log.info(f"[tool:shell] requesting confirmation for: {command} (cwd: {workdir})")
 
     result = await check_shell_approval(ctx, command, tool_name="shell", cwd=str(workdir), purpose=purpose)
+    details = {
+        "purpose": _single_line(purpose),
+        "approval": {
+            "decision": result.get("decision")
+            or ("redirect" if result.get("redirected") else ("allow" if result.get("approved") else "deny")),
+            "tier": result.get("tier", ""),
+            "reason": _single_line(str(result.get("reason") or result.get("feedback") or ""), limit=500),
+        },
+    }
     if result.get("redirected"):
         log.info(f"[tool:shell] redirecting instead of prompting: {command}")
-        return ToolResult(text=_redirect_text(str(result.get("feedback") or "")))
+        return ToolResult(text=_redirect_text(str(result.get("feedback") or "")), details=details)
     if not result.get("approved"):
         reason = result.get("reason") or "denied by user"
         feedback = str(result.get("feedback") or "").strip()
@@ -1715,13 +1743,15 @@ async def tool_shell(ctx: "Context", command: str, cwd: str | None = None, purpo
         text = f"[error: command denied: {reason}]"
         if feedback:
             text = f"[error: command denied: {reason}. Feedback: {feedback}]"
-        return ToolResult(text=text)
+        return ToolResult(text=text, details=details)
 
     budget = ctx.config.shell.foreground_wait_budget_sec
     if budget is not None and budget > 0:
         output = await _execute_command_with_handoff(ctx, command, cwd=str(workdir))
     else:
         output = await _execute_command(ctx, command, timeout=ctx.config.shell.max_runtime_sec, cwd=str(workdir))
+    if isinstance(output, ToolResult):
+        output.details = details
     advisory = _single_line(result.get("advisory") or "")
     if advisory:
         # A native-tool suggestion is advice on an allowed command (#1641

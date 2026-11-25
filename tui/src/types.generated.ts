@@ -222,6 +222,7 @@ export interface SrvToolEnd {
   is_error?: boolean;
   timed_out?: boolean;
   timeout_sec?: number;
+  details?: Record<string, unknown>;
 }
 
 export interface SrvToolStart {
