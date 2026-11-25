@@ -289,6 +289,27 @@ def test_evaluates_sensitive_commands_as_ask(tmp_path: Path):
         assert decision.reason, f"Expected reason for ASK command: {cmd}"
 
 
+def test_kill_is_sensitive_only_in_command_position(tmp_path: Path):
+    """A filename or argument containing "kill" is not a process-termination command (#1839)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    for cmd in ["kill -9 1234", "pkill -f python", "killall node", "/bin/kill -9 1234"]:
+        decision = evaluate_command(cmd, workspace_path=workspace)
+        assert decision.status == SecurityStatus.ASK, f"Expected ASK for {cmd}"
+
+    for cmd in [
+        "echo kill",
+        "grep kill file.txt",
+        "cat commit-msg-bg-kill.txt",
+        "git commit -F commit-msg-bg-kill.txt",
+        "git log --grep=kill",
+        "echo 'kill -9 1234'",
+    ]:
+        decision = evaluate_command(cmd, workspace_path=workspace)
+        assert decision.status == SecurityStatus.ALLOW, f"Expected ALLOW for {cmd}: {decision.reason}"
+
+
 def test_feature_branch_push_not_sensitive(tmp_path: Path):
     """Pushes to non-protected feature branches pass Tier 1 sensitive pattern filter."""
     for cmd in [

@@ -111,10 +111,6 @@ SENSITIVE_PATTERNS = [
         "System ownership modification (chown)",
     ),
     (
-        re.compile(r"\b(?:kill|pkill|killall)\b"),
-        "Process termination command (kill)",
-    ),
-    (
         re.compile(
             r"\b(?:npm|pnpm|yarn|pip|pip3|cargo|brew)\s+(?:install|add|update|upgrade|remove|uninstall)\b",
             re.IGNORECASE,
@@ -133,6 +129,11 @@ SENSITIVE_PATTERNS = [
 
 # Tokens that indicate shell chaining or complex subshell execution
 CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
+
+# Process-termination commands are sensitive only when they are the executable
+# token of a segment (#1839). Matching the word anywhere flagged filenames such
+# as `commit-msg-bg-kill.txt` and arguments such as `echo kill`.
+_KILL_EXECUTABLES = frozenset({"kill", "pkill", "killall"})
 
 # Ambiguous command constructs that warrant Tier 2 LLM classification
 AMBIGUOUS_PATTERNS = [
@@ -723,6 +724,18 @@ def evaluate_command(
             return SecurityDecision(
                 SecurityStatus.ASK,
                 f"Sensitive command requires explicit confirmation: {reason}",
+            )
+
+    # Process termination is sensitive only in command position (#1839): a
+    # filename or argument containing "kill" is not a process-termination
+    # command. Interpreters with an inline script (``bash -c 'kill ...'``) are
+    # already ambiguous and reach Tier 2.
+    for index in executable_indices:
+        if os.path.basename(tokens[index]) in _KILL_EXECUTABLES:
+            log.info(f"[security_monitor] ASK process termination command: {command}")
+            return SecurityDecision(
+                SecurityStatus.ASK,
+                "Sensitive command requires explicit confirmation: Process termination command (kill)",
             )
 
     # Tier 1: Check context-dependent rules for autonomous or child agent execution
