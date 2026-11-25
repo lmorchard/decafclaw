@@ -288,8 +288,8 @@ Before each interactive turn, the default-on [`VaultRetrievalExtension`](extensi
 ### How it works
 
 1. Embeds the user's current message
-2. Runs semantic search across all indexed content (vault pages, journal, conversation)
-3. Scores candidates by relevance and orders ties by structural importance (see [Scoring](#scoring) below)
+2. Runs two retrieval branches and fuses them with reciprocal rank fusion (#1816): dense cosine search across all indexed content (vault pages, journal), and an FTS5 bm25 lexical search over the same rows. Exact ports, hostnames, issue numbers, and error strings match lexically even when their vector is unremarkable.
+3. Scores candidates by relevance and orders ties by structural importance (see [Scoring](#scoring) below). Fused candidates keep their RRF order; recency and importance break ties.
 4. Follows `[[wiki-links]]` one hop from top hits to expand the candidate pool
 5. Fills remaining token budget with top-scoring candidates
 6. Injects matching entries inside that turn's `<working_memory>` block, after the user message
@@ -317,8 +317,13 @@ Legacy settings live under the `vault_retrieval` section in `config.json`; `exte
 | `max_results` | int | `5` | Maximum number of entries to inject |
 | `max_tokens` | int | `4000` | Token budget ceiling for injected context |
 | `show_in_ui` | bool | `true` | Show retrieval indicator in chat UI |
+| `hybrid_enabled` | bool | `true` | Fuse the dense and FTS5 lexical branches with RRF (#1816) |
+| `rrf_k` | int | `60` | RRF smoothing constant |
+| `fts_weight` | float | `1.0` | Weight of the lexical branch in RRF |
+| `vector_weight` | float | `1.0` | Weight of the dense branch in RRF |
+| `hybrid_candidates` | int | `20` | Per-branch candidate depth before fusion |
 
-Environment variable prefix: `MEMORY_CONTEXT_` (e.g., `MEMORY_CONTEXT_ENABLED=false`). The config section was renamed from `memory_context` to `vault_retrieval`, but the env-var prefix was left unchanged for backward compatibility.
+Environment variable prefix: `MEMORY_CONTEXT_` (e.g., `MEMORY_CONTEXT_ENABLED=false`). The config section was renamed from `memory_context` to `vault_retrieval`, but the env-var prefix was left unchanged for backward compatibility. The `VAULT_RETRIEVAL_*` aliases cover every field.
 
 ### Requirements
 
@@ -352,6 +357,13 @@ Both factors are normalized to [0, 1]. The two weights are renormalized over
 their own sum, so the `min_composite_score` threshold keeps comparable meaning
 after importance was removed from the threshold-bearing sum (#1713).
 
+When hybrid retrieval fuses a candidate (#1816), its `composite_score` is the
+normalized RRF value (0.5–1.0) instead. Re-scoring by cosine similarity would
+undo the lexical boost, so the fused order is authoritative and the sort key
+becomes `(composite_score, importance, recency)`. Candidates that appear in
+only one branch score 0.75 at rank 1; a document ranked highly by both
+approaches 1.0.
+
 ### Factors
 
 | Factor | Source | Description |
@@ -379,7 +391,7 @@ after importance was removed from the threshold-bearing sum (#1713).
 
 ### Wiki-link graph expansion
 
-After embedding search returns top-k results, the system follows `[[wiki-links]]` one hop from each hit:
+After retrieval (dense, lexical, or their fusion) returns top-k results, the system follows `[[wiki-links]]` one hop from each hit:
 
 1. Parse `[[PageName]]` links from top hit content
 2. Resolve each link against the vault

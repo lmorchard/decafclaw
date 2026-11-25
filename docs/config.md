@@ -231,8 +231,15 @@ Controls auto-retrieval injection at turn start. See [context-composer.md#memory
 | `headline_summary_max_chars` | int | `120` | `VAULT_RETRIEVAL_HEADLINE_SUMMARY_MAX_CHARS` |
 | `tapered_top_n_detailed` | int | `1` | `VAULT_RETRIEVAL_TAPERED_TOP_N_DETAILED` |
 | `tapered_summary_max_chars` | int | `140` | `VAULT_RETRIEVAL_TAPERED_SUMMARY_MAX_CHARS` |
+| `hybrid_enabled` | bool | `true` | `VAULT_RETRIEVAL_HYBRID_ENABLED` |
+| `rrf_k` | int | `60` | `VAULT_RETRIEVAL_RRF_K` |
+| `fts_weight` | float | `1.0` | `VAULT_RETRIEVAL_FTS_WEIGHT` |
+| `vector_weight` | float | `1.0` | `VAULT_RETRIEVAL_VECTOR_WEIGHT` |
+| `hybrid_candidates` | int | `20` | `VAULT_RETRIEVAL_HYBRID_CANDIDATES` |
 
 `mode` (a `RetrievalMode` enum) selects retrieval strategy: `always` (full bodies, current default), `headlines` (compact `file_path · summary · score` lines for the agent to scan; pulls bodies via `vault_read` on demand), `tapered` (L0 summaries plus L1 abstracts for the top `tapered_top_n_detailed` hits and L0 headlines for the rest), or `on_demand` (skip auto-retrieval entirely; agent drives via `vault_search` / `vault_read`). `@[[Page]]` mentions inject regardless of mode. Unknown values fall back to `always` with a warning.
+
+`hybrid_enabled` (default true) runs an FTS5 bm25 lexical branch alongside the dense vector branch and fuses both with reciprocal rank fusion (#1816). See [semantic search](semantic-search.md#hybrid-retrieval-fts5-dense).
 
 ### `embedding`
 

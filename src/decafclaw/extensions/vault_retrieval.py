@@ -85,6 +85,11 @@ def score_candidates(candidates: list[dict], config: Any) -> list[dict]:
     candidates, but must not push a below-threshold candidate into context
     (#1713). Renormalizing keeps ``min_composite_score`` comparable after the
     importance term was removed.
+
+    Hybrid candidates (#1816) carry ``rrf_score_normalized`` from reciprocal
+    rank fusion. That fused rank is authoritative: re-scoring by cosine
+    similarity would undo the lexical boost, so their composite score is the
+    normalized RRF value and recency/importance only break ties.
     """
     relevance = config.relevance
     now = datetime.now()
@@ -114,10 +119,17 @@ def score_candidates(candidates: list[dict], config: Any) -> list[dict]:
 
         c["recency"] = recency
         c["importance"] = importance
-        c["composite_score"] = w_similarity * similarity + w_recency * recency
+        if c.get("rrf_score_normalized") is not None:
+            c["composite_score"] = min(1.0, max(0.0, float(c["rrf_score_normalized"])))
+        else:
+            c["composite_score"] = w_similarity * similarity + w_recency * recency
 
     candidates.sort(
-        key=lambda c: (c.get("composite_score", 0.0), c.get("importance", 0.0)),
+        key=lambda c: (
+            c.get("composite_score", 0.0),
+            c.get("importance", 0.0),
+            c.get("recency", 0.0),
+        ),
         reverse=True,
     )
     return candidates
@@ -415,6 +427,9 @@ class VaultRetrievalExtension(BaseExtension):
                         "recency": c.get("recency", 0.0),
                         "importance": c.get("importance", 0.0),
                         "composite_score": c.get("composite_score", 0.0),
+                        "rrf_score": c.get("rrf_score"),
+                        "vector_rank": c.get("vector_rank"),
+                        "fts_rank": c.get("fts_rank"),
                         "included": included,
                         "drop_reason": drop_reason,
                     }

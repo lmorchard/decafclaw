@@ -15,6 +15,7 @@ Embeddings are stored in `data/{agent_id}/workspace/embeddings.db` — a SQLite 
 
 - `memory_embeddings` table: text metadata (entry text, file path, source type, created timestamp)
 - `embeddings_vec` virtual table (`vec0`): embedding vectors with cosine distance metric, keyed by rowid matching `memory_embeddings.id`
+- `fts_pages` virtual table (`fts5`): lexical index over the same rows (`file_path`, `title`, `summary`, `body`), keyed by rowid matching `memory_embeddings.id`. The porter tokenizer stems words; `file_path` is stored but unindexed.
 - `metadata` table: tracks which embedding model and dimensions were used (warns on mismatch)
 
 The `vec0` table handles vector storage and similarity search in native C with SIMD acceleration. The `memory_embeddings` table holds only metadata — no embedding BLOBs in new databases.
@@ -29,6 +30,23 @@ Four source types are indexed:
 | `conversation` | User and assistant messages | 1.0x | During conversation (if embedding model configured) |
 
 Agent pages and user pages receive similarity boosts so curated knowledge ranks above raw entries at equal semantic distance.
+
+## Hybrid retrieval (FTS5 + dense)
+
+Proactive vault retrieval (`retrieve_memory_context`, #1816) runs two branches over the same query and fuses their rankings:
+
+1. **Dense**: cosine search through `embeddings_vec`, filtered by `vault_retrieval.similarity_threshold`.
+2. **Lexical**: FTS5 bm25 search over `fts_pages`. Query text is reduced to word/number tokens and joined with `OR`, so punctuation cannot raise an FTS syntax error; documents matching more terms rank higher. Exact ports (`32848`), hostnames (`myriad-docker`), issue numbers (`#1805`), and error strings match here even when their dense vector is unremarkable.
+3. **Fusion**: reciprocal rank fusion with `k = vault_retrieval.rrf_k` (default 60):
+
+   ```text
+   RRF(d) = vector_weight / (k + rank_vector(d))
+          + fts_weight   / (k + rank_fts(d))
+   ```
+
+   Fused rows carry `rrf_score` and a normalized `rrf_score_normalized` in 0.5–1.0. A document ranked first by both branches scores 1.0; first by one branch scores 0.75. The extension uses the normalized value as composite relevance, so fusion order survives scoring; recency and importance only break ties.
+
+`fts_pages` is maintained by `index_entry_sync` and every delete path (entry, source type, prune), in the same transaction as the vector row. An existing database backfills the table from `memory_embeddings` on first open; `make reindex` rebuilds both. Set `vault_retrieval.hybrid_enabled: false` for dense-only ranking, or tune `fts_weight` / `vector_weight` to favor one branch.
 
 ## Configuration
 

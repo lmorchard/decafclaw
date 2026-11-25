@@ -11,6 +11,7 @@ from decafclaw.memory_context import (
     _excerpt_for_headline,
     _expand_graph_links,
     _extract_tapered_excerpt,
+    _reciprocal_rank_fusion,
     _trim_to_token_budget,
     format_memory_context,
     format_memory_headlines,
@@ -267,6 +268,60 @@ class TestFormatMemoryTapered:
         assert "xxxxxxxxxxxxxxxxxxxx…" in out
 
 
+def _hit(row_id, path, *, similarity=0.5, source_type="page", **extra):
+    return {
+        "id": row_id,
+        "file_path": path,
+        "entry_text": f"{path} body",
+        "similarity": similarity,
+        "source_type": source_type,
+        **extra,
+    }
+
+
+class TestReciprocalRankFusion:
+    """Hybrid dense + lexical fusion (#1816)."""
+
+    def test_document_ranked_by_both_branches_wins(self):
+        vector = [_hit(1, "a.md"), _hit(2, "b.md"), _hit(3, "c.md")]
+        lexical = [_hit(3, "c.md"), _hit(1, "a.md")]
+
+        fused = _reciprocal_rank_fusion(vector, lexical)
+
+        # a: vector #1 + lexical #2; c: vector #3 + lexical #1.
+        assert [r["file_path"] for r in fused] == ["a.md", "c.md", "b.md"]
+        assert fused[0]["vector_rank"] == 1
+        assert fused[0]["fts_rank"] == 2
+        assert fused[0]["rrf_score"] == pytest.approx(1 / 61 + 1 / 62)
+
+    def test_dedupes_same_row_by_id(self):
+        fused = _reciprocal_rank_fusion([_hit(7, "a.md")], [_hit(7, "a.md", similarity=0.0)])
+
+        assert len(fused) == 1
+        assert fused[0]["id"] == 7
+        assert fused[0]["vector_rank"] == 1
+        assert fused[0]["fts_rank"] == 1
+        assert fused[0]["rrf_score_normalized"] == pytest.approx(1.0)
+
+    def test_single_branch_top_scores_three_quarters(self):
+        fused = _reciprocal_rank_fusion([_hit(1, "a.md")], [])
+        assert fused[0]["rrf_score_normalized"] == pytest.approx(0.75)
+
+    def test_weights_shift_the_ranking(self):
+        fused = _reciprocal_rank_fusion(
+            [_hit(1, "a.md")],
+            [_hit(2, "b.md")],
+            vector_weight=3.0,
+            fts_weight=1.0,
+        )
+        assert [r["file_path"] for r in fused] == ["a.md", "b.md"]
+
+    def test_falls_back_to_path_and_text_without_ids(self):
+        vector = [{"file_path": "a.md", "entry_text": "same", "similarity": 0.8}]
+        lexical = [{"file_path": "a.md", "entry_text": "same", "bm25": -1.0}]
+        assert len(_reciprocal_rank_fusion(vector, lexical)) == 1
+
+
 class TestRetrieveMemoryContext:
     @pytest.mark.asyncio
     async def test_disabled(self, config):
@@ -346,6 +401,105 @@ class TestRetrieveMemoryContext:
         ):
             results = await retrieve_memory_context(cfg, "hello")
             assert len(results) == 3
+
+    @pytest.mark.asyncio
+    async def test_hybrid_exact_token_surfaces_at_rank_one(self, config):
+        fake_embedding = [1.0] * 768
+        vector = [
+            _hit(1, "generic.md", similarity=0.9),
+            _hit(2, "ports.md", similarity=0.31),
+        ]
+        lexical = [{"id": 2, "file_path": "ports.md", "entry_text": "port 32848", "source_type": "page", "bm25": -1.2}]
+        with (
+            patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding),
+            patch("decafclaw.memory_context.search_similar_sync", return_value=vector),
+            patch("decafclaw.memory_context.search_fts_sync", return_value=lexical),
+        ):
+            results = await retrieve_memory_context(config, "32848")
+
+        assert results[0]["file_path"] == "ports.md"
+        assert results[0]["rrf_score_normalized"] > results[1]["rrf_score_normalized"]
+        assert results[0]["fts_rank"] == 1
+
+    @pytest.mark.asyncio
+    async def test_hybrid_disabled_skips_fts(self, config):
+        from dataclasses import replace
+
+        cfg = replace(config, vault_retrieval=VaultRetrievalConfig(hybrid_enabled=False))
+        fake_embedding = [1.0] * 768
+        vector = [_hit(1, "a.md", similarity=0.8)]
+        with (
+            patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding),
+            patch("decafclaw.memory_context.search_similar_sync", return_value=vector),
+            patch("decafclaw.memory_context.search_fts_sync") as fts,
+        ):
+            results = await retrieve_memory_context(cfg, "hello")
+
+        fts.assert_not_called()
+        assert "rrf_score" not in results[0]
+
+    @pytest.mark.asyncio
+    async def test_hybrid_falls_back_when_fts_is_empty(self, config):
+        fake_embedding = [1.0] * 768
+        vector = [_hit(1, "a.md", similarity=0.8), _hit(2, "b.md", similarity=0.7)]
+        with (
+            patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding),
+            patch("decafclaw.memory_context.search_similar_sync", return_value=vector),
+            patch("decafclaw.memory_context.search_fts_sync", return_value=[]),
+        ):
+            results = await retrieve_memory_context(config, "hello")
+
+        assert [r["file_path"] for r in results] == ["a.md", "b.md"]
+        assert all("rrf_score" not in r for r in results)
+
+    @pytest.mark.asyncio
+    async def test_hybrid_falls_back_on_fts_error(self, config, caplog):
+        fake_embedding = [1.0] * 768
+        vector = [_hit(1, "a.md", similarity=0.8)]
+        with (
+            patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding),
+            patch("decafclaw.memory_context.search_similar_sync", return_value=vector),
+            patch(
+                "decafclaw.memory_context.search_fts_sync",
+                side_effect=RuntimeError("fts broken"),
+            ),
+        ):
+            results = await retrieve_memory_context(config, "hello")
+
+        assert [r["file_path"] for r in results] == ["a.md"]
+        assert "FTS retrieval failed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_hybrid_filters_conversation_from_lexical_branch(self, config):
+        fake_embedding = [1.0] * 768
+        vector = [_hit(1, "a.md", similarity=0.8)]
+        lexical = [
+            {"id": 9, "file_path": "old.jsonl", "entry_text": "a", "source_type": "conversation", "bm25": -2.0},
+            {"id": 2, "file_path": "b.md", "entry_text": "a", "source_type": "page", "bm25": -1.0},
+        ]
+        with (
+            patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding),
+            patch("decafclaw.memory_context.search_similar_sync", return_value=vector),
+            patch("decafclaw.memory_context.search_fts_sync", return_value=lexical),
+        ):
+            results = await retrieve_memory_context(config, "hello")
+
+        assert {r["file_path"] for r in results} == {"a.md", "b.md"}
+
+    @pytest.mark.asyncio
+    async def test_hybrid_branch_depth_uses_configured_candidates(self, config):
+        from dataclasses import replace
+
+        cfg = replace(config, vault_retrieval=VaultRetrievalConfig(hybrid_candidates=17))
+        fake_embedding = [1.0] * 768
+        with (
+            patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding),
+            patch("decafclaw.memory_context.search_similar_sync", return_value=[]) as similar,
+            patch("decafclaw.memory_context.search_fts_sync", return_value=[]),
+        ):
+            await retrieve_memory_context(cfg, "hello")
+
+        assert similar.call_args.kwargs["top_k"] == 17
 
 
 # -- Wiki-link regex -----------------------------------------------------------
