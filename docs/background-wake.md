@@ -6,9 +6,10 @@ react to its own prior work — inspect output, write results to the vault,
 notify the user, or silently close the loop.
 
 This is the agent-facing half of background-job completion. The user-facing
-half (inbox bell + Mattermost DM adapter) is unchanged; see
-[docs/notifications.md](notifications.md). Both fire on completion and serve
-different audiences — they are independent, not mutually exclusive.
+half (inbox bell + channel adapters) fires only for jobs started on an
+**unattended** turn; see [docs/notifications.md](notifications.md). A job
+started in a live conversation relies on its wake turn instead, so a shell
+command the user already watched does not add a bell entry (#1842).
 
 ## Flow
 
@@ -21,7 +22,7 @@ _run_reader polls process.wait()
 Process exits (any status — completed, error, expired, stopped)
     ▼
 _finalize_job(job):
-    1. notify()         — user-facing inbox notification (existing behavior)
+    1. notify()         — user-facing inbox notification (unattended jobs only)
     2. _append_background_event(job)
                         — appends "background_event" record to conv X's archive
     3. _enqueue_wake(job)
@@ -65,8 +66,8 @@ before enqueueing the wake turn:
 
 `status` mirrors `BackgroundJob.status` (a `JobStatus` enum in
 `skills/background/tools.py`): `completed`, `error`, `expired`, or
-`stopped`. Both the archive record and the inbox notification fire regardless
-of whether the wake turn is rate-limited.
+`stopped`. The archive record always fires; an unattended job also appends its
+inbox notification, regardless of whether the wake turn is rate-limited.
 
 ## Scheduled Turn Wakes (`schedule_turn`)
 
@@ -279,25 +280,30 @@ Defaults (configurable):
 | `wake_window_sec` | 60 | Window size in seconds |
 
 When the N+1th wake arrives within the window, it is **dropped** with a log
-warning. The archive record and inbox notification still fire — only the
-synthetic turn is suppressed. The rate limiter is independent of the user
-circuit breaker; they track separate failure modes.
+warning. The archive record still fires, and an unattended job's inbox
+notification still fires — only the synthetic turn is suppressed. The rate
+limiter is independent of the user circuit breaker; they track separate
+failure modes.
 
 ## Interaction with notification inbox
 
-Two things fire when a background job exits:
+A background job exit has two potential user-facing paths:
 
-1. **Inbox notification** (user-facing) — appended by `_finalize_job` via
-   `notify()`. Visible in the web UI bell dropdown and delivered by channel
-   adapters (Mattermost DM, etc.). See [docs/notifications.md](notifications.md).
+1. **Inbox notification** — appended by `_finalize_job` via `notify()` only
+   when the job started on an unattended turn. Visible in the web UI bell
+   dropdown and delivered by channel adapters (Mattermost DM, etc.). See
+   [docs/notifications.md](notifications.md).
 
-2. **Agent wake turn** (agent-facing) — queued by `_finalize_job` via
+2. **Agent wake turn** — queued by `_finalize_job` via
    `manager.enqueue_turn(kind=TurnKind.WAKE)`. Only the agent sees this;
    transports may suppress the outgoing message if the agent responds with
    `BACKGROUND_WAKE_OK`.
 
-Both fire unconditionally on job completion, regardless of exit status. The
-rate limiter can suppress the wake turn but not the notification.
+The wake turn fires for both kinds, regardless of exit status. Attended jobs
+skip the inbox because the wake turn already reports the result in the live
+conversation; a bell entry there is duplicate noise (#1842). The rate limiter
+can suppress the wake turn, but it never changes whether the inbox record is
+written.
 
 ## Unified turn orchestration (architectural note)
 

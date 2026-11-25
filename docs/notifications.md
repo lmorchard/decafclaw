@@ -96,15 +96,16 @@ Three day-one producers emit notifications during normal operation:
 |----------|--------|----------|------|
 | `heartbeat` | `run_heartbeat_cycle` in `heartbeat.py` — after all sections finish | `high` if any section alerts, else `normal` | none (cycle spans conversations) |
 | `schedule` | `run_schedule_task` in `schedules.py` — after each task turn | `high` on failure, else `normal` | `conv://<id>` (the task's run) |
-| `background` | `_run_reader` in `skills/background/tools.py` — after `process.wait()` | `high` on non-zero exit, else `normal` | originating `conv_id` populated |
+| `background` | `_run_reader` in `skills/background/tools.py` — after `process.wait()`; unattended jobs only (#1842) | `high` on non-zero exit, else `normal` | originating `conv_id` populated |
 
 Compaction and reflection are intentionally *not* producers — both are
 mid-turn events visible in-line in the conversation UI, so emitting a
 separate async notification would just be noise.
 
-**Agent-facing wake.** When a background job exits, the inbox record above
-serves the user. Separately, an agent wake-turn fires on the originating
-conversation so the agent can react to its own prior work. See
+**Agent-facing wake.** When an unattended background job exits, the inbox
+record above serves the user. An attended job (started in a live conversation)
+skips the inbox because its wake turn already reports the result there; both
+kinds fire an agent wake-turn on the originating conversation. See
 [docs/background-wake.md](background-wake.md).
 
 All producers are **fail-open**: any exception during `notify()` is logged

@@ -548,7 +548,12 @@ async def test_job_exit_appends_background_event(ctx, monkeypatch):
 @pytest.mark.asyncio
 async def test_finalize_job_is_idempotent(ctx, monkeypatch):
     """Stopping a job whose reader already finalized does not double-fire notifications."""
+    from decafclaw.context_types import TaskMode
+
     ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    # Notifications are suppressed for attended jobs (#1842); use an
+    # unattended turn so this test still observes the notify-once behavior.
+    ctx.task_mode = TaskMode.SCHEDULED
     monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
 
     import decafclaw.notifications as notifications_module
@@ -580,6 +585,71 @@ async def test_finalize_job_is_idempotent(ctx, monkeypatch):
     await mgr.stop(job.job_id)
 
     assert notify_count == 1  # exactly once
+
+    await mgr.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_attended_job_skips_inbox_notification(ctx, monkeypatch):
+    """A job started in a live conversation still archives and wakes, but does
+    not add a bell entry (#1842)."""
+    from decafclaw.archive import restore_history
+
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+
+    notified = []
+
+    async def fake_notify(*args, **kwargs):
+        notified.append(kwargs)
+
+    monkeypatch.setattr("decafclaw.notifications.notify", fake_notify)
+
+    from decafclaw.skills.background.tools import _get_job_manager, tool_shell_background_start
+
+    result = await tool_shell_background_start(ctx, command="true")
+    mgr = _get_job_manager(ctx)
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    assert job.attended is True
+
+    await job.reader_task
+
+    assert notified == []
+    history = restore_history(ctx.config, ctx.conv_id) or []
+    assert [m for m in history if m.get("role") == "background_event"]
+
+    await mgr.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_unattended_job_emits_inbox_notification(ctx, monkeypatch):
+    """A job started on an unattended turn keeps its inbox notification."""
+    from decafclaw.context_types import TaskMode
+
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    ctx.task_mode = TaskMode.SCHEDULED
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+
+    notified = []
+
+    async def fake_notify(*args, **kwargs):
+        notified.append(kwargs)
+
+    monkeypatch.setattr("decafclaw.notifications.notify", fake_notify)
+
+    from decafclaw.skills.background.tools import _get_job_manager, tool_shell_background_start
+
+    result = await tool_shell_background_start(ctx, command="true")
+    mgr = _get_job_manager(ctx)
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    assert job.attended is False
+
+    await job.reader_task
+
+    assert len(notified) == 1
+    assert notified[0]["category"] == "background"
 
     await mgr.cleanup_all()
 
@@ -1700,12 +1770,41 @@ async def test_notify_job_exit_distinguishes_expiry(ctx, monkeypatch):
         stdout_buffer=deque(["collected 1 item", "303 passed"]),
         stderr_buffer=deque(["killed"]),
         conv_id="conv-1",
+        attended=False,
     )
 
     await tools._notify_job_exit(job)
 
     assert captured["title"] == "Background job expired"
     assert "captured 2 stdout / 1 stderr line(s) before termination" in captured["body"]
+
+
+@pytest.mark.asyncio
+async def test_notify_job_exit_skips_attended_job(ctx, monkeypatch):
+    """_notify_job_exit is a no-op for a job started in a live conversation."""
+    from collections import deque
+
+    calls = []
+
+    async def fake_notify(*args, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr("decafclaw.notifications.notify", fake_notify)
+    job = SimpleNamespace(
+        config=ctx.config,
+        event_bus=None,
+        command="uv run pyright",
+        exit_code=0,
+        status=JobStatus.COMPLETED,
+        stdout_buffer=deque(["0 errors"]),
+        stderr_buffer=deque(),
+        conv_id="conv-1",
+        attended=True,
+    )
+
+    await tools._notify_job_exit(job)
+
+    assert calls == []
 
 
 def test_expired_record_keeps_partial_output():

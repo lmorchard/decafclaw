@@ -83,6 +83,10 @@ class BackgroundJob:
     config: Any = None
     conv_id: str = ""
     event_bus: Any = None
+    # Started on an attended turn: the human is (or was) in this conversation,
+    # so the WAKE turn is the user-facing signal and the inbox record would only
+    # add bell noise (#1842). Unattended jobs keep their inbox notification.
+    attended: bool = False
     completion_tail_lines: int = 50
     pin_sticky: bool = False  # stream live output to the sticky slot (#1104)
     progress_parser: ProgressParserPreset = ProgressParserPreset.AUTO  # parser preset (#1137, #1384)
@@ -203,8 +207,13 @@ def _close_transport(job: BackgroundJob) -> None:
 
 
 async def _notify_job_exit(job: BackgroundJob) -> None:
-    """Append an inbox notification for a background-job exit."""
-    if job.config is None:
+    """Append an inbox notification for a background-job exit.
+
+    Attended jobs skip the inbox: their WAKE turn already reports the result in
+    the live conversation, so a bell entry is duplicate noise (#1842). The
+    archive record and wake turn still fire for both kinds.
+    """
+    if job.config is None or job.attended:
         return
     from decafclaw import notifications
 
@@ -628,6 +637,7 @@ class BackgroundJobManager:
         config: Any = None,
         conv_id: str = "",
         event_bus: Any = None,
+        attended: bool = False,
         completion_tail_lines: int = 50,
         manager: Any = None,
         pin_sticky: bool = False,
@@ -639,7 +649,9 @@ class BackgroundJobManager:
         ``config``, ``conv_id``, ``event_bus``, ``manager``, and ``pin_sticky``
         are carried into the job so the reader task can emit an inbox
         notification (and fan out to channel adapters), stream progress to the
-        sticky slot, and enqueue a WAKE turn when the process exits. ``env``
+        sticky slot, and enqueue a WAKE turn when the process exits.
+        ``attended`` records whether the originating turn had a human watching;
+        attended jobs skip the inbox notification (#1842). ``env``
         replaces the inherited environment (None = inherit, as before); the
         budgeted foreground shell path (#1136) uses it to expose
         DECAFCLAW_WORKSPACE like the legacy foreground runner did.
@@ -689,6 +701,7 @@ class BackgroundJobManager:
             config=config,
             conv_id=conv_id,
             event_bus=event_bus,
+            attended=attended,
             completion_tail_lines=completion_tail_lines,
             manager=manager,
             pin_sticky=pin_sticky,
@@ -911,6 +924,7 @@ async def tool_shell_background_start(
             config=ctx.config,
             conv_id=ctx.conv_id,
             event_bus=ctx.event_bus,
+            attended=not ctx.is_unattended,
             completion_tail_lines=clamped_tail_lines,
             manager=conv_manager,
             pin_sticky=pin_sticky,
