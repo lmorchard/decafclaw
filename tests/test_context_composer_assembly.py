@@ -1535,3 +1535,13 @@ class TestActivatedSkillsBlock:
     async def test_no_block_when_nothing_is_activated(self, ctx):
         composed = await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
         assert not any("<activated_skills>" in str(m.get("content", "")) for m in composed.messages)
+
+    @pytest.mark.asyncio
+    async def test_always_loaded_bodies_stay_in_the_system_prompt(self, ctx):
+        info = _make_skill_info("always", "Always", body="Always body.", always_loaded=True)
+        ctx.config.discovered_skills = [info]
+        ctx.skills.activated["always"] = "hash"
+
+        composed = await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+
+        assert not any("<activated_skills>" in str(m.get("content", "")) for m in composed.messages)

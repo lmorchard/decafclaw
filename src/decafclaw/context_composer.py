@@ -117,6 +117,11 @@ def render_activated_skills(ctx: "Context") -> tuple[dict, int, int] | None:
             # Activated then removed from disk: there is no body left to
             # render, though its tools may still be callable this turn.
             continue
+        if info.always_loaded:
+            # Always-loaded bodies already live in the system prompt's
+            # <loaded_skills> section; rendering them again here would
+            # duplicate the body on every turn.
+            continue
         body = substitute_skill_placeholders(info.body, skill_dir=str(info.location.resolve()))
         if not body.strip():
             continue

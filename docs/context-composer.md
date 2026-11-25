@@ -184,9 +184,10 @@ request and remain useful when the turn is replayed.
 
 #### Activated skills block (#1823)
 
-Every skill in `ctx.skills.activated` contributes its body to one
+Every on-demand skill in `ctx.skills.activated` contributes its body to one
 `<activated_skills>` message mounted after the current user message and before
-the `EPILOGUE` hints:
+the `EPILOGUE` hints. Always-loaded skills are skipped: their bodies already
+live in the system prompt's `<loaded_skills>` section. The block looks like:
 
 ```
 <activated_skills>
