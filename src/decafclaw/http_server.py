@@ -431,10 +431,19 @@ def _page_summary(path: Path) -> str:
 
 
 async def health(request: Request) -> JSONResponse:
-    """Liveness probe — returns the static health snapshot."""
+    """Health/readiness probe for monitoring and deploy gates.
+
+    Returns 503 when any section failed to gather. The payload carries the
+    commit the process started from and the busy-conversation state, so an
+    external runner can tell a fresh process from a stale one.
+    """
     from .tools.health import get_health_data
 
-    return JSONResponse(get_health_data(request.app.state.config))
+    data = get_health_data(
+        request.app.state.config,
+        manager=getattr(request.app.state, "manager", None),
+    )
+    return JSONResponse(data, status_code=200 if data["status"] == "ok" else 503)
 
 
 async def metrics_endpoint(request: Request) -> Response:
@@ -2933,7 +2942,15 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
 
     routes: list[BaseRoute] = [
         APIRoute("/openapi.yaml", openapi_yaml, methods=["GET"], include_in_schema=False),
-        APIRoute("/health", health, methods=["GET"]),
+        APIRoute(
+            "/health",
+            health,
+            methods=["GET"],
+            responses={
+                200: {"description": "Healthy"},
+                503: {"description": "Degraded: one or more health sections failed"},
+            },
+        ),
         APIRoute("/metrics", metrics_endpoint, methods=["GET"]),
         APIRoute("/actions/confirm", handle_confirm, methods=["GET", "POST"]),
         APIRoute("/actions/cancel", handle_cancel, methods=["GET", "POST"]),
@@ -3542,6 +3559,11 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     from .terminals import TerminalRegistry
 
     app.state.terminal_registry = TerminalRegistry(config)
+    # Read the commit once at startup: the health payload reports the code
+    # this process started from, not whatever the checkout contains later.
+    from .tools.health import read_commit_sha
+
+    read_commit_sha()
     # Background vault reindex tasks, chained per vault-relative path.
     app.state.vault_index_tasks = {}
 

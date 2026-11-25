@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -71,20 +71,53 @@ async def test_health(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
+    # Deploy-gate fields
+    assert "commit" in data
+    assert data["busy"] == {"known": False, "active": False, "conversations": []}
     # Process section
     assert isinstance(data["process"], dict)
     assert data["process"]["uptime_seconds"] >= 0
     assert data["process"]["memory_rss_mb"] >= 0
     # MCP section
     assert isinstance(data["mcp_servers"], dict)
+    assert "configured" in data["mcp_servers"]
     assert "connected" in data["mcp_servers"]
     assert "failed" in data["mcp_servers"]
+    assert "connected_servers" in data["mcp_servers"]
+    assert "tool_count" in data["mcp_servers"]
     # Heartbeat section
     assert isinstance(data["heartbeat"], dict)
     assert "enabled" in data["heartbeat"]
     # Embeddings section
     assert isinstance(data["embeddings"], dict)
     assert "total" in data["embeddings"]
+
+
+@pytest.mark.asyncio
+async def test_health_degraded_returns_503(client):
+    with patch("decafclaw.tools.health.get_embeddings_data", side_effect=RuntimeError("db gone")):
+        resp = await client.get("/health")
+    assert resp.status_code == 503
+    data = resp.json()
+    assert data["status"] == "degraded"
+    assert data["embeddings"] is None
+    assert any("embeddings" in error for error in data["errors"])
+
+
+@pytest.mark.asyncio
+async def test_health_reports_busy_conversations(http_config, bus):
+    manager = MagicMock()
+    manager.get_busy_conversations.return_value = ["conv-1", "conv-2"]
+    app = create_app(http_config, bus, manager=manager)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get("/health")
+    assert resp.status_code == 200
+    assert resp.json()["busy"] == {
+        "known": True,
+        "active": True,
+        "conversations": ["conv-1", "conv-2"],
+    }
 
 
 # -- Token registry tests -----------------------------------------------------
@@ -473,7 +506,7 @@ def test_buttons_create_tokens_in_registry(http_config):
 
 @pytest.mark.asyncio
 async def test_poll_confirmation_manager_ignores_always_when_disallowed():
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     from decafclaw.mattermost import MattermostClient
 
@@ -519,7 +552,7 @@ async def test_poll_confirmation_manager_ignores_always_when_disallowed():
 
 @pytest.mark.asyncio
 async def test_poll_confirmation_manager_indefinite_timeout_resolves():
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     from decafclaw.mattermost import MattermostClient
 
@@ -562,7 +595,7 @@ async def test_poll_confirmation_manager_indefinite_timeout_resolves():
 
 @pytest.mark.asyncio
 async def test_poll_confirmation_manager_stops_when_confirmation_cleared():
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     from decafclaw.mattermost import MattermostClient
 
@@ -605,7 +638,7 @@ async def test_poll_confirmation_manager_stops_when_confirmation_cleared():
 @pytest.mark.asyncio
 async def test_poll_confirmation_manager_wrench_flags_missing_tool():
     """The wrench reaction denies a shell command and flags a missing native tool (#1559)."""
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     from decafclaw.mattermost import MattermostClient
 

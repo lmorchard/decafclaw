@@ -8,16 +8,19 @@
     "/health": {
       "get": {
         "summary": "Health",
-        "description": "Liveness probe \u2014 returns the static health snapshot.",
+        "description": "Health/readiness probe for monitoring and deploy gates.\n\nReturns 503 when any section failed to gather. The payload carries the\ncommit the process started from and the busy-conversation state, so an\nexternal runner can tell a fresh process from a stale one.",
         "operationId": "health_health_get",
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Healthy",
             "content": {
               "application/json": {
                 "schema": {}
               }
             }
+          },
+          "503": {
+            "description": "Degraded: one or more health sections failed"
           }
         }
       }
