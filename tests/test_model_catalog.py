@@ -7,6 +7,7 @@ HTTP endpoint behavior lives in tests/web/test_models_catalog_http.py.
 """
 
 import json
+import logging
 from unittest.mock import patch
 
 import httpx
@@ -29,11 +30,13 @@ from decafclaw.model_catalog import (
     effective_default_model,
     load_catalog,
     materialize_model_config,
+    picker_model_groups,
     picker_models,
     refresh_catalog,
     save_catalog,
     set_default_model,
     set_model_enabled,
+    warn_unresolvable_model_configs,
 )
 
 # ---------------------------------------------------------------------------
@@ -413,6 +416,65 @@ def test_picker_models_enabled_only(config):
     save_catalog(config, catalog)
     apply_catalog(config, load_catalog(config))
     assert picker_models(config) == ["hand-model", "local/on"]
+
+
+def test_warn_unresolvable_model_configs(config, caplog):
+    config.providers = {
+        "local": ProviderConfig(type="openai-compat", url="http://x/v1"),
+        "other": ProviderConfig(type="openai-compat", url="http://y/v1"),
+    }
+    config.model_configs["good"] = ModelConfig(provider="local", model="m1")
+    config.model_configs["stale"] = ModelConfig(provider="local", model="gone")
+    config.model_configs["unknown-provider"] = ModelConfig(provider="nope", model="x")
+    config.model_configs["no-discovery"] = ModelConfig(provider="other", model="anything")
+    config.model_configs["local/materialized"] = ModelConfig(provider="local", model="m1")
+    config.catalog_materialized.add("local/materialized")
+    catalog = ModelCatalog(providers={"local": CatalogProvider(models=[CatalogModel(id="m1")])})
+
+    with caplog.at_level(logging.WARNING, logger="decafclaw.model_catalog"):
+        problems = warn_unresolvable_model_configs(config, catalog)
+
+    assert problems == [
+        "stale: local/gone not in the discovered catalog",
+        "unknown-provider: unknown provider 'nope'",
+    ]
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "stale" in warnings[0].message
+    assert "unknown-provider" in warnings[0].message
+
+
+def test_warn_unresolvable_skips_failed_discovery(config):
+    config.providers = {"local": ProviderConfig(type="openai-compat", url="http://x/v1")}
+    config.model_configs["hand"] = ModelConfig(provider="local", model="anything")
+    catalog = ModelCatalog(providers={"local": CatalogProvider(error="gateway down", models=[CatalogModel(id="m1")])})
+
+    assert warn_unresolvable_model_configs(config, catalog) == []
+
+
+def test_picker_groups_after_alias_cleanup(config):
+    """Post-cleanup shape: one discovered entry per model, policy entries in Custom."""
+    config.providers = {"otari": ProviderConfig(type="openai-compat", url="http://x/v1")}
+    save_catalog(
+        config,
+        ModelCatalog(
+            providers={
+                "otari": CatalogProvider(
+                    models=[
+                        CatalogModel(id="moz-deepseek", enabled=True),
+                        CatalogModel(id="other", enabled=True),
+                    ]
+                )
+            }
+        ),
+    )
+    apply_catalog(config, load_catalog(config))
+
+    assert picker_model_groups(config) == [{"name": "otari", "models": ["otari/moz-deepseek", "otari/other"]}]
+
+    # A hand-authored policy entry that pins an explicit id stays in Custom.
+    config.model_configs["claude-opus"] = ModelConfig(provider="otari", model="anthropic/claude-opus")
+    assert {"name": "Custom", "models": ["claude-opus"]} in picker_model_groups(config)
 
 
 # ---------------------------------------------------------------------------

@@ -206,10 +206,12 @@ def _reapply_model_catalog(config: Config) -> None:
     """
     # Function-level: keep the LLM layer off the dev-filter import path
     # (same reason as _refresh_providers).
-    from .model_catalog import apply_catalog, load_catalog
+    from .model_catalog import apply_catalog, load_catalog, warn_unresolvable_model_configs
 
     config.catalog_materialized.clear()
-    apply_catalog(config, load_catalog(config))
+    catalog = load_catalog(config)
+    apply_catalog(config, catalog)
+    warn_unresolvable_model_configs(config, catalog)
 
 
 async def config_change_watcher(

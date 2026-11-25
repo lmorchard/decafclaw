@@ -574,7 +574,11 @@ No env var overrides per provider — configure `api_key`, `url`, `project`, etc
 
 ### `model_configs`
 
-Named model configurations referencing a provider. See [Model Selection](model-selection.md).
+Named model configurations referencing a provider. This is policy, not a
+naming layer: pin a provider and an explicit target id, or carry DecafClaw-side
+settings. Gateway aliases belong in the gateway and are discovered as catalog
+ids; a hand-authored copy creates a duplicate picker entry. See
+[Model Selection](model-selection.md).
 
 ```json
 {
@@ -597,6 +601,11 @@ Named model configurations referencing a provider. See [Model Selection](model-s
 | `streaming` | bool | `true` | Use streaming responses |
 | `reasoning_effort` | str or null | `null` | OpenAI Responses only: reasoning effort; omitted/null uses model default |
 | `supports_vision` | bool or null | `null` | Tri-state vision capability (#1143): `false` turns every inbound image into an omission notice; `null`/true budgets normally |
+
+At startup and after a `model_configs` reload, one warning names hand-authored
+entries whose provider is unknown or whose `model` id is absent from that
+provider's successful discovery catalog. Providers without discovery data are
+skipped, and the warning never blocks startup.
 
 `default_model` (top-level string) sets which model config to use when none is explicitly selected. Env overrides: `DECAFCLAW_DEFAULT_MODEL` or `DEFAULT_MODEL`.
 

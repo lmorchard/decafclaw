@@ -314,7 +314,12 @@ async def test_tool_shell_rewrites_cd_and_chain(ctx, cmd, expected_cmd, expected
         result = await tool_shell(ctx, cmd)
 
     assert result.text == "ok"
-    mock_exec.assert_awaited_once_with(ctx, expected_cmd, cwd=str((ws / expected_dir).resolve()))
+    mock_exec.assert_awaited_once_with(
+        ctx,
+        expected_cmd,
+        timeout=ctx.config.shell.max_runtime_sec,
+        cwd=str((ws / expected_dir).resolve()),
+    )
 
 
 @pytest.mark.asyncio
