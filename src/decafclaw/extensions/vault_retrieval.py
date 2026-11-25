@@ -15,6 +15,9 @@ Retrieval runs on every interactive turn unless
 - ``always`` — scored full-body candidates (default, back-compatible).
 - ``headlines`` — title + summary + score only; the model pulls bodies with
   ``vault_read``.
+- ``tapered`` — L0 summary + L1 abstract for the top candidates, L0
+  headlines for the rest; the model pulls full bodies with ``vault_read``
+  (#1815).
 - ``on_demand`` — no injection; the model drives ``vault_search`` /
   ``vault_read`` itself. A skipped source entry still reaches diagnostics.
 
@@ -51,6 +54,7 @@ from decafclaw.memory_context import (
     _trim_to_token_budget,
     format_memory_context,
     format_memory_headlines,
+    format_memory_tapered,
     get_already_retrieved_paths,
     retrieve_memory_context,
 )
@@ -288,7 +292,23 @@ class VaultRetrievalExtension(BaseExtension):
         for r in results:
             r["tokens_estimated"] = estimate_tokens(r.get("entry_text", ""))
 
-        if retrieval_mode == RetrievalMode.HEADLINES:
+        if retrieval_mode == RetrievalMode.TAPERED:
+            retrieval_config = getattr(config, "vault_retrieval", None)
+            max_summary_chars = self.options.get("tapered_summary_max_chars")
+            if max_summary_chars is None:
+                max_summary_chars = self.options.get("headline_summary_max_chars")
+            if max_summary_chars is None:
+                max_summary_chars = getattr(retrieval_config, "tapered_summary_max_chars", 140)
+            top_n_detailed = self.options.get(
+                "top_n_detailed",
+                getattr(retrieval_config, "tapered_top_n_detailed", 1),
+            )
+            formatted = format_memory_tapered(
+                results,
+                top_n_detailed=int(top_n_detailed),
+                max_summary_chars=int(max_summary_chars),
+            )
+        elif retrieval_mode == RetrievalMode.HEADLINES:
             formatted = format_memory_headlines(
                 results,
                 max_summary_chars=self._option(config, "headline_summary_max_chars", 200),

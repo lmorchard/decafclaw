@@ -229,8 +229,10 @@ Controls auto-retrieval injection at turn start. See [context-composer.md#memory
 | `show_in_ui` | bool | `true` | `VAULT_RETRIEVAL_SHOW_IN_UI` |
 | `mode` | RetrievalMode | `always` | `VAULT_RETRIEVAL_MODE` |
 | `headline_summary_max_chars` | int | `120` | `VAULT_RETRIEVAL_HEADLINE_SUMMARY_MAX_CHARS` |
+| `tapered_top_n_detailed` | int | `1` | `VAULT_RETRIEVAL_TAPERED_TOP_N_DETAILED` |
+| `tapered_summary_max_chars` | int | `140` | `VAULT_RETRIEVAL_TAPERED_SUMMARY_MAX_CHARS` |
 
-`mode` (a `RetrievalMode` enum) selects retrieval strategy: `always` (full bodies, current default), `headlines` (compact `file_path · summary · score` lines for the agent to scan; pulls bodies via `vault_read` on demand), or `on_demand` (skip auto-retrieval entirely; agent drives via `vault_search` / `vault_read`). `@[[Page]]` mentions inject regardless of mode. Unknown values fall back to `always` with a warning.
+`mode` (a `RetrievalMode` enum) selects retrieval strategy: `always` (full bodies, current default), `headlines` (compact `file_path · summary · score` lines for the agent to scan; pulls bodies via `vault_read` on demand), `tapered` (L0 summaries plus L1 abstracts for the top `tapered_top_n_detailed` hits and L0 headlines for the rest), or `on_demand` (skip auto-retrieval entirely; agent drives via `vault_search` / `vault_read`). `@[[Page]]` mentions inject regardless of mode. Unknown values fall back to `always` with a warning.
 
 ### `embedding`
 

@@ -819,6 +819,8 @@ def load_config() -> Config:
             "show_in_ui": "VAULT_RETRIEVAL_SHOW_IN_UI",
             "mode": "VAULT_RETRIEVAL_MODE",
             "headline_summary_max_chars": "VAULT_RETRIEVAL_HEADLINE_SUMMARY_MAX_CHARS",
+            "tapered_top_n_detailed": "VAULT_RETRIEVAL_TAPERED_TOP_N_DETAILED",
+            "tapered_summary_max_chars": "VAULT_RETRIEVAL_TAPERED_SUMMARY_MAX_CHARS",
         },
     )
 
