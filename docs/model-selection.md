@@ -305,12 +305,39 @@ reflection routes its judge through `effective_judge_model` (#1361), and
 aux/background calls use their resolvers (#1363). `tests/test_model.py`
 and `tests/test_reflection.py` pin those routes to the resolvers.
 
-Context-window discovery is an async enrichment, not a second ladder:
-`llm.ensure_model_context_window` learns an unconfigured window from the
-provider (negatively cached until the next config reload), writes it onto the
-model config, then reads `effective_context_window`.
-`context_diagnostics.get_context_window_size` reads the same definition
-without the provider call.
+### Context-window resolution
+
+Context-window discovery is an async enrichment, not a second ladder.
+`llm.ensure_model_context_window` resolves, highest first:
+
+1. the model config's `context_window_size` — always wins;
+2. the provider's `get_model_info()` — gateway discovery;
+3. the provider's `default_context_window()` — Vertex's family table;
+4. `effective_context_window` — `llm.context_window_size`, else the
+   `compaction.max_tokens` proxy.
+
+A resolved value is written onto the model config and then read back through
+`effective_context_window`, so the tool budget (#1718) and the compaction
+threshold see the same number. Failed lookups are negatively cached until the
+next config reload. `context_diagnostics.get_context_window_size` reads the
+same definition without the provider call.
+
+Discovery normalizes whichever window shape the gateway emits:
+`max_input_tokens` (LiteLLM), `context_length` (OpenRouter), and
+`context_window` (some LiteLLM deployments, top-level or nested under
+`capabilities` / `model_info`). `OpenAICompatProvider.get_model_info` reuses
+`discover_models()` rather than opening a second request path. Config names
+and gateway ids can differ (`claude-haiku-4.5` vs
+`anthropic/claude-haiku-4.5`): an exact id match wins, then an unambiguous
+final-path-segment match.
+
+Vertex publishes no token limits through any machine-readable endpoint, so
+its adapter supplies a family-keyed defaults table (Gemini 2.5 / 3 / 4 at 1M)
+with longest-prefix matching. A model that resolves nothing stays on the
+`compaction.max_tokens` proxy; the resolver warns once per model, naming the
+proxy, and distinguishes a Vertex table hole from an upstream gateway gap.
+Models a gateway reports as unknown are deliberately left on the proxy
+rather than guessed.
 
 ## Migration from effort levels
 

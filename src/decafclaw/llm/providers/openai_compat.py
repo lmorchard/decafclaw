@@ -55,10 +55,11 @@ def _clean_messages(messages: list) -> list:
 # ``GET {base}/models`` metadata quality varies wildly across gateways:
 # LiteLLM reports ``mode`` / ``supports_function_calling`` / ``max_input_tokens``,
 # OpenRouter reports ``architecture.modality`` / ``supported_parameters`` /
-# ``context_length``, Azure-style gateways report ``capabilities``, and
-# Ollama / vLLM / plain OpenAI return bare IDs. The parser normalizes the
-# known shapes and leaves everything else as unknown (None) — unknown is
-# never treated as capable.
+# ``context_length``, Azure-style gateways report ``capabilities``, some
+# LiteLLM deployments report a bare ``context_window``, and Ollama / vLLM /
+# plain OpenAI return bare IDs. The parser normalizes the known shapes and
+# leaves everything else as unknown (None) — unknown is never treated as
+# capable.
 
 
 def _as_positive_int(value: Any) -> int | None:
@@ -100,16 +101,19 @@ def _parse_context_window_field(entry: dict, caps: dict) -> None:
     """Bare ``context_window`` shape emitted by some LiteLLM gateways.
 
     Otari-local (``synobian:4100``) reports the limit under this key rather
-    than ``max_input_tokens`` or ``context_length``. Normalize by shape, not
-    by gateway identity, so a new OpenAI-compatible gateway works with no
-    code change. Lowest priority: only fills a window the richer shapes left
-    unset.
+    than ``max_input_tokens`` or ``context_length``. Also accepts the value
+    nested under ``capabilities`` / ``model_info`` when a gateway wraps it.
+    Lowest priority: only fills a window the richer shapes left unset.
     """
     if "context_window_size" in caps:
         return
-    ctx = _as_positive_int(entry.get("context_window"))
-    if ctx:
-        caps["context_window_size"] = ctx
+    for container in (entry, entry.get("capabilities"), entry.get("model_info")):
+        if not isinstance(container, dict):
+            continue
+        ctx = _as_positive_int(container.get("context_window"))
+        if ctx:
+            caps["context_window_size"] = ctx
+            return
 
 
 def _parse_azure_capabilities(entry: dict, caps: dict) -> None:
@@ -171,6 +175,23 @@ def parse_models_payload(payload: Any) -> list[DiscoveredModel]:
     return result
 
 
+def _resolve_listed_model(models: list[DiscoveredModel], model: str) -> DiscoveredModel | None:
+    """Find the listing entry for ``model``, tolerating a prefix mismatch.
+
+    Config names and gateway ids can disagree: a config may use the bare
+    ``claude-haiku-4.5`` while the gateway indexes the prefixed
+    ``anthropic/claude-haiku-4.5``. Exact match wins. Then compare the final
+    path segment, accepting only an unambiguous match so two providers
+    serving the same bare id never resolve silently.
+    """
+    for entry in models:
+        if entry.id == model:
+            return entry
+    bare = model.rsplit("/", 1)[-1]
+    matches = [entry for entry in models if entry.id.rsplit("/", 1)[-1] == bare]
+    return matches[0] if len(matches) == 1 else None
+
+
 class OpenAICompatProvider:
     """Provider for OpenAI-compatible endpoints (LiteLLM, Ollama, vLLM, etc.)."""
 
@@ -187,21 +208,16 @@ class OpenAICompatProvider:
     ) -> dict[str, Any] | None:
         """Get model metadata (e.g. token limits), or None if unsupported.
 
-        Reads the same ``GET {base}/models`` listing ``discover_models`` uses
-        and normalizes the context window from whichever shape the gateway
-        emits (``max_input_tokens``, ``context_length``, or
-        ``context_window``). Returns ``None`` when the listing is reachable
-        but reports no window for ``model``; HTTP/network failures raise so
-        the caller can tell "unsupported" from "unreachable".
+        Reuses ``discover_models`` — the same ``GET {base}/models`` listing
+        the catalog uses — so there is no second HTTP path to keep in sync.
+        Returns ``None`` when the listing is reachable but reports no window
+        for ``model``; HTTP/network failures raise so the caller can tell
+        "unsupported" from "unreachable".
         """
-        url = self._models_url()
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, headers=self._headers(), timeout=timeout)
-        resp.raise_for_status()
-        for entry in parse_models_payload(resp.json()):
-            if entry.id == model and entry.context_window_size:
-                return {"context_window_size": entry.context_window_size}
-        return None
+        entry = _resolve_listed_model(await self.discover_models(timeout=timeout), model)
+        if entry is None or not entry.context_window_size:
+            return None
+        return {"context_window_size": entry.context_window_size}
 
     def default_context_window(self, model: str) -> int | None:
         """No provider defaults table — discovery is the only source here."""
