@@ -42,7 +42,9 @@ from .skills.vault._events import (
 from .tags import collect_all_tags
 from .web.bookmarks import KINDS_BY_TARGET, BookmarkStore, validate_bookmark_path
 from .web.http_auth import _authenticated, _get_username_or_401
+from .web.notification_routes import notification_router
 from .web.schedule_routes import schedule_router
+from .web.terminal_routes import terminal_router
 from .web.workspace_paths import (
     PathContainmentError,
     resolve_contained,
@@ -1763,96 +1765,8 @@ async def rename_conv_folder(request: Request, path: str) -> JSONResponse:
 
 
 # -- Notification routes ------------------------------------------------------
-# Phase 1: single-user. Inbox + read-state live in the agent workspace,
-# not partitioned by authenticated user. All authenticated callers see
-# the same records. Multi-user partitioning is tracked in docs/notifications.md
-# "Coming in Phase 2+". Do not expose across tenants until partitioning lands.
-
-
-class NotificationResponse(BaseModel):
-    id: str
-    timestamp: str
-    category: str
-    title: str
-    priority: str
-    body: str
-    link: str | None
-    conv_id: str | None
-    read: bool
-
-
-class NotificationListResponse(BaseModel):
-    records: list[NotificationResponse]
-    has_more: bool
-
-
-class NotificationCountResponse(BaseModel):
-    count: int
-
-
-class NotificationReadResponse(BaseModel):
-    ok: bool
-
-
-async def list_notifications(request: Request) -> JSONResponse:
-    """Return inbox records newest first, with a joined ``read`` bool."""
-    if not _get_username_or_401(request):
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    from . import notifications as notifs
-
-    config = request.app.state.config
-    try:
-        limit = int(request.query_params.get("limit", "20"))
-    except (TypeError, ValueError):
-        return JSONResponse({"error": "limit must be an integer"}, status_code=400)
-    if limit <= 0 or limit > 200:
-        return JSONResponse({"error": "limit must be in [1, 200]"}, status_code=400)
-    before = request.query_params.get("before") or None
-    records, has_more = notifs.read_inbox(config, limit=limit, before=before)
-    read_ids = notifs.get_read_ids(config)
-    return JSONResponse(
-        {
-            "records": [{**r.to_dict(), "read": r.id in read_ids} for r in records],
-            "has_more": has_more,
-        }
-    )
-
-
-async def notifications_unread_count(request: Request) -> JSONResponse:
-    """Return ``{"count": N}`` — called frequently, stays cheap."""
-    if not _get_username_or_401(request):
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    from . import notifications as notifs
-
-    return JSONResponse({"count": notifs.unread_count(request.app.state.config)})
-
-
-async def notifications_mark_read(request: Request, id: str) -> JSONResponse:
-    """Mark a single notification read. Idempotent."""
-    if not _get_username_or_401(request):
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    from . import notifications as notifs
-
-    config = request.app.state.config
-    event_bus = request.app.state.event_bus
-    record_id = id
-    if not record_id:
-        return JSONResponse({"error": "id required"}, status_code=400)
-    await notifs.mark_read(config, record_id, event_bus=event_bus)
-    return JSONResponse({"ok": True})
-
-
-async def notifications_mark_all_read(request: Request) -> JSONResponse:
-    """Mark all currently-visible notifications read."""
-    if not _get_username_or_401(request):
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    from . import notifications as notifs
-
-    await notifs.mark_all_read(
-        request.app.state.config,
-        event_bus=request.app.state.event_bus,
-    )
-    return JSONResponse({"ok": True})
+# The notifications resource's models, handlers, and router live in
+# web/notification_routes.py; create_app aggregates its routes.
 
 
 # -- Workspace routes ---------------------------------------------------------
@@ -2781,12 +2695,8 @@ async def ws_chat(websocket):
     )
 
 
-async def ws_terminal(websocket):
-    """WebSocket entry point — defers to the gateway in `web/websocket.py`."""
-    from .web.websocket import websocket_terminal
-
-    state = websocket.app.state
-    await websocket_terminal(websocket, state.config, state.terminal_registry)
+# The terminal resource's route lives in web/terminal_routes.py; create_app
+# aggregates it. Its gateway is the same `web/websocket.py` module as ws_chat.
 
 
 # -- Widget routes ------------------------------------------------------------
@@ -3576,42 +3486,11 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             methods=["POST"],
             response_model=ConversationLifecycleResponse,
         ),
-        APIRoute(
-            "/api/notifications",
-            list_notifications,
-            methods=["GET"],
-            response_model=NotificationListResponse,
-            # Schema-only queries preserve legacy parsing and 400 responses.
-            openapi_extra={
-                "parameters": [
-                    {
-                        "name": "limit",
-                        "in": "query",
-                        "required": False,
-                        "schema": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
-                    },
-                    {"name": "before", "in": "query", "required": False, "schema": {"type": "string"}},
-                ]
-            },
-        ),
-        APIRoute(
-            "/api/notifications/unread-count",
-            notifications_unread_count,
-            methods=["GET"],
-            response_model=NotificationCountResponse,
-        ),
-        APIRoute(
-            "/api/notifications/read-all",
-            notifications_mark_all_read,
-            methods=["POST"],
-            response_model=NotificationReadResponse,
-        ),
-        APIRoute(
-            "/api/notifications/{id}/read",
-            notifications_mark_read,
-            methods=["POST"],
-            response_model=NotificationReadResponse,
-        ),
+        # The notifications resource's routes live in web/notification_routes.py.
+        # Its router registers them in their historical order — registration
+        # order is part of the contract: the generated OpenAPI spec lists paths
+        # in that order.
+        *notification_router.routes,
         APIRoute(
             "/api/upload/{conv_id}",
             handle_upload,
@@ -4025,7 +3904,9 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/canvas/{conv_id}", get_canvas_page, methods=["GET"]),
         APIRoute("/canvas/{conv_id}/{tab_id}", get_canvas_page, methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
-        WebSocketRoute("/ws/terminal/{conv_id}/{tab_id}", ws_terminal),
+        # The terminal resource's route lives in web/terminal_routes.py; its
+        # router registers it in its historical position.
+        *terminal_router.routes,
     ]
 
     # Static file serving for web UI
