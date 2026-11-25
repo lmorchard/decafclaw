@@ -45,7 +45,7 @@
     "conv_history": {
       "direction": "server_to_client",
       "description": "Page of historical messages for a conversation.",
-      "fields": {"conv_id": "string", "messages": "array of object", "has_more": "boolean", "context_limit": "number", "read_only": "boolean?", "estimated_tokens": "number?", "active_model": "string?", "available_models": "array of string?", "model_groups": "array of object?", "default_model": "string?", "turn_active": "boolean?", "pending_confirmation": "object?"}
+      "fields": {"conv_id": "string", "messages": "array of object", "has_more": "boolean", "context_limit": "number", "read_only": "boolean?", "estimated_tokens": "number?", "context_usage": "number?", "active_model": "string?", "available_models": "array of string?", "model_groups": "array of object?", "default_model": "string?", "turn_active": "boolean?", "pending_confirmation": "object?"}
     },
     "conv_renamed": {
       "direction": "server_to_client",

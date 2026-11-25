@@ -119,6 +119,7 @@ Page of historical messages for a conversation.
 - `context_limit` — number
 - `read_only` — boolean?
 - `estimated_tokens` — number?
+- `context_usage` — number?
 - `active_model` — string?
 - `available_models` — array of string?
 - `model_groups` — array of object?

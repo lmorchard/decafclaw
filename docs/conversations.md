@@ -162,16 +162,18 @@ When the conversation grows too large (exceeding the token budget), the agent au
 5. In-memory history is replaced with: `[summary message] + [recent turns]`
 6. The archive is not modified — it remains the complete record
 
-### Context meter after compaction (#1005)
+### Context meter (#1005, #1275)
 
-The sidebar context meter tracks the conversation's prompt size against `COMPACTION_MAX_TOKENS`. A compacting turn's *last* LLM call, by definition, exceeded that threshold — so if the meter kept showing `usage.prompt_tokens` it would read >100% and never recover.
+The sidebar context meter shows how full the active model's context window is: the numerator is the last LLM call's actual prompt (or the post-compaction estimate when no later call recorded usage), and the denominator is the model's resolved context window from `ensure_model_context_window`. `compaction.max_tokens` is only the fallback when no window is known — it is no longer the meter's limit. A successful call on a model with a known window therefore cannot read over 100%, and the live and reload paths use the same basis.
+
+Reload reads the last turn's persisted `context_usage` from the conversation's `context.json` sidecar, so the meter shows the same value it showed live. A conversation with no recorded usage (for example, an archive from before this field existed) falls back to the history-only estimate. Changing the model updates the limit by the next `message_complete` or reload.
 
 To fix this, `compact_history` computes a post-compaction estimate of the rebuilt history (same `estimate_tokens(flatten_messages(history))` the reload path uses, so the meter and a fresh page load agree). On success that figure:
 
 - is recorded as `ctx.tokens.last_compaction_estimate`. It feeds the **in-turn** web meter only — `message_complete` carries it as `context_usage`, so the meter drops below 100% at the end of the compacting turn. It is a one-shot fallback: as soon as a later LLM call in the same turn records real usage, the agent loop clears it and the meter tracks that call's `last_prompt` (the actual post-compaction prompt size) (#1054). If no call succeeds after the compaction (e.g. the reactive-overflow retry also failed), the estimate survives to `message_complete`.
 - is published on `compaction_end` as `estimated_tokens_after` (`success: true`).
 
-The two consumers are independent: a later reload (or a fresh page load) does **not** read `last_compaction_estimate`. The WebSocket reload path at `websocket.py:315` recomputes the estimate itself from the persisted compacted sidecar (`read_compacted_history`), and `message_complete` is how the live meter is told. The Mattermost post, which renders at compaction time, still reads the pre-compaction `estimated_tokens_before` for its "~N tokens compacted" summary.
+The WebSocket reload path reads the persisted `context_usage` (written to `context.json` at turn exit) and the same model-window resolver, so a later reload (or a fresh page load) agrees with the live meter. When no usage was recorded, it falls back to the history-only estimate from the persisted compacted sidecar (`read_compacted_history`). The Mattermost post, which renders at compaction time, still reads the pre-compaction `estimated_tokens_before` for its "~N tokens compacted" summary.
 
 `message_complete` carries it as a dedicated `context_usage` field (falling back to the real `last_prompt` when no compaction ran), **separate from `usage.prompt_tokens`** — the latter keeps its honest meaning (the turn's last LLM call) so the per-message "X in / Y out" label and the recorder's turn telemetry are unaffected. The web meter reads `context_usage`, so it drops below 100% after a successful compaction.
 

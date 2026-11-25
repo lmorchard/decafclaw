@@ -1544,6 +1544,14 @@ class TurnRunner:
                 from .context_sidecars import write_context_sidecar
 
                 diagnostics = self.composer.build_diagnostics(self.config, self.composed, ctx=self.ctx)
+                tokens = self.ctx.tokens
+                # The reload path reads this so the meter shows the same value
+                # the live meter showed at the end of the last turn (#1275).
+                diagnostics["context_usage"] = (
+                    tokens.last_compaction_estimate
+                    if tokens.last_compaction_estimate is not None
+                    else tokens.last_prompt
+                )
                 write_context_sidecar(self.config, conv_id, diagnostics)
             except Exception as exc:
                 log.debug("context sidecar write failed for %s: %s", conv_id, exc)

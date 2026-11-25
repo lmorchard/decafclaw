@@ -60,12 +60,14 @@ journalctl --user -u decafclaw -f   # live logs
 
 You can check for and apply updates directly from the web chat interface (or Mattermost via `!update`):
 
-1. **Check for updates:** Type `/update` in the chat input. DecafClaw fetches latest commits from upstream (`@{u}`) and displays incoming commits (`git log HEAD..@{u} --oneline`). If already up to date, it lets you know and stops.
+1. **Check for updates:** Type `/update` in the chat input. DecafClaw fetches and resolves the deploy candidate (`origin/production` when it exists, else the current branch's upstream) and displays incoming commits. If already up to date, it lets you know and stops. The preview also notes that the automated deploy timer will pick the commits up on its own within one interval.
 2. **Safety guards:**
-   - **Active turns:** If any conversation is currently running an active turn, `/update` refuses and names the busy conversations. Nothing is pulled or restarted.
-   - **Dirty working tree:** If the working tree has uncommitted modifications or staged changes, `/update` aborts before pulling.
-   - **Fast-forward only:** The update requires that the branch can be fast-forwarded (`git pull --ff-only`).
-3. **Apply and restart:** Type `/update confirm` (or `/update --yes`). DecafClaw pulls the commits, runs `uv sync`, and restarts the service (`systemctl --user restart decafclaw`). If `uv sync` fails, it reports the error and does not restart.
+   - **Active turns:** If any conversation is currently running an active turn, `/update` refuses and names the busy conversations. Nothing is deployed.
+   - **Dirty working tree:** If the working tree has uncommitted modifications or staged changes, `/update` aborts.
+   - **Fast-forward only:** The candidate must be a fast-forward of `HEAD`.
+3. **Start the deploy:** Type `/update confirm` (or `/update --yes`). DecafClaw starts the same unit the timer uses (`systemctl --user start --no-block decafclaw-deploy.service`) and returns immediately. The external deploy runner owns the stop, backup, fast-forward, `uv sync`, start, `/health` verification, and rollback. Its result is delivered back to the conversation through a post-restart wake.
+
+The automated timer (`decafclaw-deploy.timer`) is the other trigger for exactly this path; manual and automatic deploys cannot run twice because the runner holds a `flock`.
 
 *Note:* `/update` is a human-only side-effect command — it initiates no LLM turn, writes no archive entry, and is strictly inaccessible to agent tools and skills.
 
@@ -79,14 +81,15 @@ cd ~/decafclaw
 ./scripts/deploy.sh
 ```
 
-Or manually:
+Prefer the same unit the timer and `/update` use, so the backup and health gate
+run:
 
 ```bash
-cd ~/decafclaw
-git pull
-uv sync
-systemctl --user restart decafclaw
+systemctl --user start decafclaw-deploy.service
 ```
+
+`scripts/deploy.sh` remains a manual fallback; it takes a backup before pulling
+but does not verify `/health` or roll back.
 
 ### External deploy runner
 
@@ -121,13 +124,43 @@ systemctl --user daemon-reload
 systemctl --user enable --now decafclaw-deploy.timer
 ```
 
-**Guard.** The candidate is deployable when it is ahead of `HEAD` and its SHA
-is not quarantined. The runner compares SHA membership, never commit
-timestamps: rebases preserve author dates, so a timestamp rule can starve a
-genuine fix forever. `~/.local/state/decafclaw-deploy/state.json` holds
-`last_good` (the rollback target), `quarantined` (SHA → reason), and
-`last_attempt` (SHA + consecutive failures). After `--max-attempts` failures
-(default 2: one retry) the SHA is quarantined; delete its entry to retry.
+**Guard and poll policy.** The candidate is `origin/production` when it is
+ahead of `HEAD` and its SHA is not quarantined. The runner compares SHA
+membership, never commit timestamps: rebases preserve author dates, so a
+timestamp rule can starve a genuine fix forever. With `--defer-busy` (the
+timer's mode) a busy turn skips the tick and the next tick re-derives
+everything; a manual run without it waits up to `--idle-timeout`. A candidate
+that stays busy past `--deferral-cap-hours` (default 6) produces exactly one
+notification, so starvation is loud rather than silent.
+
+`~/.local/state/decafclaw-deploy/state.json` holds `last_good` (the rollback
+target), `quarantined` (SHA → reason), `last_attempt` (SHA + consecutive
+failures), `first_seen` (when a busy candidate was first skipped), and
+`deferral_notified` (which candidates have already been surfaced). A corrupt
+or unreadable state file refuses to deploy and notifies; it never silently
+resets, which would clear the quarantine and re-deploy a known-bad commit.
+After `--max-attempts` failures (default 2: one retry) the SHA is quarantined;
+delete its entry to retry.
+
+**Production branch and timer.** Create `production` from `main`, protect it
+(require review, no direct pushes), and check the live checkout out on
+`production` tracking `origin/production`. Pushing to `production` then
+becomes the deploy capability: the human checkpoint moves from `/update
+confirm` to the PR merge. Do not enable the timer on a repository where the
+deploy branch is unprotected.
+
+```bash
+git switch -c production main
+git push -u origin production
+# Protect `production` in the repository settings before enabling this.
+systemctl --user enable --now decafclaw-deploy.timer
+systemctl --user disable --now decafclaw-deploy.timer   # stop polling
+```
+
+The timer fires every five minutes with up to a minute of jitter and is
+`Persistent=false`: a missed tick is recovered by the next one. With no
+candidate the run is silent (no notification, no journal noise beyond the
+fetch).
 
 **Verification.** The deploy gate requires the serving process to report the
 target commit, `status: "ok"`, and no regression in the MCP connected-server

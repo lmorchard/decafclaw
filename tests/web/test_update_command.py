@@ -92,7 +92,7 @@ def update_send_env(config, monkeypatch):
 async def test_update_command_no_turn_no_archive(update_send_env, monkeypatch):
     env = update_send_env()
 
-    async def fake_update(*, confirmed=False, manager=None, index=None, repo_dir=None, cmd_runner=None):
+    async def fake_update(*, confirmed=False, manager=None, index=None, repo_dir=None, cmd_runner=None, **kwargs):
         return UpdateResult(ok=True, message="DecafClaw is already up to date.")
 
     monkeypatch.setattr("decafclaw.self_update.perform_self_update", fake_update)
@@ -125,7 +125,7 @@ async def test_update_command_confirm_passed(update_send_env, monkeypatch):
 
     confirmed_values = []
 
-    async def fake_update(*, confirmed=False, manager=None, index=None, repo_dir=None, cmd_runner=None):
+    async def fake_update(*, confirmed=False, manager=None, index=None, repo_dir=None, cmd_runner=None, **kwargs):
         confirmed_values.append(confirmed)
         return UpdateResult(ok=True, message="Restarting DecafClaw service...", restarted=True)
 
@@ -143,7 +143,7 @@ async def test_update_command_confirm_passed(update_send_env, monkeypatch):
 async def test_update_bang_syntax_handled(update_send_env, monkeypatch):
     env = update_send_env()
 
-    async def fake_update(*, confirmed=False, manager=None, index=None, repo_dir=None, cmd_runner=None):
+    async def fake_update(*, confirmed=False, manager=None, index=None, repo_dir=None, cmd_runner=None, **kwargs):
         return UpdateResult(ok=True, message="DecafClaw is already up to date.")
 
     monkeypatch.setattr("decafclaw.self_update.perform_self_update", fake_update)

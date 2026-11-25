@@ -125,7 +125,7 @@ async def test_aborts_when_no_upstream_branch(tmp_path):
         cmd_runner=fake_runner,
     )
     assert not res.ok
-    assert "no upstream tracking branch" in res.message
+    assert "no deploy branch" in res.message
 
 
 @pytest.mark.asyncio
@@ -196,26 +196,28 @@ async def test_shows_incoming_commits_when_unconfirmed(tmp_path):
     )
     assert res.ok
     assert not res.restarted
-    assert "Incoming commits:" in res.message
+    assert "Incoming commits from origin/production:" in res.message
     assert incoming in res.message
+    assert "automated deploy" in res.message
     assert "/update confirm" in res.message
 
 
 @pytest.mark.asyncio
-async def test_pull_failure_aborts(tmp_path):
+async def test_confirm_starts_deploy_unit_without_inline_pull(tmp_path):
+    executed = []
+
     async def fake_runner(cmd, cwd=None, env=None):
+        executed.append(cmd)
         if cmd[:3] == ["git", "status", "--porcelain"]:
             return 0, "", ""
         if cmd[:2] == ["git", "rev-parse"]:
-            return 0, "origin/main", ""
+            return 0, "origin/production", ""
         if cmd[:2] == ["git", "fetch"]:
             return 0, "", ""
         if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
             return 0, "", ""
         if cmd[:2] == ["git", "log"]:
             return 0, "abc1234 feat", ""
-        if cmd[:3] == ["git", "pull", "--ff-only"]:
-            return 1, "", "fatal: Not possible to fast-forward, aborting."
         return 0, "", ""
 
     res = await perform_self_update(
@@ -223,63 +225,30 @@ async def test_pull_failure_aborts(tmp_path):
         repo_dir=tmp_path,
         cmd_runner=fake_runner,
     )
-    assert not res.ok
-    assert not res.restarted
-    assert "git pull --ff-only" in res.message
+
+    assert res.ok
+    assert res.restarted
+    assert "Deploy started" in res.message
+    assert ["systemctl", "--user", "start", "--no-block", "decafclaw-deploy.service"] in executed
+    assert ["git", "pull", "--ff-only"] not in executed
+    assert ["uv", "sync"] not in executed
+    assert ["systemctl", "--user", "restart", "--no-block", "decafclaw"] not in executed
 
 
 @pytest.mark.asyncio
-async def test_uv_sync_failure_aborts(tmp_path):
-    called = []
-
+async def test_confirm_reports_deploy_unit_start_failure(tmp_path):
     async def fake_runner(cmd, cwd=None, env=None):
-        called.append(cmd[0])
         if cmd[:3] == ["git", "status", "--porcelain"]:
             return 0, "", ""
         if cmd[:2] == ["git", "rev-parse"]:
-            return 0, "origin/main", ""
+            return 0, "origin/production", ""
         if cmd[:2] == ["git", "fetch"]:
             return 0, "", ""
         if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
             return 0, "", ""
         if cmd[:2] == ["git", "log"]:
             return 0, "abc1234 feat", ""
-        if cmd[:3] == ["git", "pull", "--ff-only"]:
-            return 0, "Fast-forward", ""
-        if cmd[:2] == ["uv", "sync"]:
-            return 1, "", "error: failed to resolve dependencies"
-        return 0, "", ""
-
-    res = await perform_self_update(
-        confirmed=True,
-        repo_dir=tmp_path,
-        cmd_runner=fake_runner,
-    )
-    assert not res.ok
-    assert not res.restarted
-    assert "uv sync" in res.message
-    assert "NOT restarted" in res.message
-    assert "systemctl" not in called
-
-
-@pytest.mark.asyncio
-async def test_restart_failure_reports_error(tmp_path):
-    async def fake_runner(cmd, cwd=None, env=None):
-        if cmd[:3] == ["git", "status", "--porcelain"]:
-            return 0, "", ""
-        if cmd[:2] == ["git", "rev-parse"]:
-            return 0, "origin/main", ""
-        if cmd[:2] == ["git", "fetch"]:
-            return 0, "", ""
-        if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
-            return 0, "", ""
-        if cmd[:2] == ["git", "log"]:
-            return 0, "abc1234 feat", ""
-        if cmd[:3] == ["git", "pull", "--ff-only"]:
-            return 0, "Fast-forward", ""
-        if cmd[:2] == ["uv", "sync"]:
-            return 0, "Resolved 5 packages", ""
-        if cmd[:5] == ["systemctl", "--user", "restart", "--no-block", "decafclaw"]:
+        if cmd[:3] == ["systemctl", "--user", "start"]:
             return 1, "", "Failed to connect to bus"
         return 0, "", ""
 
@@ -288,43 +257,54 @@ async def test_restart_failure_reports_error(tmp_path):
         repo_dir=tmp_path,
         cmd_runner=fake_runner,
     )
+
     assert not res.ok
-    assert not res.restarted
-    assert "service restart failed" in res.message
+    assert "deploy service" in res.message
 
 
 @pytest.mark.asyncio
-async def test_successful_update_and_restart(tmp_path):
-    executed = []
+async def test_confirm_saves_and_cleans_up_restart_wake(tmp_path, config):
+    from decafclaw.restart_wake import new_restart_wake
 
-    async def fake_runner(cmd, cwd=None, env=None):
-        executed.append(cmd)
+    wake = new_restart_wake(conv_id="conv-1", reason="test", transport="web")
+    wake_path = config.agent_path / "restart_wakes" / "conv-1.json"
+
+    async def ok_runner(cmd, cwd=None, env=None):
         if cmd[:3] == ["git", "status", "--porcelain"]:
             return 0, "", ""
         if cmd[:2] == ["git", "rev-parse"]:
-            return 0, "origin/main", ""
+            return 0, "origin/production", ""
         if cmd[:2] == ["git", "fetch"]:
             return 0, "", ""
         if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
             return 0, "", ""
         if cmd[:2] == ["git", "log"]:
             return 0, "abc1234 feat", ""
-        if cmd[:3] == ["git", "pull", "--ff-only"]:
-            return 0, "Fast-forward", ""
-        if cmd[:2] == ["uv", "sync"]:
-            return 0, "Resolved 5 packages", ""
-        if cmd[:5] == ["systemctl", "--user", "restart", "--no-block", "decafclaw"]:
-            return 0, "", ""
         return 0, "", ""
 
     res = await perform_self_update(
         confirmed=True,
         repo_dir=tmp_path,
-        cmd_runner=fake_runner,
+        cmd_runner=ok_runner,
+        config=config,
+        wake=wake,
     )
     assert res.ok
-    assert res.restarted
-    assert "Restarting DecafClaw service" in res.message
-    assert ["git", "pull", "--ff-only"] in executed
-    assert ["uv", "sync"] in executed
-    assert ["systemctl", "--user", "restart", "--no-block", "decafclaw"] in executed
+    assert wake_path.exists()
+
+    wake_path.unlink()
+
+    async def failing_runner(cmd, cwd=None, env=None):
+        if cmd[:3] == ["systemctl", "--user", "start"]:
+            return 1, "", "Failed to connect to bus"
+        return await ok_runner(cmd, cwd, env)
+
+    res = await perform_self_update(
+        confirmed=True,
+        repo_dir=tmp_path,
+        cmd_runner=failing_runner,
+        config=config,
+        wake=wake,
+    )
+    assert not res.ok
+    assert not wake_path.exists()

@@ -99,6 +99,10 @@ class VerifyResult:
 # -- State -------------------------------------------------------------------
 
 
+class StateError(Exception):
+    """The deploy state file exists but cannot be trusted."""
+
+
 @dataclass
 class DeployState:
     """Durable deploy state.
@@ -106,12 +110,17 @@ class DeployState:
     ``last_good`` is the last commit that passed the health gate and is the
     rollback target. ``quarantined`` maps a SHA to why it is refused, so a
     broken commit is not retried forever. ``last_attempt`` records the
-    current candidate and its consecutive failure count.
+    current candidate and its consecutive failure count. ``first_seen`` and
+    ``deferral_notified`` implement the poll policy's starvation bound: a
+    candidate that is busy for too long is surfaced once, not silently
+    skipped forever.
     """
 
     last_good: str = ""
     quarantined: dict[str, dict] = field(default_factory=dict)
     last_attempt: dict | None = None
+    first_seen: dict[str, str] = field(default_factory=dict)
+    deferral_notified: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> "DeployState":
@@ -120,20 +129,27 @@ class DeployState:
         except FileNotFoundError:
             return cls()
         except (OSError, ValueError) as exc:
-            log.warning("Could not read deploy state %s: %s", path, exc)
-            return cls()
+            raise StateError(f"cannot read deploy state {path}: {exc}") from exc
         if not isinstance(raw, dict):
-            return cls()
+            raise StateError(f"deploy state {path} is not a JSON object")
         quarantined = raw.get("quarantined")
         if not isinstance(quarantined, dict):
             quarantined = {}
         last_attempt = raw.get("last_attempt")
         if not isinstance(last_attempt, dict):
             last_attempt = None
+        first_seen = raw.get("first_seen")
+        if not isinstance(first_seen, dict):
+            first_seen = {}
+        deferral_notified = raw.get("deferral_notified")
+        if not isinstance(deferral_notified, dict):
+            deferral_notified = {}
         return cls(
             last_good=str(raw.get("last_good") or ""),
             quarantined=dict(quarantined),
             last_attempt=last_attempt,
+            first_seen={str(k): str(v) for k, v in first_seen.items()},
+            deferral_notified={str(k): str(v) for k, v in deferral_notified.items()},
         )
 
     def save(self, path: Path) -> None:
@@ -161,6 +177,8 @@ class RunnerConfig:
     verify_timeout: float = 90.0
     poll_interval: float = 3.0
     allow_no_backup: bool = False
+    defer_busy: bool = False
+    deferral_cap_hours: float = 6.0
 
 
 # -- Default adapters --------------------------------------------------------
@@ -201,6 +219,13 @@ def _fetch_health(url: str, timeout: float = 10.0) -> dict | None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_iso(value: str) -> datetime | None:
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
 
 
 def _write_notification(path: Path | None, *, title: str, body: str, priority: str = "normal") -> None:
@@ -317,23 +342,35 @@ class DeployRunner:
 
     # -- health -------------------------------------------------------------
 
-    def wait_for_idle(self) -> tuple[dict | None, str]:
-        """Poll pre-deploy health until a turn finishes or the deadline passes.
+    def wait_for_idle(self) -> tuple[dict | None, str, bool]:
+        """Check pre-deploy health and wait or defer on a busy turn.
 
-        A ``None`` answer here is the *pre-deploy* no-answer path: refuse to
-        deploy rather than change code on top of an unknown state.
+        Returns ``(payload, reason, deferred)``. ``deferred`` means a busy
+        turn skipped this tick under ``--defer-busy`` (the timer retries).
+        A ``None`` payload with ``deferred=False`` is the *pre-deploy*
+        no-answer path: refuse rather than change code on an unknown state.
         """
+        if self.config.defer_busy:
+            payload = self._health()
+            if payload is None:
+                return None, "no answer before deploy; refusing to change code on an unknown state", False
+            busy = payload.get("busy") or {}
+            if busy.get("active"):
+                names = ", ".join(busy.get("conversations") or []) or "unknown"
+                return None, f"conversation busy: {names}", True
+            return payload, "", False
+
         deadline = self._clock() + self.config.idle_timeout
         while True:
             payload = self._health()
             if payload is None:
-                return None, "no answer before deploy; refusing to change code on an unknown state"
+                return None, "no answer before deploy; refusing to change code on an unknown state", False
             busy = payload.get("busy") or {}
             if not busy.get("active"):
-                return payload, ""
+                return payload, "", False
             if self._clock() >= deadline:
                 names = ", ".join(busy.get("conversations") or []) or "unknown"
-                return None, f"conversations still busy after {self.config.idle_timeout:.0f}s: {names}"
+                return None, f"conversations still busy after {self.config.idle_timeout:.0f}s: {names}", False
             self._sleep(self.config.poll_interval)
 
     def verify(self, expected_commit: str, baseline: dict | None, *, require_commit: bool) -> VerifyResult:
@@ -444,7 +481,16 @@ class DeployRunner:
 
     def _run_unlocked(self) -> int:
         config = self.config
-        state = DeployState.load(config.state_file)
+        try:
+            state = DeployState.load(config.state_file)
+        except StateError as exc:
+            self._say(f"{exc}; refusing to deploy")
+            self._notify_outcome(
+                title="Deploy state unreadable; refusing to deploy",
+                body=str(exc),
+                priority="high",
+            )
+            return EXIT_REFUSED
 
         fetch = self._git("fetch", "--prune", "origin")
         if fetch.returncode != 0:
@@ -464,10 +510,19 @@ class DeployRunner:
             self._say(guard.reason)
             return EXIT_REFUSED
 
-        baseline, reason = self.wait_for_idle()
+        baseline, reason, deferred = self.wait_for_idle()
+        if deferred:
+            self._record_deferral(state, candidate, reason)
+            state.save(config.state_file)
+            self._say(reason)
+            return EXIT_OK
         if baseline is None:
             self._say(reason)
             return EXIT_REFUSED
+
+        # This candidate is being attempted; its starvation timer restarts.
+        state.first_seen.pop(candidate, None)
+        state.deferral_notified.pop(candidate, None)
 
         backed_up, reason = self.backup()
         if not backed_up:
@@ -521,6 +576,25 @@ class DeployRunner:
         )
         return EXIT_ROLLED_BACK
 
+    def _record_deferral(self, state: DeployState, candidate: str, reason: str) -> None:
+        """Track a busy-tick skip and notify once when it exceeds the cap."""
+        now = _now_iso()
+        first = state.first_seen.setdefault(candidate, now)
+        if candidate in state.deferral_notified:
+            return
+        first_at = _parse_iso(first)
+        if first_at is None:
+            return
+        age_hours = (datetime.now(timezone.utc) - first_at).total_seconds() / 3600
+        if age_hours < self.config.deferral_cap_hours:
+            return
+        self._notify_outcome(
+            title="Deploy candidate is waiting",
+            body=(f"{candidate[:12]} has been waiting since {first} ({age_hours:.1f}h): {reason}"),
+            priority="high",
+        )
+        state.deferral_notified[candidate] = now
+
     def _record_attempt(self, state: DeployState, candidate: str) -> int:
         previous = state.last_attempt or {}
         attempts = int(previous.get("attempts") or 0) + 1 if previous.get("sha") == candidate else 1
@@ -550,6 +624,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="proceed without a backup command (data restore is then impossible)",
     )
+    parser.add_argument(
+        "--defer-busy",
+        action="store_true",
+        help="skip this tick when a turn is active instead of waiting (timer policy)",
+    )
+    parser.add_argument(
+        "--deferral-cap-hours",
+        type=float,
+        default=6.0,
+        help="notify once when a busy candidate has waited this long (default 6)",
+    )
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args(argv)
 
@@ -578,6 +663,8 @@ def main(argv: list[str] | None = None) -> int:
         verify_timeout=args.verify_timeout,
         poll_interval=args.poll_interval,
         allow_no_backup=args.allow_no_backup,
+        defer_busy=args.defer_busy,
+        deferral_cap_hours=args.deferral_cap_hours,
     )
     return DeployRunner(config).run()
 
