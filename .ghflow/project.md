@@ -2,14 +2,14 @@
 ghflow_project_facts: 1
 written: 2026-11-24
 sources:
-  - AGENTS.md 68aea5815e0b5fb9b88e23c297bd72cb3ed53860
-  - CLAUDE.md 68aea5815e0b5fb9b88e23c297bd72cb3ed53860
+  - AGENTS.md 2745a53e0de299f65938ab136382fba7314427d6
+  - CLAUDE.md 2745a53e0de299f65938ab136382fba7314427d6
   - Makefile 5c566d7d51b8d9fca722d69184164f4215447ca9
   - .github/workflows/ci.yml aa8dd08ffe089400fe54b30172d21f740a0b05cf
   - conftest.py 2b63e029a3b2c4524ade2c71f18f181f3997dff1
   - tests/conftest.py 3e6f545a3c6d2adf28d926ba539fbba8d574b559
   - tests/web/conftest.py 10cc18c08878e55b406bd3c1d6ed80e8baae60b8
-  - pyproject.toml ea12eff96088d2b4c79567f68b463f85137fb556
+  - pyproject.toml f193dfb0594a0c875571d3a6a47beb6f2da134ab
   - scripts/gen_message_types.py 06a0ab1456ab2e0655d70eab5e68f24a2eda9be9
   - docs/config.md efa6fa6d20219bdc8e32c1fb42fd3dde3879368c
   - docs/testing.md 162454c9807cfed6ae7fb45399b31cfb891ed600
