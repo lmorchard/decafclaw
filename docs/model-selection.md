@@ -221,11 +221,27 @@ Model selection is **user-only** — the agent cannot change its own model (cost
 The conversation controls use a searchable `<model-picker>` popup (the same
 element on the desktop control strip, the mobile conversation menu, and the
 sidebar fallback when the strip is hidden). Selecting a model applies it for
-the rest of the conversation. The picker lists hand-authored configs plus
-enabled models discovered from providers, grouped by provider with a final
-`Custom` group for hand-authored aliases; search matches model keys and
-provider names — manage discovery and the global default in **⚙ Agent Config →
-Models** (see [Model discovery](#model-discovery-1211)).
+the rest of the conversation. The picker lists enabled models discovered from
+providers, grouped by provider, with a final `Custom` group for hand-authored
+policy entries; search matches model keys and provider names — manage discovery
+and the global default in **⚙ Agent Config → Models** (see
+[Model discovery](#model-discovery-1211)).
+
+`model_configs` is **policy, not a naming layer**: use it to pin a provider and
+an explicit target id, or to carry DecafClaw-side settings (context window,
+reasoning effort, timeout). Do not re-export a gateway alias as a
+`model_configs` key. The gateway owns aliasing; discovery already lists the
+alias as a catalog id (`{provider}/{id}`), so a hand-authored copy produces a
+second picker entry for the same model with no way to tell which one is
+current. Routing policies that a gateway exposes as model ids (for example
+`mandelbrot3-failover`) are the exception: they are policy entries, so keep
+them in `model_configs` and do not treat them as aliases to remove.
+
+At startup (and after a `model_configs` reload) DecafClaw logs one warning for
+hand-authored entries that cannot resolve: an unknown provider, a missing
+provider, or a `model` id absent from that provider's successful discovery
+catalog. A provider with no discovery data is skipped — an outage is not proof
+that the entry is wrong — and the warning never blocks startup.
 
 ### WebSocket
 

@@ -300,6 +300,7 @@ async def refresh_catalog(
             _merge_discovered(catalog, name, found, error)
         save_catalog(config, catalog)
         apply_catalog(config, catalog)
+        warn_unresolvable_model_configs(config, catalog)
     await _publish_models_changed(event_bus)
     return catalog
 
@@ -382,6 +383,41 @@ def apply_catalog(config: "Config", catalog: ModelCatalog) -> None:
     for key in config.catalog_materialized - live_keys:
         config.model_configs.pop(key, None)
         config.catalog_materialized.discard(key)
+
+
+def warn_unresolvable_model_configs(config: "Config", catalog: ModelCatalog) -> list[str]:
+    """Log one warning for hand-authored entries that cannot resolve.
+
+    An entry is resolvable when its provider is configured and, for a provider
+    with a successful discovery catalog, its ``model`` id appears in that
+    catalog. Providers without discovery data are skipped: absence of evidence
+    is not evidence of an alias. Catalog-materialized entries are generated,
+    not hand-authored, and are skipped. This is a warning, never a hard
+    failure, so a gateway outage cannot brick startup (#1618).
+    """
+    problems: list[str] = []
+    for key, entry in config.model_configs.items():
+        if key in config.catalog_materialized:
+            continue
+        provider = entry.provider
+        if not provider:
+            problems.append(f"{key}: no provider")
+            continue
+        if provider not in config.providers:
+            problems.append(f"{key}: unknown provider {provider!r}")
+            continue
+        discovered = catalog.providers.get(provider)
+        if discovered is None or discovered.error or not discovered.models:
+            continue
+        if entry.model not in {model.id for model in discovered.models}:
+            problems.append(f"{key}: {provider}/{entry.model} not in the discovered catalog")
+    if problems:
+        log.warning(
+            "model_configs entries are not resolvable (pin an explicit model id; "
+            "gateway aliases belong in the gateway): %s",
+            "; ".join(problems),
+        )
+    return problems
 
 
 def enabled_catalog_keys(catalog: ModelCatalog) -> set[str]:
