@@ -343,6 +343,23 @@ async def test_gateway_without_a_window_warns_about_upstream_config(config, capl
 
 
 @pytest.mark.asyncio
+async def test_vertex_gemini_resolves_to_the_family_window(config):
+    """A known Gemini model gets the 1M family window, not the compaction cap (#1803)."""
+    clear_providers()
+    try:
+        register_provider("vertex-test", VertexProvider(project="test"))
+        config.providers["vertex-test"] = ProviderConfig(type="vertex")
+        config.model_configs["m"] = ModelConfig(provider="vertex-test", model="gemini-3.8-flash")
+        config.compaction.max_tokens = 300000
+
+        assert await ensure_model_context_window(config, "m") == 1_048_576
+        assert config.model_configs["m"].context_window_size == 1_048_576
+        assert config.compaction.max_tokens == 300000
+    finally:
+        clear_providers()
+
+
+@pytest.mark.asyncio
 async def test_vertex_hole_warns_about_the_defaults_table(config, caplog):
     clear_providers()
     try:
