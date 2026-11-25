@@ -558,7 +558,10 @@ class TestVaultWriteBrokenLinks:
             result = await tool_vault_write(ctx, "agent/pages/Linker", "See [[Alpha]] and [[Missing]].")
         # Write still succeeded and the normal result is returned.
         assert (agent_pages / "Linker.md").exists()
-        assert result.text == "Vault page 'agent/pages/Linker' saved."
+        # The write result carries only the save line plus any advisory; the
+        # failed link check contributes nothing (no "Unresolved links" line).
+        assert result.text.startswith("Vault page 'agent/pages/Linker' saved.")
+        assert "Unresolved links" not in result.text
         assert "unresolved_links" not in result.data
         # The failure is logged at debug, not raised.
         assert any("broken-link check" in r.message for r in caplog.records)
