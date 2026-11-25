@@ -204,6 +204,15 @@ Machine-readable board declaration (exact option names):
   - `in_review: In review`
   - `done: Done`
 
+### Execution labels
+
+These change the delivery path; keep `triage:*` for refinement state.
+
+- `execution:ops` — production config/data change. No PR. Capture evidence, back up, apply, verify, comment; move the board to In review/Done.
+- `execution:spike` — read-only investigation. Post findings, no PR; Done when the report lands.
+- `merge:hold` — the PR may be ready, but do not auto-merge or enqueue it.
+- `needs:host-access` — requires a specific host or credential; do not attempt without it.
+
 ## Session records and documentation
 
 - Session documents: `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` (`spec.md`, `plan.md`, `notes.md`). Protocol: brainstorm → review spec for gaps → plan → execute/commit per phase → retro.
