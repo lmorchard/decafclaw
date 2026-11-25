@@ -206,6 +206,10 @@ class OpenAICompatProvider:
                 return {"context_window_size": entry.context_window_size}
         return None
 
+    def default_context_window(self, model: str) -> int | None:
+        """No provider defaults table — discovery is the only source here."""
+        return None
+
     def _headers(self) -> dict[str, str]:
         return {
             "Content-Type": "application/json",
