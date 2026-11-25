@@ -29,6 +29,7 @@ AI agent testbed with Mattermost, web, and terminal clients. Multi-provider LLMs
 - Use bounded searches. After 2–3 targeted queries fail to locate a fact, stop varying searches and read the relevant caller/callee top-to-bottom.
 - For test failures, inspect the traceback and actual output (`pytest -vv -s`) instead of searching for every possible caller.
 - **Compose gates from their Make targets.** `make check` depends on `install-js check-npm-policy check-message-types check-skill-annotations fmt-check lint typecheck check-js check-browser-assets`. Do not duplicate their commands in `check` or CI.
+- **Generated outputs:** after changing wire types, the HTTP API, or other generator inputs, run `make gen` and commit the generated files with the code before `make check`. The generated-drift gates name `make gen` when they fail.
 - When adding a gate, confirm CI invokes its target, inspect the job log for execution, and prove it fails on a deliberate fault in a throwaway file. Pyright exits 0 for warnings alone; reporting a path does not necessarily gate it.
 - Tests use `pytest-xdist -n auto`. Never use fixed `asyncio.sleep(X)` waits. Await the task/event or patch the clock.
 - Tests running a real scheduler/timer must patch the work function. Patch `decafclaw.schedules.run_schedule_task` even for “no tasks” cases: bundled `dream`/`garden` schedules can be due on fresh data.

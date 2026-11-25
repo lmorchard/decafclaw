@@ -103,7 +103,7 @@ install-js:
 # regeneration, any hand edit to a generated file (or stale committed output)
 # fails the gate instead of being silently reverted.
 check-js: gen-api-client
-	git diff --exit-code -- openapi.json openapi.yaml src/decafclaw/web/static/lib/api-client/
+	git diff --exit-code -- openapi.json openapi.yaml src/decafclaw/web/static/lib/api-client/ || { echo "Generated OpenAPI/client files are stale: run 'make gen' and commit the generated files."; exit 1; }
 	cd src/decafclaw/web/static && npx tsc --noEmit
 
 # Test JS with vitest
@@ -147,6 +147,12 @@ test-tui: install-tui
 # that let check-message-types and check-js run nowhere before #854.
 check: install-js check-npm-policy check-message-types check-skill-annotations fmt-check lint typecheck check-js check-browser-assets
 
+# Regenerate every committed generated output. Run this before committing code
+# that changes wire types or the HTTP API; `make check` verifies the committed
+# state and fails on drift.
+.PHONY: gen
+gen: gen-message-types gen-api-client
+
 # Regenerate the WebSocket message-type enum/JS/docs from the manifest
 gen-message-types:
 	uv run python scripts/gen_message_types.py
@@ -154,7 +160,7 @@ gen-message-types:
 # Verify generated WebSocket message-type files are in sync with the manifest
 check-message-types:
 	uv run python scripts/gen_message_types.py
-	git diff --exit-code -- src/decafclaw/web/message_types.py src/decafclaw/web/static/lib/message-types.js docs/websocket-messages.md tui/src/types.generated.ts
+	git diff --exit-code -- src/decafclaw/web/message_types.py src/decafclaw/web/static/lib/message-types.js docs/websocket-messages.md tui/src/types.generated.ts || { echo "Generated message types are stale: run 'make gen' and commit the generated files."; exit 1; }
 
 # Verify the npm dependency policy (#930): direct dependencies exact-pinned
 # (no ^/~ ranges) in both package.json files, and every .npm-script-allowlist
