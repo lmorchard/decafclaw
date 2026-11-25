@@ -241,11 +241,10 @@ class ShellConfig:
     # background job and the tool returns its job handle instead of output.
     # None (default) keeps today's blocking behavior with a hard timeout.
     foreground_wait_budget_sec: float | None = None
-    # Total runtime limit for shell commands (seconds). Replaces the former
-    # hardcoded 30s foreground timeout; for a handed-off job it becomes the job's
-    # max_lifetime, enforced by the existing background-job expiry policy. Kept
-    # separate from foreground_wait_budget_sec (how long to WAIT) and from the
-    # explicit-background default lifetime (BackgroundConfig / 600s).
+    # Total runtime limit for blocking shell commands (seconds). Replaces the
+    # former hardcoded 30s foreground timeout. It bounds the foreground WAIT
+    # only; a handed-off job uses BackgroundConfig.default_max_lifetime_sec and
+    # starts its lifetime clock at the handoff (#1838).
     max_runtime_sec: float = 30.0
     # Dedicated model for the shell auto-approval judge (#1213). Empty = ride
     # on the legacy aux chain (auxiliary_model → active conversation model →

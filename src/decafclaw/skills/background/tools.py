@@ -74,6 +74,10 @@ class BackgroundJob:
     process: asyncio.subprocess.Process
     pid: int
     started_at: float  # time.monotonic()
+    # When the max_lifetime clock started. None means "same as started_at".
+    # A foreground-to-background handoff resets this to the handoff instant so
+    # the time spent waiting in the foreground does not burn the job's budget.
+    lifetime_started_at: float | None = None
     max_lifetime: float = _DEFAULT_MAX_LIFETIME
     stdout_buffer: deque = field(default_factory=lambda: deque(maxlen=_OUTPUT_BUFFER_SIZE))
     stderr_buffer: deque = field(default_factory=lambda: deque(maxlen=_OUTPUT_BUFFER_SIZE))
@@ -114,6 +118,11 @@ class BackgroundJob:
     # wake). The handoff path clears it synchronously on budget expiry, so a job
     # that becomes background always settles exactly once through _finalize_job.
     foreground: bool = False
+
+    @property
+    def lifetime_anchor(self) -> float:
+        """Monotonic start of the max_lifetime clock (handoff resets it)."""
+        return self.started_at if self.lifetime_started_at is None else self.lifetime_started_at
 
 
 async def _read_stream(
@@ -902,7 +911,7 @@ class BackgroundJobManager:
         expired = []
         to_remove = []
         for job in list(self.jobs.values()):
-            if job.status == JobStatus.RUNNING and (now - job.started_at) > job.max_lifetime:
+            if job.status == JobStatus.RUNNING and (now - job.lifetime_anchor) > job.max_lifetime:
                 log.info(f"Background job {job.job_id} expired after {job.max_lifetime}s")
                 await _kill_process(job.process)
                 if job.reader_task and not job.reader_task.done():
@@ -1131,7 +1140,7 @@ async def tool_shell_background_status(
     elapsed_ms = int((now - job.started_at) * 1000)
     remaining_ms = None
     if job.status == JobStatus.RUNNING and math.isfinite(job.max_lifetime):
-        remaining = job.max_lifetime - (now - job.started_at)
+        remaining = job.max_lifetime - (now - job.lifetime_anchor)
         remaining_ms = max(0, int(remaining * 1000))
 
     cursor_mode = cursor == "auto" and not from_start
