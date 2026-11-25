@@ -4,7 +4,11 @@ Description=Check for DecafClaw deploys every 5 minutes
 [Timer]
 OnBootSec=5min
 OnUnitActiveSec=5min
-Persistent=true
+# Keep ticks from aligning with other timers at boot.
+RandomizedDelaySec=60s
+# A missed tick during downtime is recovered by the next one: state is
+# re-derived from git, not from a schedule cursor.
+Persistent=false
 
 [Install]
 WantedBy=timers.target
