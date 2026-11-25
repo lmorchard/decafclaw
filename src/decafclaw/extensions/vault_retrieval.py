@@ -15,6 +15,9 @@ Retrieval runs on every interactive turn unless
 - ``always`` — scored full-body candidates (default, back-compatible).
 - ``headlines`` — title + summary + score only; the model pulls bodies with
   ``vault_read``.
+- ``tapered`` — L0 summary + L1 abstract for the top candidates, L0
+  headlines for the rest; the model pulls full bodies with ``vault_read``
+  (#1815).
 - ``on_demand`` — no injection; the model drives ``vault_search`` /
   ``vault_read`` itself. A skipped source entry still reaches diagnostics.
 
@@ -51,6 +54,7 @@ from decafclaw.memory_context import (
     _trim_to_token_budget,
     format_memory_context,
     format_memory_headlines,
+    format_memory_tapered,
     get_already_retrieved_paths,
     retrieve_memory_context,
 )
@@ -81,6 +85,11 @@ def score_candidates(candidates: list[dict], config: Any) -> list[dict]:
     candidates, but must not push a below-threshold candidate into context
     (#1713). Renormalizing keeps ``min_composite_score`` comparable after the
     importance term was removed.
+
+    Hybrid candidates (#1816) carry ``rrf_score_normalized`` from reciprocal
+    rank fusion. That fused rank is authoritative: re-scoring by cosine
+    similarity would undo the lexical boost, so their composite score is the
+    normalized RRF value and recency/importance only break ties.
     """
     relevance = config.relevance
     now = datetime.now()
@@ -110,10 +119,17 @@ def score_candidates(candidates: list[dict], config: Any) -> list[dict]:
 
         c["recency"] = recency
         c["importance"] = importance
-        c["composite_score"] = w_similarity * similarity + w_recency * recency
+        if c.get("rrf_score_normalized") is not None:
+            c["composite_score"] = min(1.0, max(0.0, float(c["rrf_score_normalized"])))
+        else:
+            c["composite_score"] = w_similarity * similarity + w_recency * recency
 
     candidates.sort(
-        key=lambda c: (c.get("composite_score", 0.0), c.get("importance", 0.0)),
+        key=lambda c: (
+            c.get("composite_score", 0.0),
+            c.get("importance", 0.0),
+            c.get("recency", 0.0),
+        ),
         reverse=True,
     )
     return candidates
@@ -288,7 +304,23 @@ class VaultRetrievalExtension(BaseExtension):
         for r in results:
             r["tokens_estimated"] = estimate_tokens(r.get("entry_text", ""))
 
-        if retrieval_mode == RetrievalMode.HEADLINES:
+        if retrieval_mode == RetrievalMode.TAPERED:
+            retrieval_config = getattr(config, "vault_retrieval", None)
+            max_summary_chars = self.options.get("tapered_summary_max_chars")
+            if max_summary_chars is None:
+                max_summary_chars = self.options.get("headline_summary_max_chars")
+            if max_summary_chars is None:
+                max_summary_chars = getattr(retrieval_config, "tapered_summary_max_chars", 140)
+            top_n_detailed = self.options.get(
+                "top_n_detailed",
+                getattr(retrieval_config, "tapered_top_n_detailed", 1),
+            )
+            formatted = format_memory_tapered(
+                results,
+                top_n_detailed=int(top_n_detailed),
+                max_summary_chars=int(max_summary_chars),
+            )
+        elif retrieval_mode == RetrievalMode.HEADLINES:
             formatted = format_memory_headlines(
                 results,
                 max_summary_chars=self._option(config, "headline_summary_max_chars", 200),
@@ -395,6 +427,9 @@ class VaultRetrievalExtension(BaseExtension):
                         "recency": c.get("recency", 0.0),
                         "importance": c.get("importance", 0.0),
                         "composite_score": c.get("composite_score", 0.0),
+                        "rrf_score": c.get("rrf_score"),
+                        "vector_rank": c.get("vector_rank"),
+                        "fts_rank": c.get("fts_rank"),
                         "included": included,
                         "drop_reason": drop_reason,
                     }

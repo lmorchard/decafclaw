@@ -260,6 +260,24 @@ async def test_provider_streaming_disconnected_stream_marks_error():
 
 @pytest.mark.live_llm
 @pytest.mark.asyncio
+async def test_provider_streaming_interrupt_after_stop_marks_error():
+    """A stream that breaks after a 'stop' finish reason is marked as error, not stop."""
+    provider = OpenAICompatProvider(url="http://test/v1/chat/completions", api_key="dummy")
+    partial_events = [
+        FakeSSEEvent(json.dumps({"choices": [{"delta": {"content": "Hello"}, "finish_reason": "stop"}]})),
+    ]
+
+    with patch(
+        "httpx_sse.aconnect_sse", return_value=ErrorEventSource(partial_events, httpx.ReadError("connection drop"))
+    ):
+        res = await provider.complete("test-model", [], streaming=True)
+
+    assert res["finish_reason"] == FINISH_REASON_ERROR
+    assert res["content"] == "Hello"
+
+
+@pytest.mark.live_llm
+@pytest.mark.asyncio
 async def test_provider_streaming_cancelled_sets_finish_reason():
     """Streaming cancelled via cancel_event sets finish_reason='cancelled'."""
     import asyncio

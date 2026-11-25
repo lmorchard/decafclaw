@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from decafclaw.commands import (
+    apply_command_ctx,
     execute_command,
     format_help,
     parse_command_trigger,
@@ -97,6 +98,19 @@ class TestFormatHelp:
 
 
 class TestExecuteCommand:
+    def test_apply_command_ctx_copies_body_marker(self, ctx):
+        """The turn context inherits which bodies the command already placed
+        in the prompt (#1823)."""
+        from decafclaw.context import Context
+
+        cmd_ctx = Context(config=ctx.config, event_bus=ctx.event_bus)
+        cmd_ctx.skills.body_in_prompt.add("test-cmd")
+        target = Context(config=ctx.config, event_bus=ctx.event_bus)
+
+        apply_command_ctx(target, cmd_ctx)
+
+        assert target.skills.body_in_prompt == {"test-cmd"}
+
     @pytest.mark.asyncio
     async def test_inline_mode(self, ctx):
         skill = SkillInfo(
@@ -115,6 +129,9 @@ class TestExecuteCommand:
         assert result.mode == "inline"
         assert "Do the thing" in result.text
         assert ctx.tools.preapproved == {"vault_read"}
+        # The body is this turn's prompt; the composer must not render it
+        # again in <activated_skills> (#1823).
+        assert ctx.skills.body_in_prompt == {"test-cmd"}
 
     @pytest.mark.asyncio
     async def test_fork_mode(self, ctx):
@@ -136,6 +153,8 @@ class TestExecuteCommand:
         assert result.mode == "fork"
         assert result.text == "child result"
         assert ctx.tools.preapproved == {"shell"}
+        # Fork mode delivers the body to the child, not this turn's prompt.
+        assert ctx.skills.body_in_prompt == set()
 
     @pytest.mark.asyncio
     async def test_shell_skill_not_activated(self, ctx):

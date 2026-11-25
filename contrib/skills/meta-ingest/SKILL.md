@@ -92,7 +92,7 @@ Each child reads its own source file with `workspace_read(<path from the manifes
   "writes": [
     {
       "page": "agent/pages/<folder>/example-slug",
-      "content": "---\ntags: [ingested, example]\nsummary: one-line summary of the page\nsources:\n  - url: https://example.com\n    date: 2026-05-12\n    added_by: meta-ingest\n---\n\nBody synthesizing the source with [[wiki-links]].\n\n## Sources\n- https://example.com (2026-05-12)"
+      "content": "---\ntags: [ingested, example]\nsummary: one-line summary of the page\nsources:\n  - url: https://example.com\n    date: 2026-05-12\n    added_by: meta-ingest\n---\n\nBody synthesizing the source with [[wiki-links]] (page names only — never a URL inside [[...]]).\n\n## Sources\n- [example.com](https://example.com) (2026-05-12)"
     }
   ],
   "notes": "one-line note about what you wrote or why you skipped"

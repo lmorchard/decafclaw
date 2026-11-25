@@ -58,6 +58,10 @@ class FastembedProvider:
         """No model metadata to report — local embedding model only."""
         return None
 
+    def default_context_window(self, model: str) -> int | None:
+        """Embedding models have no context window; not a chat provider."""
+        return None
+
     def _get_model(self, model: str) -> _EmbeddingModel | None:
         """Return the loaded ``TextEmbedding`` for ``model``, or ``None``.
 

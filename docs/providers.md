@@ -210,7 +210,7 @@ Users can switch between these via the web UI dropdown.
 |-------|------|---------|-------------|
 | `provider` | string | required | Key into `providers` dict |
 | `model` | string | required | Model name for the provider |
-| `context_window_size` | int | 0 | Context window in tokens (0 = use compaction_max_tokens) |
+| `context_window_size` | int | 0 | Context window in tokens (0 = discover from the provider, else compaction_max_tokens) |
 | `timeout` | int | 300 | HTTP timeout in seconds |
 | `streaming` | bool | true | Use streaming responses |
 | `reasoning_effort` | string or null | null | Responses reasoning effort; omitted/null uses the model default |
