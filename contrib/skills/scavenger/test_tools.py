@@ -291,8 +291,8 @@ def test_env_reap_continues_after_destroy_exception(mock_fleet, cache):
 def test_scavenger_wake(mock_fleet):
     ctx = MagicMock()
     with patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet):
-        with patch("contrib.skills.scavenger.tools.send_magic_packet") as mock_send:
-            with patch("contrib.skills.scavenger.tools.is_ssh_open", return_value=True):
+        with patch("contrib.skills.scavenger.scavenger.send_magic_packet") as mock_send:
+            with patch("contrib.skills.scavenger.scavenger.is_ssh_open", return_value=True):
                 res = scavenger_wake(ctx, "desktop-linux")
                 assert "awake and answering SSH" in res
                 mock_send.assert_called_once()
@@ -412,6 +412,27 @@ def test_parse_host_listing_containers_volumes_native(engine):
     assert envs["v1"].expires_at == 7000
     assert envs["n1"].kind == "native"
     assert envs["n1"].workspace_path == "workspaces/n1"
+
+
+def test_parse_host_listing_accepts_standalone_labels():
+    out = _listing(
+        containers=[
+            {
+                "Names": ["scavenger-env-new"],
+                "Image": "alpine",
+                "Labels": {
+                    "scavenger.env_id": "new",
+                    "scavenger.expires_at": "5000",
+                    "scavenger.created_at": "1000",
+                    "scavenger.ttl_seconds": "4000",
+                },
+            }
+        ]
+    )
+    parsed = sc.parse_host_listing("h", out)
+    assert parsed is not None
+    assert parsed[0].env_id == "new"
+    assert parsed[0].expires_at == 5000
 
 
 def test_parse_host_listing_skips_unlabelled_and_bad_records():
@@ -576,9 +597,9 @@ def test_container_create_labels_container_and_volume(mock_fleet, cache):
     ):
         res = sc.env_create(mock_fleet, "c1", host_name="desktop-linux", ttl="1h")
     script = next(c for _, c in ssh.commands if "run -d" in c)
-    assert script.count('decafclaw.env_id="c1"') == 2  # container and volume
-    assert 'decafclaw.ttl_seconds="3600"' in script
-    assert f'decafclaw.expires_at="{int(res.expires_at)}"' in script
+    assert script.count('scavenger.env_id="c1"') == 2  # container and volume
+    assert 'scavenger.ttl_seconds="3600"' in script
+    assert f'scavenger.expires_at="{int(res.expires_at)}"' in script
     assert sc.load_leases()["c1"].container_name == "scavenger-env-c1"
 
 
@@ -750,7 +771,7 @@ def test_env_create_container_limit_flags_in_script(mock_fleet, cache):
     create_script = next(command for _, command in ssh.commands if "run -d" in command)
     assert "--network=none" in create_script
     assert "--pids-limit=4096" in create_script
-    assert create_script.count('decafclaw.env_id="limit-env"') == 2
+    assert create_script.count('scavenger.env_id="limit-env"') == 2
 
 
 def test_scavenger_run_tool_network_none(mock_fleet):

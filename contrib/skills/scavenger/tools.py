@@ -28,14 +28,14 @@ from contrib.skills.scavenger.scavenger import (
     env_sync,
     execute_job,
     find_lease,
-    is_ssh_open,
     load_fleet_config,
     load_leases,
     probe_host,
     reconcile_leases,
+    resolve_recipes_dir,
     run_ssh,
     select_best_host,
-    send_magic_packet,
+    wake_host,
 )
 from decafclaw import canvas
 
@@ -54,10 +54,6 @@ def _resolve_local_path(ctx: Any, path: str) -> Optional[str]:
         c = os.path.join(str(cfg.workspace_path), path)
         if os.path.exists(c):
             return os.path.abspath(c)
-    ws_fallback = "/home/lmorchard/.decafclaw/decafclaw/workspace"
-    c = os.path.join(ws_fallback, path)
-    if os.path.exists(c):
-        return os.path.abspath(c)
     return os.path.abspath(path)
 
 
@@ -67,7 +63,7 @@ async def _arm_watch_if_possible(ctx: Any, sentinel_rel: str, reason: str, timeo
         mgr = getattr(ctx, "manager", None)
         if mgr and hasattr(mgr, "file_watches") and getattr(ctx, "conv_id", None):
             cfg = getattr(ctx, "config", None)
-            ws_path = getattr(cfg, "workspace_path", "/home/lmorchard/.decafclaw/decafclaw/workspace")
+            ws_path = getattr(cfg, "workspace_path", None) or os.getcwd()
             abs_target = os.path.abspath(os.path.join(str(ws_path), sentinel_rel))
             await mgr.file_watches.watch(
                 conv_id=ctx.conv_id,
@@ -122,18 +118,7 @@ def scavenger_wake(ctx: Any, host: str) -> str:
     if not cfg.wol_mac:
         return f"Error: Host '{host}' has no wol_mac configured"
 
-    try:
-        send_magic_packet(cfg.wol_mac, cfg.wol_broadcast, cfg.wol_port)
-    except Exception as e:
-        return f"Failed to send WoL packet to {host}: {e}"
-
-    deadline = time.time() + cfg.wol_wait_seconds
-    while time.time() < deadline:
-        time.sleep(1.5)
-        if is_ssh_open(cfg.ssh_alias):
-            return f"Host '{host}' is awake and answering SSH."
-
-    return f"Sent WoL magic packet to {cfg.wol_mac}, but host '{host}' did not answer within {cfg.wol_wait_seconds}s."
+    return wake_host(cfg)["message"]
 
 
 def scavenger_run(
@@ -302,7 +287,8 @@ def scavenger_env_create(
 
     real_setup: Optional[str] = _resolve_local_path(ctx, setup_script)
     cfg = getattr(ctx, "config", None)
-    ws_root = getattr(cfg, "workspace_path", "/home/lmorchard/.decafclaw/decafclaw/workspace")
+    ws_root = getattr(cfg, "workspace_path", None)
+    recipes_dir = resolve_recipes_dir(default=os.path.join(str(ws_root), "dockerfiles") if ws_root else None)
 
     try:
         res = env_create(
@@ -319,7 +305,7 @@ def scavenger_env_create(
             network=network,
             ttl=ttl,
             arch=arch or None,
-            workspace_root=str(ws_root),
+            recipes_dir=recipes_dir,
         )
         return (
             f"Environment '{res.env_id}' reserved on {res.host} ({res.kind}).\n"
@@ -364,7 +350,7 @@ async def scavenger_env_exec(
             ts = int(time.time())
             sentinel_rel = f"tmp/scavenger/sentinels/{env_id}_{ts}.sentinel"
             cfg = getattr(ctx, "config", None)
-            ws_path = getattr(cfg, "workspace_path", "/home/lmorchard/.decafclaw/decafclaw/workspace")
+            ws_path = getattr(cfg, "workspace_path", None) or os.getcwd()
             sentinel_abs = os.path.abspath(os.path.join(str(ws_path), sentinel_rel))
 
             if wake_on.startswith("pattern:"):
@@ -442,7 +428,7 @@ async def scavenger_env_watch(
     ts = int(time.time())
     sentinel_rel = f"tmp/scavenger/sentinels/watch_{env_id}_{ts}.sentinel"
     cfg = getattr(ctx, "config", None)
-    ws_path = getattr(cfg, "workspace_path", "/home/lmorchard/.decafclaw/decafclaw/workspace")
+    ws_path = getattr(cfg, "workspace_path", None) or os.getcwd()
     sentinel_abs = os.path.abspath(os.path.join(str(ws_path), sentinel_rel))
 
     env_arm_watch(
@@ -510,7 +496,7 @@ async def scavenger_env_terminal(ctx: Any, env_id: str, shell: str = "sh") -> st
         return f"Error: Unknown host '{res.host}'"
 
     cfg = getattr(ctx, "config", None)
-    ws_path = getattr(cfg, "workspace_path", "/home/lmorchard/.decafclaw/decafclaw/workspace")
+    ws_path = getattr(cfg, "workspace_path", None) or os.getcwd()
     term_dir = os.path.join(str(ws_path), "tmp", "scavenger", "terminals")
     os.makedirs(term_dir, exist_ok=True)
     wrapper_path = os.path.join(term_dir, f"{env_id}.sh")
