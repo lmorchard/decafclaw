@@ -142,6 +142,79 @@ error; `2` refused before stopping the service (guard, health, backup); `3`
 deployed and rolled back; `4` deploy and rollback both failed (a human is
 needed); `5` blocked by another run's lock or a quarantined SHA.
 
+### Backups
+
+`scripts/backup.py` archives the data that is not reproducible. It runs
+standalone under the system Python, takes a `flock`, and writes
+`backups/decafclaw-YYYYMMDD-HHMMSS.tar.gz` plus a `.json` manifest under the
+data home.
+
+```bash
+# Manual run — the same unit the timer invokes
+systemctl --user start decafclaw-backup.service
+
+# Or directly
+/usr/bin/python3 ~/decafclaw/scripts/backup.py \
+    --data-home ~/.decafclaw/decafclaw \
+    --repo-dir ~/decafclaw \
+    --backup-dir ~/.decafclaw/decafclaw/backups
+```
+
+Install the daily timer:
+
+```bash
+cp deploy/decafclaw-backup.service deploy/decafclaw-backup.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now decafclaw-backup.timer
+```
+
+**Scope.** Included: `workspace/sessions/`, `workspace/drafts/`,
+`workspace/todos/`, `workspace/notifications/`, `workspace/newsletter/`,
+`config.json`, `USER.md`, `CUSTOM.md`, `skills/`, `approval_state/`,
+`schedules/`, `scheduled_wakes/`, `file_watches/`, `secrets/`, `web/`,
+`web_conversations.json`, and `workspace_index.json`. Excluded: git checkouts,
+`.venv`, `workspace/embeddings.db` (and its `-wal`/`-shm` siblings),
+`workspace/telemetry/`, `workspace/audit.jsonl`, `workspace/tool_usage.jsonl`,
+and prior backups. The embedding index is derived: `make reindex` rebuilds it
+after a restore.
+
+**`.env`.** The repository's `.env` (credentials) is outside the data home and
+is archived as a separate `env` member with mode `0600`. The archive itself is
+written `0600`.
+
+**Manifest.** `timestamp`, `status` (`ok`/`deferred`/`locked`/`failed`),
+archive name, size, file count, included paths, excluded paths, the
+`config.json` SHA-256, deferral count, and any error. A deferred or failed run
+still writes a manifest, so a persistently failing backup is visible.
+
+**Idle policy.** If `/health` reports an active turn, the run writes a
+`deferred` manifest and exits 0 so the timer retries. After four consecutive
+deferrals it backs up anyway. An unreachable `/health` does not defer: the
+service is already down, and the backup is still useful. `--force` skips the
+check.
+
+**Retention.** After a successful write, keep the 5 newest archives; the
+archive just written is never pruned. Manifests are kept to the newest 30.
+
+**Restore.**
+
+```bash
+systemctl --user stop decafclaw
+mv ~/.decafclaw/decafclaw ~/.decafclaw/decafclaw.pre-restore
+mkdir -p ~/.decafclaw/decafclaw
+tar -xzf ~/.decafclaw/decafclaw.pre-restore/backups/decafclaw-YYYYMMDD-HHMMSS.tar.gz \
+    -C ~/.decafclaw/decafclaw
+# The .env member is the repo's .env, not part of the data home.
+tar -xzf ~/.decafclaw/decafclaw.pre-restore/backups/decafclaw-YYYYMMDD-HHMMSS.tar.gz \
+    -C ~/decafclaw env && mv ~/decafclaw/env ~/decafclaw/.env && chmod 600 ~/decafclaw/.env
+systemctl --user start decafclaw
+make reindex
+```
+
+The restore path is exercised by extracting an archive into a scratch
+directory and booting the ephemeral instance against it:
+`scripts/ephemeral_instance.py --seed-data <scratch> ...`.
+
 ## Service Management
 
 ```bash
