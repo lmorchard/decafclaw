@@ -1597,3 +1597,19 @@ class TestWorkspaceOutline:
         res_after = tool_workspace_read(ctx, "unicode_nl.py")
         assert "value = 42" in res_after.text
         assert "first\u2028second" in res_after.text
+
+
+def test_edit_identical_text_is_a_noop_error(ctx):
+    """old_text == new_text must fail fast, not report a successful replace."""
+    tool_workspace_write(ctx, "same.txt", "unchanged\n")
+    path = ctx.config.workspace_path / "same.txt"
+    before = path.read_text()
+    before_mtime = path.stat().st_mtime_ns
+    before_version = content_version(before)
+
+    result = tool_workspace_edit(ctx, "same.txt", "unchanged", "unchanged")
+
+    assert "[error: old_text and new_text are identical" in _text(result)
+    assert path.read_text() == before
+    assert path.stat().st_mtime_ns == before_mtime
+    assert content_version(path.read_text()) == before_version

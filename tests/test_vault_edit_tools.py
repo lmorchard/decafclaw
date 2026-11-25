@@ -274,3 +274,16 @@ class TestSectionToolsExcised:
         names = {td["function"]["name"] for td in TOOL_DEFINITIONS}
         assert not {"vault_section", "vault_move_lines", "vault_show_sections"} & names
         assert {"vault_edit", "vault_append", "vault_replace_lines"} <= names
+
+
+class TestVaultEditIdenticalText:
+    @pytest.mark.asyncio
+    async def test_identical_text_is_a_noop_error(self, ctx, note):
+        before = note.read_text()
+        before_mtime = note.stat().st_mtime_ns
+
+        result = await _edit(ctx, "agent/pages/note", "Original background.", "Original background.")
+
+        assert "[error: old_text and new_text are identical" in result.text
+        assert note.read_text() == before
+        assert note.stat().st_mtime_ns == before_mtime
