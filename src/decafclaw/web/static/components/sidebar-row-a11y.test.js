@@ -279,9 +279,9 @@ describe('conversation-sidebar row keyboard access', () => {
     expect(store.listConversations.mock.calls).toEqual([['Work'], ['Work'], ['Work']]);
   });
 
-  it('does not open the conversation for keys pressed on its action buttons', async () => {
+  it('does not open the conversation for keys pressed on its menu button', async () => {
     const { sidebar, store } = await mount();
-    const buttons = sidebar.querySelectorAll('.conv-list .conv-item:not(.wiki-folder-item) .conv-archive');
+    const buttons = sidebar.querySelectorAll('.conv-list .conv-item:not(.wiki-folder-item) .conv-menu-btn');
     expect(buttons.length).toBeGreaterThan(0);
     for (const button of buttons) {
       press(button, 'Enter');
@@ -289,6 +289,37 @@ describe('conversation-sidebar row keyboard access', () => {
     }
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(store.selectConversation).not.toHaveBeenCalled();
+  });
+
+  it('closes the session menu with Escape and returns focus to its button', async () => {
+    const { sidebar } = await mount();
+    const row = sidebar.querySelector('.conv-list .conv-item:not(.wiki-folder-item)');
+    const button = row.querySelector('.conv-menu-btn');
+    const menu = row.querySelector('details.conv-menu');
+    menu.open = true;
+    await sidebar.updateComplete;
+    button.focus();
+
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await sidebar.updateComplete;
+
+    expect(menu.open).toBe(false);
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('opens the session menu to reveal every per-session action', async () => {
+    const { sidebar } = await mount();
+    const row = sidebar.querySelector('.conv-list .conv-item:not(.wiki-folder-item)');
+    const button = row.querySelector('.conv-menu-btn');
+    expect(button).toBeTruthy();
+    expect(button.getAttribute('aria-label')).toBe('Session actions');
+
+    const menu = row.querySelector('details.conv-menu');
+    menu.open = true;
+    await sidebar.updateComplete;
+
+    const labels = [...row.querySelectorAll('.conv-menu-item')].map((b) => b.textContent.trim());
+    expect(labels).toEqual(['Rename…', 'Move to folder…', 'Archive conversation', 'Regenerate title']);
   });
 
   // #944: the row buttons are hidden until hover. Focus inside the row must
@@ -321,7 +352,6 @@ describe('conversation-sidebar row keyboard access', () => {
     }
 
     for (const [name, rowSelector, labels] of [
-      ['conversation', '.conv-list .conv-item:not(.wiki-folder-item)', ['Move to folder…', 'Regenerate title', 'Archive conversation']],
       ['chat folder', '.conv-list .wiki-folder-item', ['Delete folder']],
     ]) {
       it(`shows the ${name} row buttons while focus is in the row, with their labels`, async () => {

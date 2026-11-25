@@ -134,6 +134,64 @@ conversation-sidebar .conv-item {
   display: flex;
   align-items: center;
   gap: 0.25rem;
+  position: relative;
+}
+
+/* One visible kebab per row; all per-session actions live in its menu
+   (#1704). */
+conversation-sidebar .conv-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+conversation-sidebar .conv-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0 0.3rem;
+  opacity: 0.6;
+  line-height: 1;
+}
+
+conversation-sidebar .conv-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+conversation-sidebar .conv-item:hover .conv-menu > summary,
+conversation-sidebar .conv-item:focus-within .conv-menu > summary,
+conversation-sidebar .conv-menu[open] > summary {
+  opacity: 1;
+}
+
+conversation-sidebar .conv-menu-items {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  min-width: 12rem;
+  display: grid;
+  padding: 0.25rem;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.4rem;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 25%);
+}
+
+conversation-sidebar .conv-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  color: var(--pico-color);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+conversation-sidebar .conv-menu-item:hover,
+conversation-sidebar .conv-menu-item:focus-visible {
+  background: var(--pico-form-element-background-color);
 }
 
 conversation-sidebar .conv-item .conv-title {

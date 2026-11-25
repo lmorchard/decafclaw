@@ -112,6 +112,8 @@ export class ConversationSidebar extends LitElement {
       this._contextInspectorOpen = !this._contextInspectorOpen;
     };
     document.addEventListener('toggle-context-inspector', this._onToggleInspector);
+    this._onDocumentClick = (/** @type {MouseEvent} */ e) => this.#handleDocumentClick(e);
+    document.addEventListener('click', this._onDocumentClick);
     // The store is the single source of truth: render() reads its getters
     // directly, so this handler only runs the per-change side effects and
     // asks Lit to re-render (#1408). The #last* fields detect transitions;
@@ -149,6 +151,7 @@ export class ConversationSidebar extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('toggle-context-inspector', this._onToggleInspector);
+    document.removeEventListener('click', this._onDocumentClick);
     this.store?.removeEventListener('change', this._onStoreChange);
   }
 
@@ -857,21 +860,54 @@ export class ConversationSidebar extends LitElement {
     return nothing;
   }
 
+  /** Close every open per-row session menu. */
+  #closeConversationMenus() {
+    for (const menu of Array.from(this.renderRoot.querySelectorAll('details.conv-menu[open]'))) {
+      /** @type {HTMLDetailsElement} */ (menu).open = false;
+    }
+  }
+
+  /** @param {Event} e */
+  #handleConversationMenuToggle(e) {
+    const menu = /** @type {HTMLDetailsElement} */ (e.currentTarget);
+    if (!menu.open) return;
+    for (const other of Array.from(this.renderRoot.querySelectorAll('details.conv-menu[open]'))) {
+      if (other !== menu) /** @type {HTMLDetailsElement} */ (other).open = false;
+    }
+  }
+
+  /** @param {KeyboardEvent} e */
+  #handleConversationMenuKeydown(e) {
+    if (e.key !== 'Escape') return;
+    const menu = /** @type {HTMLDetailsElement} */ (e.currentTarget);
+    menu.open = false;
+    /** @type {HTMLElement|null} */ (menu.querySelector('summary'))?.focus();
+    e.stopPropagation();
+  }
+
+  /** @param {MouseEvent} e */
+  #handleDocumentClick(e) {
+    const target = /** @type {Element|null} */ (e.target);
+    if (target?.closest('conversation-sidebar details.conv-menu')) return;
+    this.#closeConversationMenus();
+  }
+
   /**
-   * Render a conversation item row in the sidebar list.
+   * Render a conversation item row in the sidebar list. Per-session actions
+   * live in a kebab menu so the row keeps a single visible control as actions
+   * accumulate (#1704).
    * @param {import("../lib/conversation-store.js").ConversationMeta | import("../lib/conversation-store.js").SystemConversationMeta} conv
    * @param {object}   [opts]
    * @param {boolean}  [opts.isActive]    - Whether this row is currently selected
    * @param {string}   [opts.extraClass]  - Additional CSS class ('archived', 'system')
-   * @param {string}   [opts.actionLabel] - Primary action button label (e.g. '×' or '↩')
-   * @param {string}   [opts.actionTitle] - Button title text
-   * @param {function} [opts.onAction]    - Click handler for the action button
-   * @param {string}   [opts.action2Label] - Second action button label
-   * @param {string}   [opts.action2Title] - Second action button title
-   * @param {function} [opts.onAction2]   - Click handler for the second action button
+   * @param {string}   [opts.actionTitle] - Menu label for the primary action
+   * @param {function} [opts.onAction]    - Handler for the primary action
+   * @param {string}   [opts.action2Title] - Menu label for the second action
+   * @param {function} [opts.onAction2]   - Handler for the second action
+   * @param {function} [opts.onRename]    - Rename handler (menu item)
    * @param {function} [opts.onDblClick]  - Double-click handler on the title span
    * @param {function} [opts.onMove]      - Move-to-folder handler (root rows, #1277)
-   * @param {string}   [opts.moveTitle]   - Move button title text
+   * @param {string}   [opts.moveTitle]   - Move menu label
    * @param {boolean}  [opts.draggable]   - Root row can be dragged onto a folder (#1277)
    * @param {function} [opts.onDragStart] - Drag start handler (root rows)
    * @param {function} [opts.onDragEnd]   - Drag end handler (root rows)
@@ -895,6 +931,29 @@ export class ConversationSidebar extends LitElement {
     }
     const titleAttr = titleSuffix ? `${conv.title} (${titleSuffix})` : conv.title;
 
+    /** @type {Array<{label: string, run: (e: MouseEvent) => void}>} */
+    const menuItems = [];
+    if (opts.onRename) {
+      menuItems.push({ label: 'Rename…', run: () => opts.onRename(conv.conv_id) });
+    }
+    if (opts.onMove) {
+      menuItems.push({
+        label: opts.moveTitle || 'Move to folder…',
+        run: (/** @type {MouseEvent} */ e) => {
+          const trigger = /** @type {HTMLElement|null} */ (
+            /** @type {Element} */ (e.currentTarget).closest('details')?.querySelector('summary')
+          );
+          opts.onMove(conv.conv_id, trigger);
+        },
+      });
+    }
+    if (opts.onAction) {
+      menuItems.push({ label: opts.actionTitle || 'Action', run: () => opts.onAction(conv.conv_id) });
+    }
+    if (opts.onAction2) {
+      menuItems.push({ label: opts.action2Title || 'Action', run: () => opts.onAction2(conv.conv_id) });
+    }
+
     return html`
       <div
         class=${classes.join(' ')}
@@ -914,33 +973,37 @@ export class ConversationSidebar extends LitElement {
         >${conv.title}</span>
         ${opts.badge ? html`<span class="conv-type-badge">${opts.badge}</span>` : nothing}
         ${this.#renderStatusIndicator(status)}
-        ${opts.onMove ? html`
-          <button
-            class="conv-archive conv-move-btn"
-            @click=${(/** @type {MouseEvent} */ e) => {
-              e.stopPropagation();
-              opts.onMove(conv.conv_id, /** @type {HTMLElement} */ (e.currentTarget));
-            }}
-            title=${opts.moveTitle || 'Move to folder'}
-            aria-label=${opts.moveTitle || 'Move to folder'}
-            aria-haspopup="dialog"
-          >\u21AA</button>
-        ` : nothing}
-        ${opts.onAction2 ? html`
-          <button
-            class="conv-archive"
-            @click=${(/** @type {Event} */ e) => { e.stopPropagation(); opts.onAction2(conv.conv_id); }}
-            title=${opts.action2Title || ''}
-            aria-label=${opts.action2Title || nothing}
-          >${opts.action2Label}</button>
-        ` : nothing}
-        ${opts.onAction ? html`
-          <button
-            class="conv-archive"
-            @click=${(/** @type {Event} */ e) => { e.stopPropagation(); opts.onAction(conv.conv_id); }}
-            title=${opts.actionTitle || ''}
-            aria-label=${opts.actionTitle || nothing}
-          >${opts.actionLabel}</button>
+        ${menuItems.length > 0 ? html`
+          <details
+            class="conv-menu"
+            @toggle=${this.#handleConversationMenuToggle}
+            @keydown=${this.#handleConversationMenuKeydown}
+          >
+            <summary
+              class="conv-menu-btn"
+              aria-haspopup="menu"
+              aria-label="Session actions"
+              title="Session actions"
+              @click=${(/** @type {MouseEvent} */ e) => e.stopPropagation()}
+              @keydown=${(/** @type {KeyboardEvent} */ e) => e.stopPropagation()}
+            >\u22ee</summary>
+            <div class="conv-menu-items" role="menu">
+              ${menuItems.map((item) => html`
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="conv-menu-item"
+                  @click=${(/** @type {MouseEvent} */ e) => {
+                    e.stopPropagation();
+                    const target = /** @type {Element} */ (e.currentTarget);
+                    const menu = /** @type {HTMLDetailsElement|null} */ (target.closest('details'));
+                    if (menu) menu.open = false;
+                    item.run(e);
+                  }}
+                >${item.label}</button>
+              `)}
+            </div>
+          </details>
         ` : nothing}
       </div>
     `;
@@ -1045,12 +1108,11 @@ export class ConversationSidebar extends LitElement {
     const children = convs.slice(1);
     const parentOpts = {
       isActive: parent?.conv_id === this.#activeId,
-      actionLabel: '\u00d7',
       actionTitle: 'Archive conversation',
       onAction: (id) => this.#handleArchive(id),
-      action2Label: '✨',
       action2Title: 'Regenerate title',
       onAction2: (id) => this.#handleRetitle(id),
+      onRename: () => this.#handleRename(parent.conv_id, parent.title),
       onDblClick: (/** @type {Event} */ e) => { e.stopPropagation(); this.#handleRename(parent.conv_id, parent.title); },
       // #1277 — root rows are the only move sources; children follow them.
       onMove: (/** @type {string} */ id, /** @type {HTMLElement} */ trigger) => {
@@ -1257,10 +1319,8 @@ export class ConversationSidebar extends LitElement {
         ${this._chatSection === '_archived'
           ? conversations.map(c => this.#renderConversationItem(c, {
               extraClass: 'archived',
-              actionLabel: '\u21a9',
               actionTitle: 'Unarchive conversation',
               onAction: (id) => this.#handleUnarchive(id),
-              action2Label: '\u{1F5D1}',
               action2Title: 'Delete conversation permanently',
               onAction2: (id) => this.#handleDelete(id),
             }))
