@@ -828,6 +828,8 @@ def tool_workspace_edit(
 ) -> str | ToolResult:
     """Edit a file by replacing exact text matches."""
     log.info(f"[tool:workspace_edit] {path}")
+    if old_text == new_text:
+        return ToolResult(text="[error: old_text and new_text are identical; no changes were made]")
     try:
         resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
     except PathContainmentError as exc:
