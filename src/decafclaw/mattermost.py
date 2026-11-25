@@ -369,6 +369,7 @@ class MattermostClient:
         if (trimmed_cmd.startswith("!update") and (trimmed_cmd == "!update" or trimmed_cmd[7:8].isspace())) or (
             trimmed_cmd.startswith("/update") and (trimmed_cmd == "/update" or trimmed_cmd[7:8].isspace())
         ):
+            from .restart_wake import new_restart_wake
             from .self_update import perform_self_update
 
             arg = ""
@@ -378,7 +379,20 @@ class MattermostClient:
                 arg = trimmed_cmd[7:].strip().lower()
             confirmed = arg in ("confirm", "yes", "-y", "--yes")
             restart_coord = getattr(manager, "restart_coordinator", None) if manager else None
-            result = await perform_self_update(confirmed=confirmed, manager=manager, restart_coordinator=restart_coord)
+            result = await perform_self_update(
+                confirmed=confirmed,
+                manager=manager,
+                restart_coordinator=restart_coord,
+                config=getattr(manager, "config", None),
+                wake=new_restart_wake(
+                    conv_id=conv_id,
+                    reason="Deploy requested via !update",
+                    user_id=last_msg.get("sender_id", ""),
+                    channel_id=channel_id,
+                    thread_id=root_id or "",
+                    transport="mattermost",
+                ),
+            )
             await self.send(channel_id, result.message, root_id=root_id)
             return
 
