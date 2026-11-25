@@ -241,6 +241,12 @@ async def tool_vault_write(ctx: "Context", page: str, content: str) -> str | Too
         return gate_result
 
     existed = path.exists()  # capture before write so kind reflects pre-state
+    previous = ""
+    if existed:
+        try:
+            previous = path.read_text(encoding="utf-8", newline="")
+        except (OSError, UnicodeDecodeError) as exc:
+            log.debug("vault_write: could not read previous %r: %s", page, exc)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
 
@@ -270,6 +276,14 @@ async def tool_vault_write(ctx: "Context", page: str, content: str) -> str | Too
         "created": not existed,
         "bytes_written": len(content.encode("utf-8")),
     }
+    try:
+        warnings = detect_write_regressions(None if not existed else previous, content)
+    except Exception as exc:  # pragma: no cover — advisory only, never fail a write
+        log.debug("vault_write: integrity check failed for %r: %s", page, exc)
+        warnings = []
+    if warnings:
+        result_text = _append_warnings(result_text, warnings)
+        result_data["advisories"] = warnings
     # Deterministic broken-link check (no LLM, fail-open). The page is already
     # on disk, so a [[link]] to itself resolves and is not reported. Uses the
     # same helpers as vault_backlinks so the rules match exactly.
@@ -322,6 +336,76 @@ async def _gate_vault_mutation(
     )
 
 
+def _heading_count(text: str) -> int:
+    """Count level-1 ATX headings in a page body (frontmatter excluded)."""
+    from decafclaw.frontmatter import split_frontmatter
+
+    _raw, body = split_frontmatter(text)
+    return sum(1 for line in body.splitlines() if line.lstrip().startswith("# "))
+
+
+def _frontmatter_fields(text: str) -> dict:
+    """Parse a page's frontmatter, returning {} when absent or malformed."""
+    from decafclaw.frontmatter import parse_frontmatter_block, split_frontmatter
+
+    raw, _body = split_frontmatter(text)
+    if raw is None:
+        return {}
+    metadata, error = parse_frontmatter_block(raw)
+    if error:
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
+_AUDITED_FIELDS = ("summary", "tags", "keywords")
+
+
+def detect_write_regressions(before: str | None, after: str) -> list[str]:
+    """Report metadata lost by a write, and missing metadata on a new page.
+
+    Deterministic and advisory: no LLM, no network, never raises. Returns a
+    list of human-readable warnings; an empty list means nothing to report.
+
+    `before` is the page content prior to the write, or None when the write
+    created the page.
+
+    Detects three things:
+      - a field (`summary`/`tags`/`keywords`) present before and gone after
+      - a level-1 heading present before and gone after
+      - a newly created page with no frontmatter block at all
+    """
+    warnings: list[str] = []
+
+    from decafclaw.frontmatter import split_frontmatter
+
+    after_fields = _frontmatter_fields(after)
+
+    if before is None:
+        if split_frontmatter(after)[0] is None:
+            warnings.append("new page has no frontmatter block; add tags/summary (vault_write does not generate them)")
+        return warnings
+
+    before_fields = _frontmatter_fields(before)
+    dropped = [
+        field
+        for field in _AUDITED_FIELDS
+        if before_fields.get(field) not in (None, "", []) and after_fields.get(field) in (None, "", [])
+    ]
+    if dropped:
+        warnings.append("frontmatter lost by this write: " + ", ".join(dropped))
+
+    if _heading_count(before) > 0 and _heading_count(after) == 0:
+        warnings.append("page lost its level-1 heading (title line) in this write")
+
+    return warnings
+
+
+def _append_warnings(text: str, warnings: list[str]) -> str:
+    if not warnings:
+        return text
+    return text + "\nAdvisory: " + "; ".join(warnings)
+
+
 def _diff_result(
     page: str,
     summary: str,
@@ -331,10 +415,12 @@ def _diff_result(
     *,
     version: str,
     data: dict | None = None,
+    warnings: list[str] | None = None,
 ) -> ToolResult:
     """Build the shared edit-style result: summary, diff, version, diff widget."""
     text = f"{summary}\n\n{diff}" if diff else summary
     text += f"\n\nVersion: {version}"
+    text = _append_warnings(text, warnings or [])
     oversized = (
         len(before) > MAX_DIFF_WIDGET_CHARS
         or len(after) > MAX_DIFF_WIDGET_CHARS
@@ -432,6 +518,7 @@ async def tool_vault_edit(
         new_normalized,
         version=content_version(new_content),
         data={"replaced": count},
+        warnings=detect_write_regressions(content, new_content),
     )
 
 
@@ -493,6 +580,7 @@ async def tool_vault_append(ctx: "Context", page: str, content: str) -> ToolResu
         new_content.replace("\r\n", "\n"),
         version=content_version(new_content),
         data={"created": created, "bytes_appended": len(content.encode("utf-8"))},
+        warnings=detect_write_regressions(None if created else existing, new_content),
     )
 
 
@@ -541,6 +629,7 @@ async def tool_vault_replace_lines(
         existing.replace("\r\n", "\n"),
         new_content.replace("\r\n", "\n"),
         version=content_version(new_content),
+        warnings=detect_write_regressions(existing, new_content),
     )
 
 
