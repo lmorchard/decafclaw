@@ -90,6 +90,9 @@ def _expand_background_event(rec: dict) -> list[dict]:
         exit_code=rec.get("exit_code"),
         stdout=rec.get("stdout_tail", ""),
         stderr=rec.get("stderr_tail", ""),
+        # Records written since #1825 persist the note. Older rows have none,
+        # and format_status_text re-derives it from exit_code for those.
+        kill_note=rec.get("kill_note"),
     )
     return [
         {

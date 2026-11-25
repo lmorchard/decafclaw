@@ -315,6 +315,12 @@ def _final_sticky_data(job: BackgroundJob) -> dict:
         step_status = "failed"
         summary = f"Failed: {_cmd_preview(job.command)} (exit {job.exit_code})"
         note = f"exit {job.exit_code}" + (f" — {last_line[:120]}" if last_line else "")
+        # Name the cgroup cap in the sticky too (#1825). A run killed for
+        # memory looks identical to a crash here otherwise, and the sticky is
+        # often the only surface visible while the job is being watched.
+        kill_note = describe_kill(job.exit_code, label="Background command")
+        if kill_note:
+            summary = f"{summary} — {kill_note}"
     step = progress_step(_cmd_preview(job.command), step_status, note=note)
     return progress_payload("Background job", summary, [step])
 
@@ -528,6 +534,10 @@ def build_background_event_record(
         "command": command,
         "status": status,
         "exit_code": exit_code,
+        # Persisted with the record, not derived at render time (#1825): the
+        # woken agent expands this archive row into status text, and a bare
+        # exit code there is the same dead end the live status used to be.
+        "kill_note": describe_kill(exit_code, label="Background command"),
         "stdout_tail": _tail_clamped(stdout_buffer, n),
         "stderr_tail": _tail_clamped(stderr_buffer, n),
         "elapsed_ms": elapsed_ms,
@@ -546,12 +556,16 @@ def format_status_text(
     exit_code: int | None,
     stdout: str,
     stderr: str,
+    kill_note: str | None = None,
 ) -> str:
     """Render a background-job status as markdown text.
 
     Shared by tool_shell_background_status (when the agent polls) and the
     ContextComposer's expansion of background_event archive records (so a
     woken agent sees the same format).
+
+    ``kill_note`` lets a caller forward a note persisted on the archive record;
+    when omitted it is derived from ``exit_code``.
     """
     parts = [f"**Job `{job_id}`** — {status}"]
     parts.append(f"- **Command:** `{command}`")
@@ -561,6 +575,14 @@ def format_status_text(
         parts.append(f"- **Remaining:** {remaining_ms / 1000:.1f}s")
     if exit_code is not None:
         parts.append(f"- **Exit code:** {exit_code}")
+        # Say when a cgroup limit killed it (#1825). A bare "-15" reads as a
+        # mystery crash and sends the agent chasing a supervisor bug that does
+        # not exist; the caps config, not the code, is the thing to change.
+        # _notify_job_exit has always carried this note, but the status text
+        # is what the agent reads while debugging, so it has to carry it too.
+        note = kill_note or describe_kill(exit_code, label="Background command")
+        if note:
+            parts.append(f"- **Likely cause:** {note}")
     if stdout:
         parts.append(f"**stdout:**\n```\n{stdout}\n```")
     if stderr:

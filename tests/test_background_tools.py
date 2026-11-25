@@ -1725,3 +1725,150 @@ def test_expired_record_keeps_partial_output():
     assert rec["status"] == JobStatus.EXPIRED
     assert rec["stdout_tail"] == "303 passed, 2 failed"
     assert rec["stderr_tail"] == "F"
+
+
+# -- cgroup cap diagnosis (#1825) --------------------------------------------
+#
+# A capped command is OOM-killed inside its systemd scope, and OOMPolicy=stop
+# then SIGTERMs the process the caller waits on. So a memory cap most often
+# surfaces as a bare -15, indistinguishable from a crash unless something says
+# so. describe_kill existed and _notify_job_exit used it, but the status text —
+# the surface the agent actually reads while debugging — did not, which sent an
+# agent chasing a supervisor bug that did not exist.
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "expected"),
+    [
+        (-9, "memory cap"),
+        (137, "memory cap"),
+        (-24, "CPU time limit"),
+        (152, "CPU time limit"),
+        (-15, "terminated by SIGTERM"),
+        (143, "terminated by SIGTERM"),
+    ],
+)
+def test_status_text_explains_cgroup_kills(exit_code, expected):
+    """Every cap-kill signature carries a note, not just a bare exit code."""
+    text = tools.format_status_text(
+        job_id="abc",
+        status=JobStatus.ERROR,
+        command="uv run pytest tests/",
+        pid=1,
+        elapsed_ms=200_000,
+        remaining_ms=None,
+        exit_code=exit_code,
+        stdout="",
+        stderr="",
+    )
+    assert "- **Exit code:** " in text
+    assert "- **Likely cause:**" in text
+    assert expected in text
+
+
+def test_status_text_omits_cause_for_clean_and_ordinary_failures():
+    """A successful run, or a plain non-zero exit, gets no misleading note."""
+    for exit_code in (0, 1, 2):
+        text = tools.format_status_text(
+            job_id="abc",
+            status=JobStatus.COMPLETED if exit_code == 0 else JobStatus.ERROR,
+            command="go test ./...",
+            pid=1,
+            elapsed_ms=1_000,
+            remaining_ms=None,
+            exit_code=exit_code,
+            stdout="",
+            stderr="",
+        )
+        assert "Likely cause" not in text
+
+
+def test_status_text_forwards_persisted_kill_note():
+    """A note recorded at job exit wins over re-deriving it."""
+    text = tools.format_status_text(
+        job_id="abc",
+        status=JobStatus.ERROR,
+        command="cargo build",
+        pid=1,
+        elapsed_ms=1_000,
+        remaining_ms=None,
+        exit_code=-15,
+        stdout="",
+        stderr="",
+        kill_note="Background command ran out of room in its cgroup scope.",
+    )
+    assert "ran out of room in its cgroup scope" in text
+
+
+def test_background_event_record_persists_kill_note():
+    """The archive row carries the note so a woken agent inherits it."""
+    from collections import deque
+
+    rec = tools.build_background_event_record(
+        job_id="abc",
+        command="uv run pytest",
+        status=JobStatus.ERROR,
+        exit_code=-9,
+        stdout_buffer=deque(),
+        stderr_buffer=deque(),
+        elapsed_ms=1000,
+        completion_tail_lines=5,
+    )
+    assert rec["kill_note"]
+    assert "memory cap" in rec["kill_note"]
+
+
+def test_background_event_record_kill_note_none_for_clean_exit():
+    from collections import deque
+
+    rec = tools.build_background_event_record(
+        job_id="abc",
+        command="echo hi",
+        status=JobStatus.COMPLETED,
+        exit_code=0,
+        stdout_buffer=deque(),
+        stderr_buffer=deque(),
+        elapsed_ms=10,
+        completion_tail_lines=5,
+    )
+    assert rec["kill_note"] is None
+
+
+def test_expanded_background_event_reports_capped_kill():
+    """A woken agent expanding the archive row sees the cause, not just -15."""
+    import json as _json
+
+    from decafclaw.context_messages import _expand_background_event
+
+    rec = {
+        "role": "background_event",
+        "job_id": "abc",
+        "status": JobStatus.ERROR.value,
+        "command": "uv run pytest tests/",
+        "exit_code": -15,
+        "stdout_tail": "",
+        "stderr_tail": "",
+        "elapsed_ms": 200_000,
+    }
+    expanded = _expand_background_event(rec)
+    tool_content = _json.loads(_json.dumps(expanded[1]["content"]))
+    assert "Likely cause" in tool_content
+    assert "SIGTERM" in tool_content
+
+
+def test_expanded_legacy_record_without_kill_note_still_explains():
+    """Rows written before #1825 have no kill_note; derive it from exit_code."""
+    from decafclaw.context_messages import _expand_background_event
+
+    rec = {
+        "role": "background_event",
+        "job_id": "legacy",
+        "status": JobStatus.ERROR.value,
+        "command": "make test",
+        "exit_code": -9,
+        "stdout_tail": "",
+        "stderr_tail": "",
+        "elapsed_ms": 1000,
+    }
+    expanded = _expand_background_event(rec)
+    assert "memory cap" in expanded[1]["content"]
