@@ -1,0 +1,17 @@
+[Unit]
+Description=DecafClaw data backup
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/decafclaw
+# System Python, not the project venv: the backup must run when the app's
+# environment is broken.
+ExecStart=/usr/bin/python3 %h/decafclaw/scripts/backup.py \
+    --data-home %h/.decafclaw/decafclaw \
+    --repo-dir %h/decafclaw \
+    --backup-dir %h/.decafclaw/decafclaw/backups
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=decafclaw-backup

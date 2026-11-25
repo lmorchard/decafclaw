@@ -110,6 +110,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Client output format (default summary).",
     )
     parser.add_argument("--log-level", default="INFO", help="Child LOG_LEVEL (default INFO).")
+    parser.add_argument(
+        "--seed-data",
+        default=None,
+        help=(
+            "Copy this directory into the temp DATA_HOME before startup. Used to verify "
+            "that a restored backup boots; the scripted config.json still overwrites the seed's."
+        ),
+    )
     return parser
 
 
@@ -332,6 +340,11 @@ def main(argv: list[str] | None = None) -> int:
 
         port = _free_port()
         temp = Path(tempfile.mkdtemp(prefix="decafclaw-ephemeral-"))
+        if args.seed_data:
+            seed = Path(args.seed_data)
+            if not seed.is_dir():
+                raise LauncherError(f"seed data directory not found: {seed}")
+            shutil.copytree(seed, temp, dirs_exist_ok=True)
         _write_config(temp, port)
         token = _create_token(temp)
         env = _child_env(temp, port, args.log_level)
