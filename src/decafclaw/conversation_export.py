@@ -20,6 +20,8 @@ import json
 import re
 from datetime import datetime
 
+from .wake_replay import SILENT_WAKE_TITLE, normalize_suppressed_wakes
+
 # Roles we render. Everything else is silently skipped.
 EXPORTED_ROLES = frozenset({"user", "assistant", "tool", "background_event"})
 
@@ -30,6 +32,7 @@ MAX_FENCED_BYTES = 16 * 1024
 
 def render_markdown(messages: list[dict], conv_id: str) -> str:
     """Render an archive message list as a markdown transcript."""
+    messages = normalize_suppressed_wakes(messages)
     parts: list[str] = [
         f"# Conversation {conv_id}",
         "",
@@ -47,7 +50,10 @@ def render_markdown(messages: list[dict], conv_id: str) -> str:
         if role == "user":
             parts.extend(_render_user(msg))
         elif role == "assistant":
-            parts.extend(_render_assistant(msg, tool_names))
+            if msg.get("suppress_user_message"):
+                parts.extend(_render_silent_wake(msg))
+            else:
+                parts.extend(_render_assistant(msg, tool_names))
         elif role == "tool":
             parts.extend(_render_tool(msg, tool_names))
         elif role == "background_event":
@@ -60,6 +66,15 @@ def render_markdown(messages: list[dict], conv_id: str) -> str:
 def _render_user(msg: dict) -> list[str]:
     out = ["## User", "", _content_text(msg)]
     out.extend(_attachment_refs(msg))
+    return out
+
+
+def _render_silent_wake(msg: dict) -> list[str]:
+    """Render a suppressed wake turn as a visible status row, not hidden text."""
+    out = ["## Wake", "", f"◇ {SILENT_WAKE_TITLE}"]
+    body = _content_text(msg)
+    if body:
+        out.extend(["", body])
     return out
 
 

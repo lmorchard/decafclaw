@@ -193,7 +193,8 @@ export class ChatView extends LitElement {
         if (m.role !== 'assistant') return true;
         const hasContent = (m.content || '').trim().length > 0;
         const hasToolCalls = Array.isArray(m.tool_calls) && m.tool_calls.length > 0;
-        return hasContent || hasToolCalls;
+        // A silent wake is a status row even when its body is empty (#1852).
+        return hasContent || hasToolCalls || !!m.suppress_user_message;
       }).map(m => html`
         <chat-message
           .role=${m.role}
@@ -215,6 +216,7 @@ export class ChatView extends LitElement {
           .isError=${!!m.is_error}
           .timedOut=${!!m.timed_out}
           .timeoutSec=${m.timeout_sec ?? null}
+          .suppressUserMessage=${!!m.suppress_user_message}
         ></chat-message>
       `)}
 

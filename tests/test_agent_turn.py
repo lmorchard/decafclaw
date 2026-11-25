@@ -1870,6 +1870,70 @@ async def test_wake_turn_archives_nudge_as_wake_trigger_not_user(ctx, config):
     assert "background job" in wake_trigger_msgs[0]["content"].lower()
 
 
+@pytest.mark.asyncio
+async def test_silent_wake_archives_flag_and_strips_sentinel(ctx, config):
+    """A silent wake persists the suppression fact and a replay-safe body (#1852)."""
+    from decafclaw.archive import read_archive
+
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.task_mode = TaskMode.BACKGROUND_WAKE
+    ctx.conv_id = "test-silent-wake-archive"
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = _mock_llm_response("BACKGROUND_WAKE_OK — log rotation completed.")
+        result = await run_agent_turn(ctx, "A background job you started has completed.", [])
+
+    # The live manager still needs the raw sentinel to suppress the event.
+    assert result.text.startswith("BACKGROUND_WAKE_OK")
+
+    all_msgs = read_archive(config, "test-silent-wake-archive")
+    assistant = next(m for m in all_msgs if m.get("role") == "assistant")
+    assert assistant["content"] == "log rotation completed."
+    assert assistant["suppress_user_message"] is True
+    assert "BACKGROUND_WAKE_OK" not in assistant["content"]
+
+
+@pytest.mark.asyncio
+async def test_normal_turn_does_not_strip_sentinel_text(ctx, config):
+    """The persisted marker is a wake decision, not a global text filter (#1852)."""
+    from decafclaw.archive import read_archive
+
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.task_mode = TaskMode.INTERACTIVE
+    ctx.conv_id = "test-normal-sentinel-archive"
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = _mock_llm_response("BACKGROUND_WAKE_OK is the wake sentinel.")
+        await run_agent_turn(ctx, "What is the sentinel?", [])
+
+    all_msgs = read_archive(config, "test-normal-sentinel-archive")
+    assistant = next(m for m in all_msgs if m.get("role") == "assistant")
+    assert assistant["content"] == "BACKGROUND_WAKE_OK is the wake sentinel."
+    assert "suppress_user_message" not in assistant
+
+
+@pytest.mark.asyncio
+async def test_wake_with_real_output_archives_full_text(ctx, config):
+    """A wake that produced real output keeps its text and no suppression flag."""
+    from decafclaw.archive import read_archive
+
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.task_mode = TaskMode.BACKGROUND_WAKE
+    ctx.conv_id = "test-real-wake-archive"
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = _mock_llm_response("The build failed on the lint step.")
+        await run_agent_turn(ctx, "A background job you started has completed.", [])
+
+    all_msgs = read_archive(config, "test-real-wake-archive")
+    assistant = next(m for m in all_msgs if m.get("role") == "assistant")
+    assert assistant["content"] == "The build failed on the lint step."
+    assert "suppress_user_message" not in assistant
+
+
 # -- Tightened exception handling (#164) ----------------------------------------
 
 

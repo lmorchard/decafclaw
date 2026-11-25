@@ -46,6 +46,23 @@ describe('chat-message role rendering', () => {
     el.remove();
   });
 
+  it('renders a silent wake as a collapsed status row (#1852)', async () => {
+    const el = document.createElement('chat-message');
+    el.role = 'assistant';
+    el.content = 'log rotation completed.';
+    el.suppressUserMessage = true;
+    document.body.append(el);
+    await el.updateComplete;
+
+    const row = el.querySelector('.wake-status');
+    expect(row).not.toBeNull();
+    expect(row?.tagName).toBe('DETAILS');
+    expect(row?.querySelector('summary')?.textContent).toContain('wake · silent');
+    expect(row?.querySelector('.detail')?.textContent).toContain('log rotation completed.');
+    expect(el.querySelector('assistant-message')).toBeNull();
+    el.remove();
+  });
+
   it('renders cancel_marker as a distinct event banner', async () => {
     const el = document.createElement('chat-message');
     el.role = 'cancel_marker';
