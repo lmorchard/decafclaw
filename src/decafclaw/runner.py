@@ -7,6 +7,7 @@ import os
 import signal
 import sys
 import threading
+import time
 import traceback
 from typing import Callable
 
@@ -31,6 +32,24 @@ async def _cancel_task(task, name="task"):
     except asyncio.CancelledError:
         pass
     log.debug(f"Stopped {name}")
+
+
+async def _run_startup_recovery(manager) -> None:
+    """Run the conversation recovery scan off the startup critical path (#1645).
+
+    The HTTP listener serves while this walks the conversation tree. Turns and
+    confirmation responses wait on the manager's recovery gate, which is
+    opened here even when the scan fails or is cancelled, so a recovery error
+    degrades to a slower first turn instead of a dead server.
+    """
+    try:
+        await manager.startup_scan(recover_workflows=True)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("Startup recovery failed; continuing with transports")
+    finally:
+        manager.finish_startup_recovery()
 
 
 def _thread_stack_dump() -> str:
@@ -229,8 +248,11 @@ async def run_all(app_ctx, *, on_shutdown_complete: Callable[[], None] | None = 
     schedule_task = None
     config_watcher_task = None
     discovery_task = None
+    recovery_task = None
 
     try:
+        startup_started = time.monotonic()
+
         # Create conversation manager (shared across web + future transports)
         from .conversation_manager import ConversationManager
         from .widget_input import register_widget_handler
@@ -244,8 +266,14 @@ async def run_all(app_ctx, *, on_shutdown_complete: Callable[[], None] | None = 
         restart_coordinator.set_manager(manager)
         app_ctx.manager = manager
         register_widget_handler(manager.confirmation_registry)
-        await manager.startup_scan()
-        await manager.startup_scan_workflows()
+        log.info("Startup phase: ConversationManager created in %.3fs", time.monotonic() - startup_started)
+
+        # Startup recovery walks every conversation directory. Run it in the
+        # background so uvicorn serves immediately (#1645); the manager's
+        # recovery gate holds turns and confirmation responses until the
+        # scan's reads finish.
+        manager.begin_startup_recovery()
+        recovery_task = asyncio.create_task(_run_startup_recovery(manager))
 
         # Start workspace index background refresh loop (server startup refresh)
         from .workspace_index import start_workspace_index_loop
@@ -258,6 +286,10 @@ async def run_all(app_ctx, *, on_shutdown_complete: Callable[[], None] | None = 
 
             http_task = asyncio.create_task(
                 run_http_server(config, app_ctx.event_bus, app_ctx=app_ctx, manager=manager)
+            )
+            log.info(
+                "Startup phase: HTTP listener task started in %.3fs (recovery continues in background)",
+                time.monotonic() - startup_started,
             )
             log.info(f"HTTP server enabled on {config.http.host}:{config.http.port}")
 
@@ -360,6 +392,8 @@ async def run_all(app_ctx, *, on_shutdown_complete: Callable[[], None] | None = 
         # Resume post-restart conversation wakes after transports are up (#1554)
         await manager.startup_scan_restart_wakes()
 
+        log.info("Startup phase: transports ready in %.3fs", time.monotonic() - startup_started)
+
         # Wait for shutdown
         await shutdown_event.wait()
 
@@ -375,6 +409,19 @@ async def run_all(app_ctx, *, on_shutdown_complete: Callable[[], None] | None = 
         await _cancel_task(config_watcher_task, "config watcher")
         await _cancel_task(schedule_task, "schedule timer")
         await _cancel_task(heartbeat_task, "heartbeat")
+
+        # Give startup recovery a moment to finish its in-flight drain; a
+        # cancel between popping an inbox turn and starting it would lose
+        # that turn (#1645).
+        if recovery_task is not None and not recovery_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(recovery_task), timeout=5)
+            except asyncio.TimeoutError:
+                log.warning("Startup recovery still running at shutdown; cancelling")
+            except asyncio.CancelledError:
+                pass
+            if not recovery_task.done():
+                await _cancel_task(recovery_task, "startup recovery")
 
         # Graceful HTTP server shutdown (avoids uvicorn CancelledError tracebacks)
         if http_task:

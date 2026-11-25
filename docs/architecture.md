@@ -46,13 +46,16 @@ Everything runs in a single async process. Subsystems are parallel `asyncio` tas
 `runner.py` is the top-level orchestrator. On startup it:
 
 1. Initializes MCP servers (shared across all subsystems)
-2. Starts the HTTP server if `http.enabled` (web UI + Mattermost button callbacks)
-3. Starts the Mattermost client if credentials are configured
-4. Starts the heartbeat timer if an interval is set
-5. Starts the scheduled task timer
-6. Waits on a shutdown event
+2. Creates the `ConversationManager` and starts startup recovery as a background task
+3. Starts the HTTP server if `http.enabled` (web UI + Mattermost button callbacks)
+4. Starts the Mattermost client if credentials are configured
+5. Starts the heartbeat timer if an interval is set
+6. Starts the scheduled task timer
+7. Waits on a shutdown event
 
 All of these run as independent `asyncio.Task`s. They share a single `app_ctx` with an `EventBus` for cross-component events.
+
+Startup recovery (#1645) walks conversation directories once for interrupted confirmations, queued inbox turns, and running workflows. It runs off the listener's critical path; `ConversationManager.enqueue_turn` and confirmation responses wait on a recovery gate, so a request that arrives first queues instead of racing the scan's archive reads. Archive tail reads are limited to files modified inside the 24h confirmation staleness window, and each startup phase logs its elapsed time (`Startup phase:` and `Startup recovery:` lines).
 
 ### Shutdown and process exit
 
@@ -166,7 +169,7 @@ The rule: **one agent turn per conversation at a time, unlimited concurrent conv
 
 ## Confirmations
 
-When a tool needs user approval (shell commands, skill activation), the ConversationManager persists the confirmation request as a JSONL archive entry with `role: "confirmation_request"`. The agent loop suspends mechanically until it receives a matching `confirmation_response` entry. Pending confirmations survive page reload and server restart — a startup scan recovers them. See `confirmations.py` for the `ConfirmationAction` enum and handler registry.
+When a tool needs user approval (shell commands, skill activation), the ConversationManager persists the confirmation request as a JSONL archive entry with `role: "confirmation_request"`. The agent loop suspends mechanically until it receives a matching `confirmation_response` entry. Pending confirmations survive page reload and server restart — the background startup recovery pass restores them, and a response that arrives before recovery finishes waits on the recovery gate. See `confirmations.py` for the `ConfirmationAction` enum and handler registry.
 
 Concurrent `request_confirmation` calls on the same conversation (common with delegated background tasks producing parallel approval prompts) are serialized through a per-conversation FIFO queue: the user sees them one at a time, each waits for its own response, and `request.timeout` starts only when a queued request becomes active.
 
