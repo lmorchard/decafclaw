@@ -6,8 +6,11 @@ import pytest
 
 from decafclaw.llm.providers.vertex import (
     _build_request_body,
+    _finish_reason,
     _parse_response,
     _parse_usage,
+    _thought_signature,
+    _tool_call_from_fc,
     _VertexStreamState,
 )
 
@@ -1045,3 +1048,91 @@ def test_build_request_body_preserves_thought_signature():
     assert part["thoughtSignature"] == "sig_abc123"
     assert "thoughtSignature" not in part["functionCall"]
     assert "thought_signature" not in part["functionCall"]
+
+
+# -- Shared response-translation helpers (#1323) ------------------------------
+
+
+def test_finish_reason_maps_max_tokens_and_stop():
+    assert _finish_reason("MAX_TOKENS") == "length"
+    assert _finish_reason("STOP") == "stop"
+
+
+def test_finish_reason_lowercases_other_values():
+    assert _finish_reason("SAFETY") == "safety"
+
+
+def test_finish_reason_absent_or_empty_is_none():
+    assert _finish_reason(None) is None
+    assert _finish_reason("") is None
+
+
+async def test_streaming_keeps_last_finish_reason_when_later_chunk_has_none():
+    """A later chunk without a finishReason must not clobber an earlier one."""
+    state = _VertexStreamState()
+    await state.process_chunk(
+        {
+            "candidates": [
+                {"content": {"role": "model", "parts": [{"text": "hi"}]}, "finishReason": "MAX_TOKENS"},
+            ]
+        }
+    )
+    await state.process_chunk({"candidates": [{"content": {"role": "model", "parts": [{"text": " more"}]}}]})
+    result = await state.finalize()
+    assert result["finish_reason"] == "length"
+
+
+def test_tool_call_from_fc_builds_internal_shape():
+    tc = _tool_call_from_fc({"name": "search", "args": {"q": "cats"}})
+    assert tc["id"].startswith("call_")
+    assert tc["type"] == "function"
+    assert tc["function"]["name"] == "search"
+    assert json.loads(tc["function"]["arguments"]) == {"q": "cats"}
+    assert "thought_signature" not in tc
+
+
+def test_tool_call_from_fc_carries_thought_signature():
+    snake = _tool_call_from_fc({"name": "s", "args": {}, "thought_signature": "sig_a"})
+    assert snake["thought_signature"] == "sig_a"
+    camel = _tool_call_from_fc({"name": "s", "args": {}, "thoughtSignature": "sig_b"})
+    assert camel["thought_signature"] == "sig_b"
+
+
+def test_thought_signature_checks_part_then_call_in_camel_then_snake_order():
+    fc = {"name": "s", "thoughtSignature": "f-camel", "thought_signature": "f-snake"}
+    # Part-level camel wins over everything else.
+    assert _thought_signature({"thoughtSignature": "p-camel", "thought_signature": "p-snake"}, fc) == "p-camel"
+    # Part-level snake wins over call-level.
+    assert _thought_signature({"thought_signature": "p-snake"}, fc) == "p-snake"
+    # Call-level camel wins over call-level snake.
+    assert _thought_signature({}, fc) == "f-camel"
+    # Call-level snake is the last resort.
+    assert _thought_signature({}, {"name": "s", "thought_signature": "f-snake"}) == "f-snake"
+    # Absent everywhere.
+    assert _thought_signature({}, {"name": "s"}) is None
+
+
+async def test_streaming_tool_call_preserves_thought_signature():
+    """The streaming path resolves the signature onto the call, then carries it into the tool call."""
+    state = _VertexStreamState()
+    await state.process_chunk(
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "role": "model",
+                        "parts": [
+                            {
+                                "functionCall": {"name": "vault_search", "args": {"query": "test"}},
+                                "thoughtSignature": "sig_abc123",
+                            }
+                        ],
+                    },
+                }
+            ]
+        }
+    )
+    result = await state.finalize()
+    tc = result["tool_calls"][0]
+    assert tc["function"]["name"] == "vault_search"
+    assert tc["thought_signature"] == "sig_abc123"

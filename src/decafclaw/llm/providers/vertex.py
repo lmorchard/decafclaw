@@ -366,6 +366,62 @@ class VertexProvider:
 
 
 # ---------------------------------------------------------------------------
+# Response translation helpers (shared by streaming and non-streaming paths)
+# ---------------------------------------------------------------------------
+
+
+def _finish_reason(raw: Any) -> str | None:
+    """Map a Gemini ``finishReason`` to the internal finish reason.
+
+    ``MAX_TOKENS`` and ``STOP`` map to their canonical values; any other
+    non-empty value is lower-cased and passed through. An absent or empty
+    reason maps to ``None`` so callers can keep a previously seen value.
+    """
+    if raw == "MAX_TOKENS":
+        return FINISH_REASON_LENGTH
+    elif raw == "STOP":
+        return FINISH_REASON_STOP
+    elif raw:
+        return raw.lower()
+    else:
+        return None
+
+
+def _thought_signature(part: dict, fc: dict) -> str | None:
+    """Resolve a functionCall part's thought signature.
+
+    Gemini has reported the signature in both camel and snake case, on either
+    the part or the nested call; check all four spellings in that order.
+    """
+    return (
+        part.get("thoughtSignature")
+        or part.get("thought_signature")
+        or fc.get("thoughtSignature")
+        or fc.get("thought_signature")
+    )
+
+
+def _tool_call_from_fc(fc: dict) -> dict:
+    """Build an internal tool-call dict from a Gemini ``functionCall``.
+
+    Carries the thought signature (if present) onto the tool call so it can
+    be echoed back on the next request.
+    """
+    tc = {
+        "id": f"call_{uuid.uuid4().hex[:12]}",
+        "type": "function",
+        "function": {
+            "name": fc.get("name", ""),
+            "arguments": json.dumps(fc.get("args", {})),
+        },
+    }
+    sig = fc.get("thought_signature") or fc.get("thoughtSignature")
+    if sig:
+        tc["thought_signature"] = sig
+    return tc
+
+
+# ---------------------------------------------------------------------------
 # Streaming state
 # ---------------------------------------------------------------------------
 
@@ -408,13 +464,10 @@ class _VertexStreamState:
             return
         self.candidates_seen += 1
 
-        raw_reason = candidates[0].get("finishReason")
-        if raw_reason == "MAX_TOKENS":
-            self.finish_reason = FINISH_REASON_LENGTH
-        elif raw_reason == "STOP":
-            self.finish_reason = FINISH_REASON_STOP
-        elif raw_reason:
-            self.finish_reason = raw_reason.lower()
+        # A chunk without a finishReason must not clobber an earlier one.
+        mapped = _finish_reason(candidates[0].get("finishReason"))
+        if mapped is not None:
+            self.finish_reason = mapped
 
         parts = candidates[0].get("content", {}).get("parts", [])
 
@@ -429,12 +482,7 @@ class _VertexStreamState:
                 chunk_text += part["text"]
             elif "functionCall" in part:
                 fc = dict(part["functionCall"])
-                sig = (
-                    part.get("thoughtSignature")
-                    or part.get("thought_signature")
-                    or fc.get("thoughtSignature")
-                    or fc.get("thought_signature")
-                )
+                sig = _thought_signature(part, fc)
                 if sig:
                     fc["thought_signature"] = sig
                 chunk_tool_calls.append(fc)
@@ -462,20 +510,7 @@ class _VertexStreamState:
         thinking = "".join(self.all_thinking_parts) or None
         tool_calls = None
         if self.all_tool_calls:
-            tool_calls = []
-            for fc in self.all_tool_calls:
-                tc = {
-                    "id": f"call_{uuid.uuid4().hex[:12]}",
-                    "type": "function",
-                    "function": {
-                        "name": fc.get("name", ""),
-                        "arguments": json.dumps(fc.get("args", {})),
-                    },
-                }
-                sig = fc.get("thought_signature") or fc.get("thoughtSignature")
-                if sig:
-                    tc["thought_signature"] = sig
-                tool_calls.append(tc)
+            tool_calls = [_tool_call_from_fc(fc) for fc in self.all_tool_calls]
 
         finish_reason = self.finish_reason
         if finish_reason is None:
@@ -959,15 +994,7 @@ def _parse_response(data: dict) -> dict:
             "finish_reason": FINISH_REASON_ERROR,
         }
 
-    raw_reason = candidates[0].get("finishReason")
-    if raw_reason == "MAX_TOKENS":
-        finish_reason = FINISH_REASON_LENGTH
-    elif raw_reason == "STOP":
-        finish_reason = FINISH_REASON_STOP
-    elif raw_reason:
-        finish_reason = raw_reason.lower()
-    else:
-        finish_reason = None
+    finish_reason = _finish_reason(candidates[0].get("finishReason"))
 
     parts = candidates[0].get("content", {}).get("parts", [])
 
@@ -981,24 +1008,11 @@ def _parse_response(data: dict) -> dict:
         elif "text" in part:
             text_parts.append(part["text"])
         elif "functionCall" in part:
-            fc = part["functionCall"]
-            sig = (
-                part.get("thoughtSignature")
-                or part.get("thought_signature")
-                or fc.get("thoughtSignature")
-                or fc.get("thought_signature")
-            )
-            tc = {
-                "id": f"call_{uuid.uuid4().hex[:12]}",
-                "type": "function",
-                "function": {
-                    "name": fc.get("name", ""),
-                    "arguments": json.dumps(fc.get("args", {})),
-                },
-            }
+            fc = dict(part["functionCall"])
+            sig = _thought_signature(part, fc)
             if sig:
-                tc["thought_signature"] = sig
-            tool_calls.append(tc)
+                fc["thought_signature"] = sig
+            tool_calls.append(_tool_call_from_fc(fc))
 
     return {
         "content": "".join(text_parts) or None,
