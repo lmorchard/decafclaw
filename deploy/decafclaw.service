@@ -2,6 +2,9 @@
 Description=DecafClaw AI Agent
 After=network-online.target
 Wants=network-online.target
+# A broken deploy must land in `failed`, not crash-loop forever at 5s.
+StartLimitBurst=5
+StartLimitIntervalSec=300
 
 [Service]
 Type=simple

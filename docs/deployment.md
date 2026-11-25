@@ -88,6 +88,60 @@ uv sync
 systemctl --user restart decafclaw
 ```
 
+### External deploy runner
+
+`scripts/deploy_runner.py` performs the whole deploy from outside the agent
+process: lock, resolve a candidate, wait for idle, back up, stop, fast-forward,
+`uv sync`, start, verify `/health`, and roll back on failure. It runs under the
+system Python and never imports the `decafclaw` package, so a broken deploy
+cannot take the rollback logic down with it.
+
+```bash
+# Manual run (also how the systemd oneshot invokes it)
+/usr/bin/python3 ~/decafclaw/scripts/deploy_runner.py \
+    --repo-dir ~/decafclaw \
+    --ref origin/production \
+    --health-url http://127.0.0.1:18880/health \
+    --backup-cmd ~/decafclaw/scripts/backup.sh \
+    --notify-file ~/.decafclaw/decafclaw/workspace/notifications/inbox.jsonl
+```
+
+The runner refuses to stop the service when `--backup-cmd` is missing or fails;
+`--allow-no-backup` exists for hosts where no data restore is possible. The
+backup command is the deployment's own shared script — the runner does not
+ship one, because a data backup is site-specific.
+
+**Units.** `deploy/decafclaw-deploy.service` is the oneshot; install it next to
+the app unit and enable `deploy/decafclaw-deploy.timer` to check every five
+minutes:
+
+```bash
+cp deploy/decafclaw-deploy.service deploy/decafclaw-deploy.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now decafclaw-deploy.timer
+```
+
+**Guard.** The candidate is deployable when it is ahead of `HEAD` and its SHA
+is not quarantined. The runner compares SHA membership, never commit
+timestamps: rebases preserve author dates, so a timestamp rule can starve a
+genuine fix forever. `~/.local/state/decafclaw-deploy/state.json` holds
+`last_good` (the rollback target), `quarantined` (SHA → reason), and
+`last_attempt` (SHA + consecutive failures). After `--max-attempts` failures
+(default 2: one retry) the SHA is quarantined; delete its entry to retry.
+
+**Verification.** The deploy gate requires the serving process to report the
+target commit, `status: "ok"`, and no regression in the MCP connected-server
+set or total tool count compared with the pre-deploy snapshot. The commit
+field and MCP set/count come from the deploy-grade `/health` payload
+([http-server.md](http-server.md#get-health)); a stale process is detected by
+the SHA mismatch. Both timeout paths are separate code paths: no answer
+*before* the deploy refuses to deploy; no answer *after* the deploy rolls back.
+
+**Exit codes.** `0` success or already at the candidate; `1` configuration
+error; `2` refused before stopping the service (guard, health, backup); `3`
+deployed and rolled back; `4` deploy and rollback both failed (a human is
+needed); `5` blocked by another run's lock or a quarantined SHA.
+
 ## Service Management
 
 ```bash
@@ -117,7 +171,9 @@ systemctl --user disable decafclaw
 The service runs as your user (not root) via `systemctl --user`. The unit file is at `~/.config/systemd/user/decafclaw.service`.
 
 Key settings:
-- `Restart=on-failure` — systemd restarts the process if it exits with an error
+- `Restart=always` — systemd restarts the process if it exits
+- `StartLimitBurst=5` / `StartLimitIntervalSec=300` — a repeatedly failing
+  start lands in `failed` instead of crash-looping forever
 - `RestartSec=5` — 5 second delay between restarts
 - `TimeoutStopSec=15` — graceful shutdown gets 15 seconds before SIGKILL
 - `EnvironmentFile` — loads `.env` for configuration
