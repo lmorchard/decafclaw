@@ -337,7 +337,7 @@ def test_apply_materializes_enabled_only_and_never_overwrites_hand(config):
     assert "local/llama3.2" in config.model_configs
     assert config.model_configs["local/llama3.2"].context_window_size == 4096
     # ...tracked as catalog-owned...
-    assert "local/llama3.2" in config.catalog_materialized
+    assert "local/llama3.2" in config.runtime.catalog_materialized
     # ...disabled model NOT registered...
     assert "local/qwen" not in config.model_configs
     # ...and a hand-authored entry under the same name is never overwritten.
@@ -360,7 +360,7 @@ def test_disable_colliding_discovered_key_keeps_hand_config(config):
 
     # Collision: the hand entry survives untouched and is not catalog-owned.
     assert config.model_configs["local/m1"].timeout == 99
-    assert "local/m1" not in config.catalog_materialized
+    assert "local/m1" not in config.runtime.catalog_materialized
 
     # Disabling the discovered model keeps the hand config alive...
     import asyncio
@@ -392,7 +392,7 @@ def test_apply_prunes_disabled_and_vanished(config):
     apply_catalog(config, catalog)
     assert "local/a" in config.model_configs
     assert "local/b" not in config.model_configs
-    assert "local/b" not in config.catalog_materialized
+    assert "local/b" not in config.runtime.catalog_materialized
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +428,7 @@ def test_warn_unresolvable_model_configs(config, caplog):
     config.model_configs["unknown-provider"] = ModelConfig(provider="nope", model="x")
     config.model_configs["no-discovery"] = ModelConfig(provider="other", model="anything")
     config.model_configs["local/materialized"] = ModelConfig(provider="local", model="m1")
-    config.catalog_materialized.add("local/materialized")
+    config.runtime.catalog_materialized.add("local/materialized")
     catalog = ModelCatalog(providers={"local": CatalogProvider(models=[CatalogModel(id="m1")])})
 
     with caplog.at_level(logging.WARNING, logger="decafclaw.model_catalog"):

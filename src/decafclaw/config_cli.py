@@ -45,6 +45,9 @@ _SHOW_RUNTIME_ONLY_FIELDS = {
     "discovered_skills",
     "always_loaded_skill_tools",
     "skill_tool_owners",
+    # The runtime state holder (#1330) is a dataclass; without this it would
+    # print its applied_env/catalog_materialized state as if it were config.
+    "runtime",
 }
 
 

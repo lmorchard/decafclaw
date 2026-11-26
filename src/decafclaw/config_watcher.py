@@ -199,7 +199,7 @@ def _reapply_model_catalog(config: Config) -> None:
 
     The reload replaces config.model_configs with the hand-authored entries
     from config.json, dropping every catalog-materialized discovered model;
-    the runtime-only tracking set is stale with them. Clearing it and
+    the runtime holder's tracking set is stale with them. Clearing it and
     re-applying the sidecar restores every still-enabled discovered model,
     so selection and the default pointer keep working without a restart
     (#1211 review).
@@ -208,7 +208,7 @@ def _reapply_model_catalog(config: Config) -> None:
     # (same reason as _refresh_providers).
     from .model_catalog import apply_catalog, load_catalog, warn_unresolvable_model_configs
 
-    config.catalog_materialized.clear()
+    config.runtime.catalog_materialized.clear()
     catalog = load_catalog(config)
     apply_catalog(config, catalog)
     warn_unresolvable_model_configs(config, catalog)
@@ -293,12 +293,13 @@ async def config_change_watcher(
         # Safe sections changed: apply them onto the live config so the next
         # agent turn picks them up without a process restart. Sections whose
         # consumers snapshot at startup get an explicit re-application so the
-        # "safe" claim is honest (#149 review).
-        previous_env = dict(config.env)
+        # "safe" claim is honest (#149 review). The runtime holder keeps its
+        # identity through the reload (it is runtime-only, never diffed); the
+        # env re-apply diffs its recorded section against the fresh one.
         for name in changed:
             setattr(config, name, getattr(new_config, name))
         if "env" in changed:
-            config.apply_env_update(previous_env)
+            config.runtime.apply_env_update(config.env)
         if "providers" in changed:
             _refresh_providers(config)
         if SKILL_CATALOG_KEYS & set(changed):

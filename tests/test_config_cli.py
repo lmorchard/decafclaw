@@ -93,6 +93,10 @@ def test_show_excludes_runtime_only_fields(capsys, monkeypatch, tmp_path):
     assert "discovered_skills" not in out
     assert "always_loaded_skill_tools" not in out
     assert "skill_tool_owners" not in out
+    # The runtime state holder (#1330) and its tracking set are process state,
+    # not config data — they must not print as if resolved from config.json.
+    assert "runtime.applied_env" not in out
+    assert "catalog_materialized" not in out
 
 
 def test_show_secret_policy_defaults(capsys, monkeypatch, tmp_path):
