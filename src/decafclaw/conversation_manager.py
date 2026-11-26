@@ -849,28 +849,8 @@ class ConversationManager:
             import uuid
             from datetime import datetime, timezone
 
-            from .inbox import _append_inbox
-
             now_iso = datetime.now(timezone.utc).isoformat()
             turn_id = uuid.uuid4().hex
-            _append_inbox(
-                self.config,
-                conv_id,
-                {
-                    "turn_id": turn_id,
-                    "kind": kind.value if hasattr(kind, "value") else kind,
-                    "text": prompt,
-                    "user_id": user_id,
-                    "archive_text": archive_text,
-                    "wiki_page": wiki_page,
-                    # Wire boundary: the inbox JSONL stores the raw string;
-                    # parse_task_mode turns it back into a member on drain.
-                    "task_mode": task_mode.value if task_mode is not None else None,
-                    "metadata": metadata,
-                    "attachments": attachments,
-                    "timestamp": now_iso,
-                },
-            )
             state.inmemory_turn_data[turn_id] = {
                 "context_setup": context_setup,
                 "command_ctx": command_ctx,
@@ -883,54 +863,76 @@ class ConversationManager:
             if state.busy or restart_pending:
                 if restart_pending and not state.busy:
                     log.info("Restart pending; queued turn %s for conv %s", kind.value, conv_id[:8])
-                    future.queued = True
-                    return future
+                else:
+                    # Cancel-on-new-message: cancel the current turn if configured
+                    # (USER kind only, same as previous send_message behavior)
+                    if (
+                        kind is TurnKind.USER
+                        and self.config.agent.turn_on_new_message == "cancel"
+                        and state.cancel_event
+                        and not state.cancel_event.is_set()
+                    ):
+                        log.info("Conv %s busy, cancelling for new message", conv_id[:8])
+                        state.cancel_event.set()
+                        if state.agent_task and not state.agent_task.done():
+                            state.agent_task.cancel()
 
-                # Cancel-on-new-message: cancel the current turn if configured
-                # (USER kind only, same as previous send_message behavior)
-                if (
-                    kind is TurnKind.USER
-                    and self.config.agent.turn_on_new_message == "cancel"
-                    and state.cancel_event
-                    and not state.cancel_event.is_set()
-                ):
-                    log.info("Conv %s busy, cancelling for new message", conv_id[:8])
-                    state.cancel_event.set()
-                    if state.agent_task and not state.agent_task.done():
-                        state.agent_task.cancel()
+                    # Steering message: flag the current agent loop to exit after the current tool call
+                    if (
+                        kind is TurnKind.USER
+                        and metadata
+                        and metadata.get("steering")
+                        and state.steer_event
+                        and not state.steer_event.is_set()
+                    ):
+                        log.info("Conv %s busy, setting steering event", conv_id[:8])
+                        state.steer_event.set()
 
-                # Steering message: flag the current agent loop to exit after the current tool call
-                if (
-                    kind is TurnKind.USER
-                    and metadata
-                    and metadata.get("steering")
-                    and state.steer_event
-                    and not state.steer_event.is_set()
-                ):
-                    log.info("Conv %s busy, setting steering event", conv_id[:8])
-                    state.steer_event.set()
+                    log.info("Conv %s busy, queued message", conv_id[:8])
 
-                log.info("Conv %s busy, queued message", conv_id[:8])
                 future.queued = True
+
+                # Persist the queued turn for crash recovery: a queued turn
+                # must survive restarts, so it lands in the inbox JSONL.
+                # _drain_pending pops it when the conversation frees up (live)
+                # or startup_scan resumes it after a restart. Immediate turns
+                # skip the inbox entirely — they are not crash-recoverable
+                # either way, so the old append-then-pop was pure O(n) I/O
+                # waste (#1353).
+                from .inbox import _append_inbox
+
+                try:
+                    _append_inbox(
+                        self.config,
+                        conv_id,
+                        {
+                            "turn_id": turn_id,
+                            "kind": kind.value if hasattr(kind, "value") else kind,
+                            "text": prompt,
+                            "user_id": user_id,
+                            "archive_text": archive_text,
+                            "wiki_page": wiki_page,
+                            # Wire boundary: the inbox JSONL stores the raw string;
+                            # parse_task_mode turns it back into a member on drain.
+                            "task_mode": task_mode.value if task_mode is not None else None,
+                            "metadata": metadata,
+                            "attachments": attachments,
+                            "timestamp": now_iso,
+                        },
+                    )
+                except Exception as e:
+                    # Don't leak the in-memory slot if persistence fails;
+                    # propagate so the caller sees the error as before.
+                    state.inmemory_turn_data.pop(turn_id, None)
+                    log.error("Failed to persist queued turn %s for conv %s: %s", turn_id, conv_id[:8], e)
+                    raise
                 return future
 
             future.queued = False
 
-            # Not busy. Start turn immediately.
-            # But wait, we appended it to inbox.jsonl. We need to pop it!
-            from .inbox import _read_inbox, _write_inbox
-
-            messages = _read_inbox(self.config, state.conv_id)
-            if messages:
-                # Assuming the last message appended is ours, or we just pop it by turn_id
-                q = None
-                for i, m in enumerate(messages):
-                    if m.get("turn_id") == turn_id:
-                        q = messages.pop(i)
-                        break
-                if q:
-                    _write_inbox(self.config, state.conv_id, messages)
-
+            # Not busy: start the turn immediately. No inbox round-trip —
+            # a turn that starts now is not crash-recoverable either way,
+            # so the old append-then-pop was pure O(n) I/O waste (#1353).
             state.inmemory_turn_data.pop(turn_id, {})
             await self._start_turn(
                 state,

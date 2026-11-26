@@ -1264,6 +1264,56 @@ async def test_enqueue_turn_writes_to_jsonl(manager, config):
 
 
 @pytest.mark.asyncio
+async def test_immediate_turn_skips_inbox_round_trip(manager, config, monkeypatch):
+    """A non-busy turn starts immediately without touching the inbox (#1353).
+
+    The old code appended every enqueued turn to the JSONL inbox and then
+    read, scanned, and rewrote the whole file just to pop its own entry back
+    out. An immediate turn is not crash-recoverable either way, so it must
+    skip the round-trip entirely; only turns that actually queue are written.
+    """
+    import decafclaw.inbox as inbox_mod
+
+    calls = {"append": 0, "write": 0}
+
+    def spy_append(cfg, conv_id, message):
+        calls["append"] += 1
+
+    def spy_write(cfg, conv_id, messages):
+        calls["write"] += 1
+
+    monkeypatch.setattr(inbox_mod, "_append_inbox", spy_append)
+    monkeypatch.setattr(inbox_mod, "_write_inbox", spy_write)
+
+    fired = []
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        fired.append(user_message)
+        from decafclaw.media import ToolResult
+
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    state = manager._get_or_create("c-immediate")
+    assert not state.busy
+
+    future = await manager.enqueue_turn("c-immediate", kind=TurnKind.USER, prompt="hello")
+    result = await asyncio.wait_for(future, timeout=2.0)
+
+    # The turn ran to completion...
+    assert fired == ["hello"]
+    assert result is not None and result.text == "ok"
+    # ...without any inbox write (the append-then-pop round-trip is gone).
+    assert calls["append"] == 0, "immediate turn must not append to the inbox"
+    assert calls["write"] == 0, "immediate turn must not rewrite the inbox"
+
+    from decafclaw.conversation_paths import sidecar_path
+
+    assert not sidecar_path(config, "c-immediate", "inbox.jsonl").exists()
+
+
+@pytest.mark.asyncio
 async def test_inbox_drained_by_worker(manager, config, monkeypatch):
     """GIVEN an active conversation, THEN the system SHALL run a detached background worker task that continuously polls and drains its JSONL inbox serially."""
     import asyncio
