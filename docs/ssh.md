@@ -1,5 +1,7 @@
 # SSH tools
 
+The bundled `ssh` skill (`src/decafclaw/skills/ssh/SKILL.md`) gives the agent the usage guidance: host resolution, the confirmation path, structured output, and how to inspect or change `ssh_rules.jsonl` through the admin tools.
+
 `ssh_exec` and `ssh_copy` are native tools for remote commands and file transfer. They replace stringing `ssh`/`scp` through the generic shell tool, so the agent gets non-interactive safety and structured output instead of escaped shell text.
 
 ## Host resolution
