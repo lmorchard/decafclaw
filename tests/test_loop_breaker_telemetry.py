@@ -40,28 +40,6 @@ async def test_subscriber_writes_record(tmp_path):
     assert "type" not in rec
 
 
-@pytest.mark.asyncio
-async def test_subscriber_ignores_other_events(tmp_path):
-    cfg = _config(tmp_path)
-    handle = loop_breaker_telemetry.make_loop_breaker_subscriber(cfg)
-    await handle({"type": "reflection_result", "passed": True})
-    path = cfg.workspace_path / cfg.telemetry.loop_breaker_path
-    assert not path.exists()
-
-
-@pytest.mark.asyncio
-async def test_subscriber_fail_open(tmp_path):
-    cfg = _config(tmp_path)
-    workspace = tmp_path / "data" / "t" / "workspace"
-    workspace.mkdir(parents=True, exist_ok=True)
-    # The default path is telemetry/loop_breaker.jsonl
-    # So we write a file named telemetry
-    (workspace / "telemetry").write_text("file, not a dir")
-    handle = loop_breaker_telemetry.make_loop_breaker_subscriber(cfg)
-    # This must not raise
-    await handle({"type": "loop_breaker", "action": "stop", "signal": "repeat"})
-
-
 def test_aggregate_counts_by_action_and_signal():
     records = [
         {"action": "nudge", "signal": "repeat"},

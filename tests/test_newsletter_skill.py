@@ -18,6 +18,7 @@ from decafclaw.skills.newsletter.tools import (
     newsletter_list_scheduled_activity,
     newsletter_list_vault_changes,
     newsletter_publish,
+    newsletter_scheduled_faults,
 )
 
 # ---------------------------------------------------------------------------
@@ -1378,3 +1379,79 @@ async def test_list_recent_memories_success(ctx, monkeypatch):
     assert res.data["memories"][0]["memory"] == "Learned fact A"
     assert res.data["memories"][1]["memory"] == "Learned fact B"
     assert "Found 2 memory fact(s)" in res.text
+
+
+def _degraded_run(ws, when):
+    _write_sched_conv(
+        ws,
+        "ambient-vibes",
+        when,
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "activate_skill", "arguments": json.dumps({"name": "ambient-vibes"})},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "c1",
+                "content": "[error: activation of skill 'ambient-vibes' was denied on an unattended turn]",
+            },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c2",
+                        "type": "function",
+                        "function": {"name": "workspace_read", "arguments": json.dumps({"path": "SKILL.md"})},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c2", "content": "skill body"},
+            {"role": "assistant", "content": "Completed the task successfully."},
+        ],
+    )
+
+
+def test_scheduled_activity_marks_silent_degradation(ctx):
+    ws = ctx.config.workspace_path
+    _degraded_run(ws, datetime.now(timezone.utc) - timedelta(hours=1))
+
+    result = _collect_scheduled_activity(ctx, hours=24)
+
+    assert len(result) == 1
+    assert result[0]["degraded"] is True
+    assert result[0]["degradations"][0]["tool"] == "activate_skill"
+    assert result[0]["degradations"][0]["later_tools"] == ["workspace_read"]
+
+
+@pytest.mark.asyncio
+async def test_scheduled_faults_returns_checklist(ctx):
+    ws = ctx.config.workspace_path
+    _degraded_run(ws, datetime.now(timezone.utc) - timedelta(hours=1))
+
+    result = await newsletter_scheduled_faults(ctx, hours=24)
+
+    assert isinstance(result, ToolResult)
+    assert "- [ ]" in result.text
+    assert "ambient-vibes" in result.text
+    assert "workspace_read" in result.text
+    assert result.data["degraded_count"] == 1
+    assert result.data["faults"][0]["degraded"] is True
+
+
+@pytest.mark.asyncio
+async def test_scheduled_faults_empty(ctx):
+    result = await newsletter_scheduled_faults(ctx, hours=24)
+
+    assert isinstance(result, ToolResult)
+    assert "No degraded" in result.text
+    assert result.data["degraded_count"] == 0
+    assert result.data["faults"] == []

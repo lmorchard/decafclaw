@@ -4,7 +4,7 @@ description: Compose and deliver a detailed narrative newsletter summarizing aut
 user-invocable: true
 context: inline
 argument-hint: "[send] [window] e.g. `7d`, `send`, `send 48h`"
-allowed-tools: newsletter_list_scheduled_activity, newsletter_list_vault_changes, newsletter_list_recent_memories, newsletter_publish, current_time, vault_read
+allowed-tools: newsletter_list_scheduled_activity, newsletter_scheduled_faults, newsletter_list_vault_changes, newsletter_list_recent_memories, newsletter_publish, current_time, vault_read
 required-skills: [newsletter]
 ---
 
@@ -32,6 +32,8 @@ Argument: $ARGUMENTS
 
 1. Call `newsletter_list_scheduled_activity` to see what my scheduled tasks did. If you parsed a window spec out of the argument (i.e. anything other than the `send` token), pass it as `window`. Otherwise omit `window` for the 24-hour default. Each entry gives you the skill name, when it ran, what it reported at the end, which vault pages it touched, and which workspace files it wrote (`workspace_files_touched`). Skip entries with empty final messages — they didn't have anything coherent to say.
 
+   Then call `newsletter_scheduled_faults` with the same `window` value (or omitted). It returns a Markdown checklist of runs that hit a refusal and then continued through a later non-error tool call (silent degradation). If it returns items, render them under `## Needs review` exactly as evidence — schedule, run id, refusal, later tools, and final excerpt. Do not infer a diagnosis beyond what the checklist says.
+
 2. Call `newsletter_list_vault_changes` with the same `window` value (or omitted if you didn't have one). Use this to enrich the narrative ("while gardening, I noticed X and rewrote [[Some Page]]") and to surface interesting activity the scheduled reports didn't themselves mention. **If needed, use `vault_read` on these changed pages to pull out specific technical details, quotes, and facts.**
 
 3. Call `newsletter_list_recent_memories` with the same `window` value (or omitted). If Mem0 is active, it returns newly crystallized facts and observations absorbed into semantic working memory during the window. Weave interesting learned facts into the narrative, or highlight them in a dedicated memory digest subsection. If Mem0 is disabled or returns 0 memories, skip mention of it.
@@ -43,6 +45,7 @@ Argument: $ARGUMENTS
      - Include the post title, slug, date, word count, and a direct action trigger:
        > **Draft ready for review:** *Title* (`YYYY-MM-DD-slug`)
        > 👉 Run `!blog-workbench <slug>` to start the dev server and open the live canvas preview.
+     - *Silent degradation (`degraded: true`):* A run that was refused and worked around the refusal is more dangerous than a visible failure. Surface the `newsletter_scheduled_faults` checklist under `## Needs review` with the refusal, the later tools, and the final-message excerpt. Do not add a second diagnosis layer.
      - *Blocked or Failed Tasks (`has_error: true`):* If any scheduled task encountered an error or alert (e.g. `kindle` sync failed due to an expired session or network error), prominently surface it under `## On the Bench` with the specific error and direct resolution steps/links:
        - For Kindle authentication failures: include a direct link to re-authenticate on the homelab browser: `👉 [Open Agent Browser (https://myriad-docker:13081)](https://myriad-docker:13081) to log into Kindle Notebook`.
      - If there are no Tier 1 items in the window, omit `## On the Bench` and begin with Tier 2.
