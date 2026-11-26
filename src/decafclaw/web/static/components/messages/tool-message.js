@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
 
 import { buildNativeWorkspaceUrl } from '../../lib/api-client/index.js';
+import { copyToClipboard } from '../../lib/utils.js';
 
 import '../widgets/widget-host.js';
 
@@ -103,6 +104,19 @@ export class ToolMessage extends LitElement {
     }
   }
 
+  #copyRaw(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const btn = event.currentTarget;
+    copyToClipboard(this.content || '').then(() => {
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+    }).catch(() => {
+      btn.textContent = 'Copy failed';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+    });
+  }
+
   #linkHref(link) {
     if (link.kind === 'vault') {
       return '/vault/' + String(link.page || '').split('/').map(encodeURIComponent).join('/');
@@ -195,13 +209,19 @@ export class ToolMessage extends LitElement {
               ${hasContent ? html`
                 <details class="tool-result-raw">
                   <summary>Show raw result</summary>
-                  <pre>${this.content}</pre>
+                  <div class="tool-raw-wrap">
+                    <button class="copy-btn" type="button" title="Copy raw result" @click=${this.#copyRaw}>Copy</button>
+                    <pre>${this.content}</pre>
+                  </div>
                 </details>
               ` : nothing}
             </div>
           ` : hasContent ? html`
             <div class="tool-result-detail">
-              <pre>${this.content}</pre>
+              <div class="tool-raw-wrap">
+                <button class="copy-btn" type="button" title="Copy raw result" @click=${this.#copyRaw}>Copy</button>
+                <pre>${this.content}</pre>
+              </div>
             </div>
           ` : nothing}
         ` : nothing}

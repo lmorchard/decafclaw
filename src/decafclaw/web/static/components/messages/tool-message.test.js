@@ -1,5 +1,8 @@
-import { it, expect } from 'vitest';
+import { it, expect, vi } from 'vitest';
 import './tool-message.js';
+
+const { copyToClipboard } = vi.hoisted(() => ({ copyToClipboard: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../../lib/utils.js', () => ({ copyToClipboard }));
 
 it('shows a shell command and its output together when expanded', async () => {
     const el = document.createElement('tool-message');
@@ -102,5 +105,36 @@ it('renders workspace and vault links in the expanded row', async () => {
     const wiki = el.querySelector('a.wiki-link');
     expect(wiki.getAttribute('data-wiki-page')).toBe('agent/pages/Notes');
     expect(wiki.getAttribute('href')).toBe('/vault/agent/pages/Notes');
+    el.remove();
+});
+
+it('copies the raw result from the expanded row', async () => {
+    const el = document.createElement('tool-message');
+    el.tool = 'workspace_preview_markdown';
+    el.content = '# Brief\ncopy me';
+    document.body.append(el);
+    await el.updateComplete;
+    el.querySelector('.tool-result-header').click();
+    await el.updateComplete;
+
+    const btn = el.querySelector('.tool-result-detail .copy-btn');
+    expect(btn).not.toBeNull();
+    btn.click();
+    await vi.waitFor(() => expect(copyToClipboard).toHaveBeenCalledWith('# Brief\ncopy me'));
+    el.remove();
+});
+
+it('copies the raw result from a widget raw pane', async () => {
+    const el = document.createElement('tool-message');
+    el.tool = 'workspace_preview_markdown';
+    el.content = 'raw prompt body';
+    el.widget = { widget_type: 'unknown_widget', data: {} };
+    document.body.append(el);
+    await el.updateComplete;
+
+    const btn = el.querySelector('.tool-result-raw .copy-btn');
+    expect(btn).not.toBeNull();
+    btn.click();
+    await vi.waitFor(() => expect(copyToClipboard).toHaveBeenCalledWith('raw prompt body'));
     el.remove();
 });

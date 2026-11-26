@@ -676,6 +676,15 @@ chat-message pre:hover .copy-btn {
   opacity: 1;
 }
 
+/* Raw tool-result panes keep their copy button visible (the text is the point). */
+chat-message .tool-raw-wrap {
+  position: relative;
+}
+
+chat-message .tool-raw-wrap .copy-btn {
+  opacity: 1;
+}
+
 chat-message .code-lang-label {
   position: absolute;
   top: 4px;
