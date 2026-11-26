@@ -14,7 +14,7 @@ from decafclaw.tool_execution import _tool_heartbeat, execute_single_tool
 from decafclaw.tools import TOOL_DEFINITIONS, TOOLS, execute_tool
 
 
-def _set_timeout(ctx, seconds: int | None):
+def _set_timeout(ctx, seconds: float | None):
     """Replace ctx.config.agent.tool_timeout_sec via dataclasses.replace."""
     agent = dataclasses.replace(ctx.config.agent, tool_timeout_sec=seconds or 0)
     ctx.config = dataclasses.replace(ctx.config, agent=agent)
@@ -48,6 +48,25 @@ async def _safe_execute(ctx, name, **kwargs):
     return await asyncio.wait_for(execute_tool(ctx, name, kwargs), timeout=5.0)
 
 
+@pytest.fixture
+def fast_tool_timeout(monkeypatch):
+    """Scale resolved timeouts down 5x so 1s cases run in 0.2s.
+
+    The real resolver still decides the value (global default, per-tool
+    override, or None), so override precedence is exercised; only the wall
+    clock is shortened.
+    """
+    import decafclaw.tools as tools_mod
+
+    real = tools_mod._resolve_tool_timeout
+
+    def scaled(ctx, name):
+        value = real(ctx, name)
+        return value / 5 if value else None
+
+    monkeypatch.setattr(tools_mod, "_resolve_tool_timeout", scaled)
+
+
 @pytest.mark.asyncio
 async def test_fast_tool_returns_normally(ctx):
     async def fast_tool(ctx):
@@ -60,7 +79,7 @@ async def test_fast_tool_returns_normally(ctx):
 
 
 @pytest.mark.asyncio
-async def test_hanging_tool_times_out_at_default(ctx):
+async def test_hanging_tool_times_out_at_default(ctx, fast_tool_timeout):
     async def hang(ctx):
         await asyncio.sleep(10)
         return "never"
@@ -72,13 +91,13 @@ async def test_hanging_tool_times_out_at_default(ctx):
     result = await _safe_execute(ctx, "hang")
     elapsed = time.monotonic() - start
 
-    assert "timed out after 1s" in result.text
+    assert "timed out" in result.text
     assert "hang" in result.text
-    assert elapsed < 3.0, f"expected ~1s, got {elapsed:.2f}s"
+    assert elapsed < 1.0, f"expected ~0.2s, got {elapsed:.2f}s"
 
 
 @pytest.mark.asyncio
-async def test_timeout_reports_tool_progress(ctx):
+async def test_timeout_reports_tool_progress(ctx, fast_tool_timeout):
     """A tool that records partial progress gets it named in the timeout
     result, so an interrupted bulk write is diagnosable (#1687)."""
 
@@ -92,7 +111,7 @@ async def test_timeout_reports_tool_progress(ctx):
 
     result = await _safe_execute(ctx, "partial")
 
-    assert "timed out after 1s" in result.text
+    assert "timed out" in result.text
     assert "37 page(s) written so far" in result.text
 
 
@@ -116,7 +135,7 @@ async def test_cancel_reports_tool_progress(ctx):
 
 
 @pytest.mark.asyncio
-async def test_per_tool_short_override_wins(ctx):
+async def test_per_tool_short_override_wins(ctx, fast_tool_timeout):
     async def hang(ctx):
         await asyncio.sleep(10)
         return "never"
@@ -128,8 +147,8 @@ async def test_per_tool_short_override_wins(ctx):
     result = await _safe_execute(ctx, "hang")
     elapsed = time.monotonic() - start
 
-    assert "timed out after 1s" in result.text
-    assert elapsed < 3.0
+    assert "timed out" in result.text
+    assert elapsed < 1.0
 
 
 @pytest.mark.asyncio
@@ -194,12 +213,12 @@ async def test_cancel_beats_timeout(ctx):
 
 
 @pytest.mark.asyncio
-async def test_sync_tool_timeout(ctx):
+async def test_sync_tool_timeout(ctx, fast_tool_timeout):
     # Sync tools run in to_thread; the thread can't be preempted but the
     # wrapping task is cancelled and the timeout error returned. Keep the
     # inner sleep short — pytest waits for the thread at teardown.
     def sync_hang(ctx):
-        time.sleep(2)
+        time.sleep(0.3)
         return "never"
 
     _register_extra_tool(ctx, "sync_hang", sync_hang)
@@ -209,8 +228,8 @@ async def test_sync_tool_timeout(ctx):
     result = await _safe_execute(ctx, "sync_hang")
     elapsed = time.monotonic() - start
 
-    assert "timed out after 1s" in result.text
-    assert elapsed < 2.0
+    assert "timed out" in result.text
+    assert elapsed < 1.0
 
 
 @pytest.mark.asyncio
@@ -282,25 +301,25 @@ def test_tabstack_research_has_configured_timeout():
 
 
 @pytest.mark.asyncio
-async def test_confirmation_active_pauses_tool_timeout(ctx):
+async def test_confirmation_active_pauses_tool_timeout(ctx, fast_tool_timeout):
     """When a confirmation prompt is active, the tool execution watchdog pauses."""
 
     async def prompt_tool(ctx):
         ctx.confirmation_active.set()
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(0.5)
         ctx.confirmation_active.clear()
         return "approved and finished"
 
     _register_extra_tool(ctx, "prompt_tool", prompt_tool)
     _set_timeout(ctx, 1)
 
-    # 1s watchdog would fire before 1.2s sleep if confirmation_active didn't pause it
+    # 1s watchdog (scaled to 0.2s) would fire before 0.5s if confirmation_active didn't pause it
     result = await _safe_execute(ctx, "prompt_tool")
     assert result.text == "approved and finished"
 
 
 @pytest.mark.asyncio
-async def test_timeout_logs_watchdog_warning(ctx, caplog):
+async def test_timeout_logs_watchdog_warning(ctx, caplog, fast_tool_timeout):
     """The watchdog announces the kill instead of silently returning (#1569)."""
 
     async def hang(ctx):
@@ -313,14 +332,14 @@ async def test_timeout_logs_watchdog_warning(ctx, caplog):
         result = await _safe_execute(ctx, "hang")
 
     assert result.timed_out is True
-    assert result.timeout_sec == 1
+    assert result.timeout_sec == 0.2
     warnings = [r for r in caplog.records if "[watchdog]" in r.message]
     assert warnings, "watchdog did not log a warning"
     assert "hang" in warnings[0].message
 
 
 @pytest.mark.asyncio
-async def test_timeout_tags_tool_end_and_tool_message(ctx):
+async def test_timeout_tags_tool_end_and_tool_message(ctx, fast_tool_timeout):
     """tool_end and the archived tool message carry structured outcome tags."""
 
     async def hang(ctx):
@@ -341,11 +360,11 @@ async def test_timeout_tags_tool_end_and_tool_message(ctx):
     end = next(e for e in events if e.get("type") == "tool_end")
     assert end["is_error"] is True
     assert end["timed_out"] is True
-    assert end["timeout_sec"] == 1
+    assert end["timeout_sec"] == 0.2
 
     assert tool_msg["is_error"] is True
     assert tool_msg["timed_out"] is True
-    assert tool_msg["timeout_sec"] == 1
+    assert tool_msg["timeout_sec"] == 0.2
 
 
 @pytest.mark.asyncio

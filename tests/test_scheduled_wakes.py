@@ -34,6 +34,11 @@ def mock_manager(config):
     return mgr
 
 
+async def _no_sleep(_seconds):
+    """Let wake timers fire immediately in tests; the delay arithmetic is covered separately."""
+    return
+
+
 @pytest.mark.asyncio
 async def test_schedule_turn_persists_and_returns_wake(ctx, mock_manager):
     ctx.manager = mock_manager
@@ -203,7 +208,7 @@ async def test_schedule_list(ctx, mock_manager):
 
 @pytest.mark.asyncio
 async def test_scheduled_wake_fires_and_enqueues_turn(config, mock_manager):
-    wake_mgr = ScheduledWakeManager(config, manager=mock_manager)
+    wake_mgr = ScheduledWakeManager(config, manager=mock_manager, sleep=_no_sleep)
 
     wake = await wake_mgr.schedule(
         conv_id="conv-fire",
@@ -313,7 +318,7 @@ async def test_deleted_conversation_timer_drops_without_recreating_sidecar(confi
     """When a conversation's files are deleted, timer expiry drops cleanly without recreating the dir (#1119 review)."""
     from decafclaw.conversation_paths import delete_conversation_files
 
-    wake_mgr = ScheduledWakeManager(config, manager=mock_manager)
+    wake_mgr = ScheduledWakeManager(config, manager=mock_manager, sleep=_no_sleep)
     wake = await wake_mgr.schedule(conv_id="conv-del-test", delay_seconds=1, reason="Short wait")
 
     # Simulate deleting the conversation files before timer fires
@@ -350,7 +355,7 @@ async def test_persistence_failure_propagation(ctx, mock_manager, monkeypatch):
 async def test_wake_retained_in_sidecar_if_enqueue_raises(config, mock_manager):
     """If manager.enqueue_turn raises, the wake is retained in sidecar for recovery (#1119 review)."""
     mock_manager.enqueue_turn.side_effect = RuntimeError("Enqueue exploded")
-    wake_mgr = ScheduledWakeManager(config, manager=mock_manager)
+    wake_mgr = ScheduledWakeManager(config, manager=mock_manager, sleep=_no_sleep)
 
     wake = await wake_mgr.schedule(conv_id="conv-enqueue-fail", delay_seconds=1, reason="Test enqueue fail")
     task = wake_mgr._tasks.get(wake.schedule_id)
@@ -391,7 +396,7 @@ async def test_rate_limited_wake_re_arms_timer_and_preserves_sidecar(config, moc
     rate_limited_fut.rate_limited = True
     mock_manager.enqueue_turn.return_value = rate_limited_fut
 
-    wake_mgr = ScheduledWakeManager(config, manager=mock_manager)
+    wake_mgr = ScheduledWakeManager(config, manager=mock_manager, sleep=_no_sleep)
     wake = await wake_mgr.schedule(conv_id="conv-rate-limit", delay_seconds=1, reason="Check build")
 
     # Let timer fire
@@ -424,7 +429,7 @@ async def test_shutdown_rejects_new_schedules(config, mock_manager):
 @pytest.mark.asyncio
 async def test_composed_context_setup_preserves_media_handler(config, mock_manager):
     """Composed context_setup preserves inherited handler and sets routing (#1119 review)."""
-    wake_mgr = ScheduledWakeManager(config, manager=mock_manager)
+    wake_mgr = ScheduledWakeManager(config, manager=mock_manager, sleep=_no_sleep)
     wake = await wake_mgr.schedule(
         conv_id="conv-media-preserve",
         delay_seconds=1,
@@ -467,7 +472,7 @@ async def test_composed_context_setup_preserves_media_handler(config, mock_manag
 @pytest.mark.asyncio
 async def test_metadata_cannot_override_scheduler_routing_fields(config, mock_manager):
     """User-supplied metadata must not overwrite scheduler-owned routing fields (#1119 review)."""
-    wake_mgr = ScheduledWakeManager(config, manager=mock_manager)
+    wake_mgr = ScheduledWakeManager(config, manager=mock_manager, sleep=_no_sleep)
     wake = await wake_mgr.schedule(
         conv_id="conv-meta-guard",
         delay_seconds=1,
