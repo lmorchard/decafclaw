@@ -11,6 +11,7 @@ import './model-picker.js';
 import './vault-sidebar.js';
 import './files-sidebar.js';
 import './schedules-sidebar.js';
+import './calendar-sidebar.js';
 import './tags-sidebar.js';
 
 /** Per-conversation sidebar collapse state: `sidebar-collapsed:<conv_id>` */
@@ -1251,6 +1252,8 @@ export class ConversationSidebar extends LitElement {
             @click=${() => this.#switchTab('files')}>Files</button>
           <button class="sidebar-tab ${this._sidebarTab === 'schedules' ? 'active' : ''}"
             @click=${() => this.#switchTab('schedules')}>Schedules</button>
+          <button class="sidebar-tab ${this._sidebarTab === 'calendar' ? 'active' : ''}"
+            @click=${() => this.#switchTab('calendar')}>Calendar</button>
           <button class="sidebar-tab ${this._sidebarTab === 'tags' ? 'active' : ''}"
             @click=${() => this.#switchTab('tags')}>Tags</button>
         </div>
@@ -1272,6 +1275,10 @@ export class ConversationSidebar extends LitElement {
         .openName=${this._openSchedule}
         style="${this._sidebarTab !== 'schedules' ? 'display:none' : ''}"
       ></schedules-sidebar>
+      <calendar-sidebar
+        .active=${this._sidebarTab === 'calendar'}
+        style="${this._sidebarTab !== 'calendar' ? 'display:none' : ''}"
+      ></calendar-sidebar>
       <tags-sidebar
         .active=${this._sidebarTab === 'tags'}
         style="${this._sidebarTab !== 'tags' ? 'display:none' : ''}"

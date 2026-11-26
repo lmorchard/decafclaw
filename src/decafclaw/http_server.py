@@ -41,6 +41,7 @@ from .skills.vault._events import (
 )
 from .tags import collect_all_tags
 from .web.bookmarks import KINDS_BY_TARGET, BookmarkStore, validate_bookmark_path
+from .web.calendar_routes import calendar_router
 from .web.http_auth import _authenticated, _get_username_or_401
 from .web.notification_routes import notification_router
 from .web.schedule_routes import schedule_router
@@ -3379,6 +3380,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                 },
             },
         ),
+        *calendar_router.routes,
         # The schedules resource's routes live in web/schedule_routes.py. Its
         # router registers them in their historical order — registration order
         # is part of the contract: the generated OpenAPI spec lists paths in

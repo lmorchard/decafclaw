@@ -14,6 +14,7 @@ class WSMessageType(StrEnum):
     """WebSocket wire message types."""
 
     BACKGROUND_EVENT = "background_event"
+    CALENDAR_CHANGED = "calendar_changed"
     CANVAS_UPDATE = "canvas_update"
     CHUNK = "chunk"
     COMMAND_ACK = "command_ack"
@@ -62,6 +63,7 @@ KNOWN_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(WSMessageType)
 S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
     {
         WSMessageType.BACKGROUND_EVENT,
+        WSMessageType.CALENDAR_CHANGED,
         WSMessageType.CANVAS_UPDATE,
         WSMessageType.CHUNK,
         WSMessageType.COMMAND_ACK,
@@ -121,6 +123,13 @@ class SrvBackgroundEvent(TypedDict):
     type: Literal[WSMessageType.BACKGROUND_EVENT]
     conv_id: str
     record: dict[str, object]
+
+
+class SrvCalendarChanged(TypedDict):
+    type: Literal[WSMessageType.CALENDAR_CHANGED]
+    conv_id: str
+    event_id: NotRequired[str]
+    action: NotRequired[str]
 
 
 class SrvCanvasUpdate(TypedDict):
@@ -451,6 +460,7 @@ class CliWidgetResponse(TypedDict):
 
 ServerMessage = (
     SrvBackgroundEvent
+    | SrvCalendarChanged
     | SrvCanvasUpdate
     | SrvChunk
     | SrvCommandAck
