@@ -29,13 +29,14 @@ python3 path/to/scavenger.py [--config FLEET_JSON] <command> [--json] ...
 | `wake HOST` | Send a Wake-on-LAN packet and wait for SSH. Exit 1 if the host stays asleep. |
 | `run CMD [--repo DIR] [--host H] [--arch A] [--image I] [--mem M] [--cpus N] [--timeout S] [--force]` | One-shot job in a throwaway container. `--repo` sends the git HEAD of DIR into `/workspace`. With `--json`, stdout and stderr come back in the JSON. |
 | `exec-native HOST CMD [--timeout S]` | Run a command directly on the host OS as the scavenger user. |
-| `env-create ID [--host H] [--kind container\|native] [--image I] [--recipe R] [--recipes-dir DIR] [--setup-script F] [--sync-dir DIR] [--ttl 2h] [--arch A]` | Reserve a stateful environment. |
+| `env-create ID [--host H] [--kind container\|native] [--image I] [--recipe R] [--recipes-dir DIR] [--setup-script F] [--sync-dir DIR] [--ttl 2h] [--arch A] [--env K=V]...` | Reserve a stateful environment. `--env` variables are stored on the controller (0600) and passed to every later `env-exec`; they never reach container labels. |
 | `env-exec ID CMD [--timeout S]` | Run a command in the environment. |
 | `env-info ID` | Show host, target, and remaining TTL. |
 | `env-sync ID up\|down DIR` | Copy files into `/workspace` (`up`) or out of it (`down`). |
 | `env-list` | List active leases. |
 | `env-destroy ID` | Remove the environment and its lease. |
 | `reap` | Destroy every expired lease. |
+| `runner [--env-id ID] [ARGS...]` | Transparent OpenCode CLI runner proxy inside a remote container (for `ghflow --worker-cmd`). |
 
 ## Recipes
 

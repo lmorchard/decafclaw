@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -132,6 +133,12 @@ def load_fleet_config(config_path: Optional[str] = None) -> Dict[str, HostConfig
 DEFAULT_RECIPES_DIR = "dockerfiles"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Environment variables for reserved environments live here rather than in the
+# lease cache: reconcile_leases() rebuilds that cache from host labels, so
+# anything stored there would be wiped on the next sweep. The file is mode 0600
+# because it holds credentials.
+ENV_VARS_FILE = os.path.expanduser("~/.config/scavenger/env-vars.json")
+
 # Container labels. Readers accept the previous decafclaw.* names so existing
 # environments remain visible after the engine is made standalone.
 LABEL_ENV_ID = "scavenger.env_id"
@@ -208,6 +215,76 @@ class EnvReservation:
     volume_name: Optional[str] = None
     workspace_path: Optional[str] = None
     image: Optional[str] = None
+
+
+# -----------------------------------------------------------------------------
+# Per-environment variables (~/.config/scavenger/env-vars.json, mode 0600)
+# -----------------------------------------------------------------------------
+
+
+def _load_env_vars_file() -> Dict[str, Dict[str, str]]:
+    """Read the env-vars store, tolerating a missing or corrupt file."""
+    try:
+        with open(ENV_VARS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        str(env_id): {str(k): str(v) for k, v in vals.items()}
+        for env_id, vals in data.items()
+        if isinstance(vals, dict)
+    }
+
+
+def _write_env_vars_file(data: Dict[str, Dict[str, str]]) -> None:
+    """Write the env-vars store atomically with mode 0600."""
+    os.makedirs(os.path.dirname(ENV_VARS_FILE), exist_ok=True)
+    tmp_path = ENV_VARS_FILE + ".tmp"
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+    os.replace(tmp_path, ENV_VARS_FILE)
+    os.chmod(ENV_VARS_FILE, 0o600)
+
+
+def save_env_vars(env_id: str, env_vars: Optional[Dict[str, str]]) -> None:
+    """Replace the stored variables for one environment (an empty mapping clears them)."""
+    data = _load_env_vars_file()
+    if env_vars:
+        data[env_id] = dict(env_vars)
+    else:
+        data.pop(env_id, None)
+    _write_env_vars_file(data)
+
+
+def load_env_vars(env_id: str) -> Dict[str, str]:
+    """Return the stored variables for one environment, or an empty mapping."""
+    return dict(_load_env_vars_file().get(env_id) or {})
+
+
+def drop_env_vars(env_id: str) -> None:
+    """Remove stored variables for one environment; never raise."""
+    data = _load_env_vars_file()
+    if data.pop(env_id, None) is not None:
+        _write_env_vars_file(data)
+
+
+def parse_env_assignments(values: Optional[List[str]]) -> Dict[str, str]:
+    """Parse repeated KEY=VALUE assignments, rejecting malformed entries."""
+    parsed: Dict[str, str] = {}
+    for raw in values or []:
+        if "=" not in raw:
+            raise ValueError(f"--env expects KEY=VALUE, got {raw!r}")
+        key, _, value = raw.partition("=")
+        key = key.strip()
+        if not key:
+            raise ValueError(f"--env expects a non-empty KEY, got {raw!r}")
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            raise ValueError(f"--env KEY must be a valid environment variable name, got {key!r}")
+        parsed[key] = value
+    return parsed
 
 
 def parse_ttl(ttl_str: str) -> int:
@@ -928,10 +1005,15 @@ def env_create(
     ttl: str = "2h",
     arch: Optional[str] = None,
     recipes_dir: Optional[str] = None,
+    env_vars: Optional[Dict[str, str]] = None,
 ) -> EnvReservation:
     """
     Reserve a stateful environment (container or native workspace) on the fleet.
     Preserves state across turns until env_destroy or TTL expiry.
+
+    ``env_vars`` are stored outside the lease cache (see ENV_VARS_FILE) and are
+    passed to every later env_exec / env_exec_bg in this environment. They never
+    reach container labels, which any local user on the target host can inspect.
 
     Reaps expired environments first so their containers, volumes, and native
     slots are freed before host selection. A reap failure on one host is
@@ -946,6 +1028,8 @@ def env_create(
     # Check for existing active lease with same env_id (cache first, then the hosts)
     existing = find_lease(fleet, env_id)
     if existing and existing.expires_at > now:
+        if env_vars is not None:
+            save_env_vars(env_id, env_vars)
         return existing
 
     # Select host
@@ -1075,7 +1159,14 @@ set -e
         leases[env_id] = res
 
     update_leases(record)
+    if env_vars is not None:
+        save_env_vars(env_id, env_vars)
     return res
+
+
+def _env_exec_flags(env_vars: Dict[str, str]) -> str:
+    """Build shell-quoted `-e KEY=VALUE` flags for one engine exec."""
+    return " ".join(f"-e {shlex.quote(f'{k}={v}')}" for k, v in sorted(env_vars.items()))
 
 
 def env_exec(
@@ -1089,12 +1180,17 @@ def env_exec(
     if not host:
         raise ValueError(f"Unknown host {res.host} for environment {res.env_id}")
 
+    env_vars = load_env_vars(res.env_id)
     if res.kind == "native":
+        exports = " ".join(f"{k}={shlex.quote(v)}" for k, v in sorted(env_vars.items()))
+        prefix = f"export {exports} && " if exports else ""
         ws = res.workspace_path or f"workspaces/{res.env_id}"
-        remote_cmd = f"cd ~/{ws} && {command}"
+        remote_cmd = f"cd ~/{ws} && {prefix}{command}"
     else:
         c_name = res.container_name or f"scavenger-env-{res.env_id}"
-        remote_cmd = f"{host.engine} exec -i {c_name} sh -c '{command}'"
+        flags = _env_exec_flags(env_vars)
+        flag_str = f"{flags} " if flags else ""
+        remote_cmd = f"{host.engine} exec -i {flag_str}{c_name} sh -c '{command}'"
 
     return run_ssh(host.ssh_alias, remote_cmd, timeout=timeout_seconds, capture=True)
 
@@ -1111,9 +1207,14 @@ def env_exec_bg(
     if not host:
         raise ValueError(f"Unknown host {res.host} for environment {res.env_id}")
 
+    env_vars = load_env_vars(res.env_id)
     b64_cmd = base64.b64encode(command.encode("utf-8")).decode("ascii")
+    # Native environments have no engine to pass -e through, so the exports ride
+    # inside the wrapped script instead.
+    exports = " ".join(f"{k}={shlex.quote(v)}" for k, v in sorted(env_vars.items()))
+    prefix = f"export {exports}; " if exports else ""
     inner_script = (
-        f"rm -f '{exit_file}'; (echo '{b64_cmd}' | base64 -d | sh) > '{log_file}' 2>&1; echo $? > '{exit_file}'"
+        f"rm -f '{exit_file}'; ({prefix}echo '{b64_cmd}' | base64 -d | sh) > '{log_file}' 2>&1; echo $? > '{exit_file}'"
     )
     b64_full = base64.b64encode(inner_script.encode("utf-8")).decode("ascii")
 
@@ -1302,6 +1403,7 @@ def env_destroy(fleet: Dict[str, HostConfig], env_id: str) -> bool:
         leases.pop(env_id, None)
 
     update_leases(drop)
+    drop_env_vars(env_id)
     return True
 
 
@@ -1694,6 +1796,7 @@ def cmd_env_create(args: argparse.Namespace) -> int:
         ttl=args.ttl,
         arch=args.arch,
         recipes_dir=resolve_recipes_dir(args.recipes_dir, args.config),
+        env_vars=parse_env_assignments(getattr(args, "env", None)),
     )
     # env-create has always printed JSON; keep that regardless of --json.
     print(json.dumps(dataclasses.asdict(res), indent=2))
@@ -1820,6 +1923,23 @@ def cmd_selfcheck(args: argparse.Namespace) -> None:
     sys.exit(0 if ok else 1)
 
 
+def cmd_runner(args: argparse.Namespace) -> int:
+    try:
+        from .runners.opencode_scavenger_runner import run_remote_opencode
+    except ImportError:
+        try:
+            from contrib.skills.scavenger.runners.opencode_scavenger_runner import run_remote_opencode
+        except ImportError:
+            runners_dir = os.path.join(os.path.dirname(__file__), "runners")
+            sys.path.insert(0, os.path.dirname(runners_dir))
+            from runners.opencode_scavenger_runner import run_remote_opencode
+
+    runner_args = list(args.runner_args or [])
+    if runner_args and runner_args[0] == "--":
+        runner_args = runner_args[1:]
+    return run_remote_opencode(runner_args, env_id=args.env_id)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="LAN Scavenger Compute Fleet Controller")
     parser.add_argument("--config", help="Path to custom fleet JSON config (default: ~/.config/scavenger/fleet.json)")
@@ -1886,6 +2006,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ec.add_argument("--ttl", default="2h", help="Time to live (e.g. '1h', '30m')")
     p_ec.add_argument("--arch", choices=["arm64", "x86_64"], help="Architecture preference")
+    p_ec.add_argument(
+        "--env",
+        action="append",
+        metavar="KEY=VALUE",
+        help="Environment variable passed to every env-exec in this environment; repeatable",
+    )
 
     p_ee = add("env-exec", "Run command inside a reserved environment", cmd_env_exec)
     p_ee.add_argument("env_id", help="Environment identifier")
@@ -1910,6 +2036,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_sc.add_argument("host", help="Host name from the fleet config")
     p_sc.add_argument("--image", default="alpine:latest", help="Container image (default: alpine:latest)")
     p_sc.add_argument("--no-wake", dest="wake", action="store_false", help="Do not fire Wake-on-LAN packets")
+
+    # Runner (OpenCode proxy adapter)
+    p_rn = add("runner", "Run opencode transparently inside a reserved scavenger container", cmd_runner)
+    p_rn.add_argument("--env-id", help="Target scavenger environment ID (default: SCAVENGER_ENV_ID or ghflow-worker)")
+    p_rn.add_argument("runner_args", nargs=argparse.REMAINDER, help="Arguments passed through to opencode")
 
     return parser
 

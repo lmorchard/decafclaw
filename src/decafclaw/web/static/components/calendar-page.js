@@ -55,7 +55,12 @@ export class CalendarPage extends LitElement {
   async #fetchEvent() {
     this._loading = true;
     try {
-      const data = await DefaultService.wrapperApiCalendarEventsGet(undefined, undefined, 'all', undefined);
+      // An explicit epoch `from` asks for the whole history, including fired
+      // events. The route's default bound is "upcoming only", which would hide
+      // the very events whose snooze/cancel actions this editor offers (#1952).
+      const data = await DefaultService.wrapperApiCalendarEventsGet(
+        new Date(0).toISOString(), undefined, 'all', undefined,
+      );
       this._event = (data.events || []).find((event) => event.event_id === this.eventId) || null;
       if (!this._event) this._error = 'Event not found.';
       this._dedicated = this._event?.session_mode === 'dedicated';

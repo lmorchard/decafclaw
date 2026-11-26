@@ -81,5 +81,43 @@ def test_until_stops_the_series():
 def test_invalid_timezone_and_rule_raise():
     with pytest.raises(ValueError, match="timezone"):
         validate_timezone("Not/AZone")
-    with pytest.raises(ValueError, match="invalid recurrence"):
+    with pytest.raises(ValueError, match="unsupported recurrence frequency"):
         validate_recurrence("FREQ=NOPE", "2027-03-15T09:00:00+00:00", "UTC")
+
+
+# -- frequency limits, UTC UNTIL, anchor match (#1954) ------------------------
+
+
+@pytest.mark.parametrize("rule", ["FREQ=SECONDLY", "FREQ=MINUTELY", "FREQ=HOURLY"])
+def test_sub_daily_frequencies_are_rejected(rule):
+    with pytest.raises(ValueError, match="unsupported recurrence frequency"):
+        validate_recurrence(rule, "2027-03-15T09:00:00+00:00", "UTC")
+
+
+def test_utc_until_is_accepted():
+    """The RFC's UTC UNTIL form must work against a naive local dtstart (#1954)."""
+    validate_recurrence("FREQ=DAILY;UNTIL=20270320T000000Z", "2027-03-15T09:00:00+00:00", "UTC")
+    event = _event("FREQ=DAILY;UNTIL=20270320T000000Z", "2027-03-15T09:00:00+00:00", "UTC")
+    assert next_occurrence(event, _ts("2027-03-15T09:00:00+00:00")) is not None
+    assert next_occurrence(event, _ts("2027-03-20T12:00:00+00:00")) is None
+
+
+def test_count_bounds_a_series():
+    validate_recurrence("FREQ=DAILY;COUNT=3", "2027-03-15T09:00:00+00:00", "UTC")
+    event = _event("FREQ=DAILY;COUNT=3", "2027-03-15T09:00:00+00:00", "UTC")
+    seen = []
+    cursor = _ts("2027-03-15T09:00:00+00:00")
+    while True:
+        following = next_occurrence(event, cursor)
+        if following is None:
+            break
+        seen.append(following[0])
+        cursor = following[1]
+    assert len(seen) == 2  # the anchor counts as the first
+
+
+def test_fire_at_must_match_the_rule():
+    # 2027-03-15 is a Monday; BYDAY=WE would make the first occurrence Wednesday.
+    with pytest.raises(ValueError, match="does not match the recurrence rule"):
+        validate_recurrence("FREQ=WEEKLY;BYDAY=WE", "2027-03-15T09:00:00+00:00", "UTC")
+    validate_recurrence("FREQ=WEEKLY;BYDAY=MO,WE", "2027-03-15T09:00:00+00:00", "UTC")

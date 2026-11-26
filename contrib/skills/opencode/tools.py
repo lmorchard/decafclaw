@@ -4,6 +4,7 @@ import asyncio
 import fnmatch
 import json
 import logging
+import os
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -354,6 +355,9 @@ class SkillConfig:
     # systemd memory specs (e.g. "50%", "2G"); both empty disables the cap.
     memory_max: str = field(default="50%", metadata={"env_alias": "OPENCODE_MEMORY_MAX"})
     memory_high: str = field(default="40%", metadata={"env_alias": "OPENCODE_MEMORY_HIGH"})
+    # Custom executable command for running OpenCode (e.g. "opencode", a path to
+    # an OpenCode Scavenger runner adapter, or set via OPENCODE_CMD / GHFLOW_WORKER_CMD).
+    opencode_cmd: str = field(default="opencode", metadata={"env_alias": "OPENCODE_CMD"})
 
 
 # Module state, populated by init()
@@ -819,8 +823,14 @@ async def tool_opencode_send(
 
     full_prompt = _assemble_prompt(prompt, session.instructions, context)
 
+    opencode_binary = (
+        _skill_config.opencode_cmd
+        if _skill_config and _skill_config.opencode_cmd
+        else os.environ.get("OPENCODE_CMD", "opencode")
+    )
+
     # Build the opencode run command arguments
-    cmd_args = ["opencode", "run", full_prompt, "--dir", session.cwd, "--format", "json", "--auto"]
+    cmd_args = [opencode_binary, "run", full_prompt, "--dir", session.cwd, "--format", "json", "--auto"]
     if session.sdk_session_id:
         cmd_args.extend(["--continue", "--session", session.sdk_session_id])
     if session.model:

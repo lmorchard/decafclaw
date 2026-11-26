@@ -4148,6 +4148,11 @@
             },
             "type": "array",
             "title": "Occurrences"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "default": false
           }
         },
         "type": "object",
