@@ -335,6 +335,12 @@ async def tool_calendar_update(
             return ToolResult(text="[error: fire_at must be in the future]", data={"error": "past_fire_at"})
         changes["fire_at"] = fire_at_iso
         changes["fire_at_ts"] = fire_at_ts
+        # Moving a series moves its anchor. Without this, next_occurrence keeps
+        # computing from the old recurrence_start and the series reverts after
+        # one fire (#1951). recurrence_until stays an absolute instant.
+        if event.recurrence:
+            changes["recurrence_start"] = fire_at_iso
+            changes["occurrence_at"] = fire_at_iso
 
     if recurrence is not None or timezone is not None or recurrence_until is not None:
         fire_iso = changes.get("fire_at", event.fire_at)

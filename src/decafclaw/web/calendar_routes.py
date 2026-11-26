@@ -28,10 +28,19 @@ from ..calendar_events import (
 from ..calendar_manager import CalendarManager
 from ..calendar_recurrence import next_occurrence, validate_recurrence, validate_timezone
 from ..conversation_paths import conversation_dir
-from .conversations import ConversationIndex
+from .conversations import ConversationIndex, can_read_conversation
 from .http_auth import _authenticated
 
 log = logging.getLogger(__name__)
+
+#: Hard ceiling on occurrences returned by one expansion request. A dense
+#: series over a wide range is otherwise unbounded work (#1953); the response
+#: carries ``truncated`` so the client can tell it got a partial view.
+MAX_OCCURRENCES = 2000
+
+#: Longest accepted ``to - from`` span for the occurrences endpoint. A Month
+#: view needs a bit over 31 days; a year is generous headroom.
+MAX_OCCURRENCE_SPAN_SEC = 400 * 86400
 
 
 class CalendarEventOut(BaseModel):
@@ -77,6 +86,7 @@ class CalendarOccurrenceOut(BaseModel):
 
 class CalendarOccurrenceListResponse(BaseModel):
     occurrences: list[CalendarOccurrenceOut]
+    truncated: bool = False
 
 
 class CalendarEventResponse(BaseModel):
@@ -125,8 +135,7 @@ def _title(index: ConversationIndex, conv_id: str) -> str:
     return entry.title if entry is not None else ""
 
 
-def _event_out(config, event: CalendarEvent) -> CalendarEventOut:
-    index = ConversationIndex(config)
+def _event_out(config, index: ConversationIndex, event: CalendarEvent) -> CalendarEventOut:
     data = CalendarEventOut(
         **{
             key: getattr(event, key)
@@ -140,12 +149,12 @@ def _event_out(config, event: CalendarEvent) -> CalendarEventOut:
     return data
 
 
-def _events_for(config, username: str) -> list[CalendarEvent]:
+def _events_for(config, index: ConversationIndex, username: str) -> list[CalendarEvent]:
     return [event for event in load_all_calendar_events(config) if event.user_id == username]
 
 
-def _find(config, username: str, event_id: str) -> CalendarEvent | None:
-    for event in _events_for(config, username):
+def _find(config, index: ConversationIndex, username: str, event_id: str) -> CalendarEvent | None:
+    for event in _events_for(config, index, username):
         if event.event_id == event_id:
             return event
     return None
@@ -183,6 +192,7 @@ def _validate_recurrence_fields(rule: str, timezone_name: str, start: str, until
 async def calendar_events_list(request: Request, username: str) -> JSONResponse:
     """GET /api/calendar/events — list the user's events."""
     config = request.app.state.config
+    index = ConversationIndex(config)
     status = request.query_params.get("status", "pending")
     conv_id = request.query_params.get("conv_id", "")
     from_raw = request.query_params.get("from", "")
@@ -193,16 +203,20 @@ async def calendar_events_list(request: Request, username: str) -> JSONResponse:
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
 
-    events = _events_for(config, username)
+    events = _events_for(config, index, username)
     if status and status != "all":
         events = [event for event in events if event.status == status]
     if conv_id:
         events = [event for event in events if event.conv_id == conv_id]
-    events = [event for event in events if event.fire_at_ts >= from_ts]
+    # An explicit from bound means "give me this window", including past
+    # events: the editor needs a fired event to snooze or cancel it (#1952).
+    # The default (no from) stays "upcoming only".
+    lower_ts = from_ts if from_raw else time.time()
+    events = [event for event in events if event.fire_at_ts >= lower_ts]
     if to_ts is not None:
         events = [event for event in events if event.fire_at_ts <= to_ts]
     events.sort(key=lambda event: event.fire_at_ts)
-    return JSONResponse({"events": [_event_out(config, event).model_dump() for event in events]})
+    return JSONResponse({"events": [_event_out(config, index, event).model_dump() for event in events]})
 
 
 @_authenticated
@@ -220,19 +234,26 @@ async def calendar_occurrences_list(request: Request, username: str) -> JSONResp
         return JSONResponse({"error": str(exc)}, status_code=400)
     if to_ts < from_ts:
         return JSONResponse({"error": "to must be after from"}, status_code=400)
+    if to_ts - from_ts > MAX_OCCURRENCE_SPAN_SEC:
+        return JSONResponse({"error": "range too large; narrow the from/to span"}, status_code=400)
 
     occurrences: list[dict] = []
     index = ConversationIndex(config)
-    for event in _events_for(config, username):
+    truncated = False
+    for event in _events_for(config, index, username):
         if conv_id and event.conv_id != conv_id:
             continue
         if event.status == "cancelled":
             continue
         if not include_fired and event.status in ("fired", "completed"):
             continue
+        target_title = _title(index, event.target_conv_id)
         if event.recurrence:
             cursor = from_ts - 1
             while True:
+                if len(occurrences) >= MAX_OCCURRENCES:
+                    truncated = True
+                    break
                 following = next_occurrence(event, cursor)
                 if following is None:
                     break
@@ -247,7 +268,7 @@ async def calendar_occurrences_list(request: Request, username: str) -> JSONResp
                             "occurrence_ts": ts,
                             "title": event.title,
                             "target_conv_id": event.target_conv_id,
-                            "target_title": _title(index, event.target_conv_id),
+                            "target_title": target_title,
                             "status": event.status,
                             "recurrence": True,
                         }
@@ -261,13 +282,15 @@ async def calendar_occurrences_list(request: Request, username: str) -> JSONResp
                     "occurrence_ts": event.fire_at_ts,
                     "title": event.title,
                     "target_conv_id": event.target_conv_id,
-                    "target_title": _title(index, event.target_conv_id),
+                    "target_title": target_title,
                     "status": event.status,
                     "recurrence": False,
                 }
             )
+        if truncated:
+            break
     occurrences.sort(key=lambda item: item["occurrence_ts"])
-    return JSONResponse({"occurrences": occurrences})
+    return JSONResponse({"occurrences": occurrences, "truncated": truncated})
 
 
 @_authenticated
@@ -278,7 +301,16 @@ async def calendar_events_create(request: Request, username: str) -> JSONRespons
         body = CalendarEventCreateRequest(**(await request.json()))
     except Exception as exc:  # noqa: BLE001 - validation and JSON share a 400
         return JSONResponse({"error": f"invalid request: {exc}"}, status_code=400)
+    index = ConversationIndex(config)
+    # The caller supplies conv_id, and the event's fires land in it with the
+    # caller's user_id. Without an ownership check, any authenticated user
+    # could aim an attacker-authored reminder at someone else's conversation
+    # (#1949). can_read_conversation is the shared rule used elsewhere; it
+    # deliberately allows system conversations (schedule, heartbeat, children)
+    # while rejecting another user's top-level web conversation.
     if not conversation_dir(config, body.conv_id).exists():
+        return JSONResponse({"error": "conversation not found"}, status_code=404)
+    if not can_read_conversation(config, index, body.conv_id, username):
         return JSONResponse({"error": "conversation not found"}, status_code=404)
     try:
         fire_at_iso, fire_at_ts = parse_fire_at(body.fire_at)
@@ -322,15 +354,16 @@ async def calendar_events_create(request: Request, username: str) -> JSONRespons
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     await _publish_changed(request, event, "created")
-    return JSONResponse({"event": _event_out(config, event).model_dump()}, status_code=201)
+    return JSONResponse({"event": _event_out(config, index, event).model_dump()}, status_code=201)
 
 
 @_authenticated
 async def calendar_events_update(request: Request, username: str) -> JSONResponse:
     """PUT /api/calendar/events/{event_id} — update a pending event."""
     config = request.app.state.config
+    index = ConversationIndex(config)
     event_id = request.path_params["event_id"]
-    event = _find(config, username, event_id)
+    event = _find(config, index, username, event_id)
     if event is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     if event.status != "pending":
@@ -357,18 +390,39 @@ async def calendar_events_update(request: Request, username: str) -> JSONRespons
             return JSONResponse({"error": "fire_at must be in the future"}, status_code=400)
         changes["fire_at"] = fire_iso
         changes["fire_at_ts"] = fire_ts
+        # Moving a series moves its anchor, matching the agent tool (#1951).
+        if event.recurrence:
+            changes["recurrence_start"] = fire_iso
+            changes["occurrence_at"] = fire_iso
     if body.session_mode is not None:
         changes["session_mode"] = body.session_mode
         if body.session_mode == "current":
             changes["session_key"] = ""
             changes["session_title"] = ""
-    if body.session_key is not None:
+    # The editor always posts the whole form, so a current-mode event arrives
+    # with session_key="" / session_title="". Those are legal for current mode
+    # and must not be slug-validated (#1952). Only validate when the final mode
+    # is dedicated, mirroring tool_calendar_update.
+    final_mode = changes.get("session_mode", event.session_mode)
+    if body.session_key is not None and final_mode != "current":
         try:
             changes["session_key"] = validate_session_key(body.session_key)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-    if body.session_title is not None:
+    elif body.session_key is not None:
+        changes["session_key"] = ""
+    if body.session_title is not None and final_mode != "current":
         changes["session_title"] = body.session_title.strip()
+    elif body.session_title is not None:
+        changes["session_title"] = ""
+
+    if final_mode == "dedicated":
+        final_key = changes.get("session_key", event.session_key)
+        final_title = changes.get("session_title", event.session_title)
+        if not final_key:
+            return JSONResponse({"error": "session_key is required for a dedicated session"}, status_code=400)
+        if not final_title:
+            return JSONResponse({"error": "session_title is required for a dedicated session"}, status_code=400)
 
     if body.recurrence is not None or body.timezone is not None or body.recurrence_until is not None:
         final_rule = event.recurrence if body.recurrence is None else body.recurrence
@@ -397,21 +451,22 @@ async def calendar_events_update(request: Request, username: str) -> JSONRespons
     if updated is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     await _publish_changed(request, updated, "updated")
-    return JSONResponse({"event": _event_out(config, updated).model_dump()})
+    return JSONResponse({"event": _event_out(config, index, updated).model_dump()})
 
 
 @_authenticated
 async def calendar_events_cancel(request: Request, username: str) -> JSONResponse:
     """DELETE /api/calendar/events/{event_id} — cancel the event or series."""
     config = request.app.state.config
+    index = ConversationIndex(config)
     event_id = request.path_params["event_id"]
-    event = _find(config, username, event_id)
+    event = _find(config, index, username, event_id)
     if event is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     cancelled = await _manager(request).cancel(event.conv_id, event_id)
     if not cancelled:
         return JSONResponse({"error": "event is not pending"}, status_code=400)
-    updated = _find(config, username, event_id)
+    updated = _find(config, index, username, event_id)
     if updated is not None:
         await _publish_changed(request, updated, "cancelled")
     return JSONResponse({"event_id": event_id, "cancelled": True})
@@ -421,8 +476,9 @@ async def calendar_events_cancel(request: Request, username: str) -> JSONRespons
 async def calendar_events_snooze(request: Request, username: str) -> JSONResponse:
     """POST /api/calendar/events/{event_id}/snooze — move the next occurrence."""
     config = request.app.state.config
+    index = ConversationIndex(config)
     event_id = request.path_params["event_id"]
-    event = _find(config, username, event_id)
+    event = _find(config, index, username, event_id)
     if event is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     try:
@@ -441,7 +497,7 @@ async def calendar_events_snooze(request: Request, username: str) -> JSONRespons
     if updated is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     await _publish_changed(request, updated, "snoozed")
-    return JSONResponse({"event": _event_out(config, updated).model_dump()})
+    return JSONResponse({"event": _event_out(config, index, updated).model_dump()})
 
 
 calendar_router = APIRouter()
