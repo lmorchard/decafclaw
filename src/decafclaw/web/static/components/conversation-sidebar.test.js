@@ -5,6 +5,115 @@ import './conversation-sidebar.js';
 
 vi.mock('../lib/toast.js', () => ({ showToast: vi.fn() }));
 
+describe('conversation-sidebar section selector', () => {
+  let sidebar;
+
+  beforeEach(() => {
+    vi.spyOn(DefaultService, 'wrapperApiBookmarksGet').mockResolvedValue({ files: [], vault: [] });
+    vi.spyOn(DefaultService, 'wrapperApiVaultGet').mockResolvedValue({ pages: [], folders: [] });
+    vi.spyOn(DefaultService, 'wrapperApiWorkspaceGet').mockResolvedValue({ files: [], folders: [] });
+    vi.spyOn(DefaultService, 'wrapperApiSchedulesGet').mockResolvedValue({ schedules: [] });
+    vi.spyOn(DefaultService, 'wrapperApiCalendarEventsGet').mockResolvedValue({ events: [] });
+    vi.spyOn(DefaultService, 'wrapperApiVaultTagsGet').mockResolvedValue({ tags: [] });
+  });
+
+  afterEach(() => {
+    sidebar?.remove();
+    vi.restoreAllMocks();
+  });
+
+  async function mount(storeOverrides = {}) {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'c1',
+      conversations: [{ conv_id: 'c1', title: 'Trip planning' }],
+      folders: [],
+      archivedConversations: [],
+      archivedFolders: [],
+      systemConversations: [],
+      systemFolders: [],
+      contextUsage: 0,
+      contextLimit: 0,
+      activeModel: '',
+      availableModels: [],
+      defaultModel: '',
+      selectConversation: vi.fn(),
+      listConversations: vi.fn(),
+      listSessions: vi.fn(),
+      listArchivedConversations: vi.fn(),
+      listSystemConversations: vi.fn(),
+      createConversation: vi.fn(),
+      ...storeOverrides,
+    });
+    sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
+    document.body.append(sidebar);
+    sidebar.store = store;
+    await sidebar.updateComplete;
+    return { sidebar, store };
+  }
+
+  it('renders one section select with options in order and defaults to conversations', async () => {
+    const { sidebar } = await mount();
+    const selects = sidebar.querySelectorAll('select.sidebar-section-select');
+    expect(selects).toHaveLength(1);
+
+    const select = /** @type {HTMLSelectElement} */ (selects[0]);
+    const options = [...select.querySelectorAll('option')].map((option) => ({
+      value: option.value,
+      label: option.textContent,
+    }));
+
+    expect(options).toEqual([
+      { value: 'conversations', label: 'Chats' },
+      { value: 'wiki', label: 'Vault' },
+      { value: 'files', label: 'Files' },
+      { value: 'schedules', label: 'Schedules' },
+      { value: 'calendar', label: 'Calendar' },
+      { value: 'tags', label: 'Tags' },
+    ]);
+    expect(select.value).toBe('conversations');
+  });
+
+  it('switches to wiki from the select, hides chats, shows vault, and dispatches sidebar-section-change', async () => {
+    const { sidebar } = await mount();
+    const handler = vi.fn();
+    document.addEventListener('sidebar-section-change', handler);
+
+    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('.sidebar-section-select'));
+    select.value = 'wiki';
+    select.dispatchEvent(new Event('change'));
+    await sidebar.updateComplete;
+
+    const vaultSidebar = /** @type {any} */ (sidebar.querySelector('vault-sidebar'));
+    const convList = /** @type {HTMLElement} */ ([...sidebar.children]
+      .find((el) => el.classList?.contains('conv-list')));
+    expect(vaultSidebar.active).toBe(true);
+    expect(vaultSidebar.getAttribute('style') || '').not.toContain('display:none');
+    expect(convList.style.display).toBe('none');
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].detail).toEqual({ section: 'wiki' });
+
+    document.removeEventListener('sidebar-section-change', handler);
+  });
+
+  it('syncs the select value when switchToSchedules is called programmatically', async () => {
+    const { sidebar } = await mount();
+
+    sidebar.switchToSchedules();
+    await sidebar.updateComplete;
+
+    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('.sidebar-section-select'));
+    const schedulesSidebar = /** @type {any} */ (sidebar.querySelector('schedules-sidebar'));
+    expect(select.value).toBe('schedules');
+    expect(schedulesSidebar.active).toBe(true);
+    expect(schedulesSidebar.getAttribute('style') || '').not.toContain('display:none');
+  });
+
+  it('renders no sidebar tab buttons', async () => {
+    const { sidebar } = await mount();
+    expect(sidebar.querySelectorAll('.sidebar-tab')).toHaveLength(0);
+  });
+});
+
 describe('conversation-sidebar model selector', () => {
   let sidebar;
 

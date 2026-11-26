@@ -671,7 +671,7 @@ conversation-sidebar[collapsed] .sidebar-header {
 conversation-sidebar button.collapse-btn {
   padding: 0.15rem 0.3rem;
   font-size: 1.1rem;
-  /* Never squeeze the toggle — the header row's other item (the tab strip)
+  /* Never squeeze the toggle — the header row's other item (the section selector)
      is what yields when the sidebar is narrow; the hide button keeps its
      intrinsic width so it stays inside the sidebar's overflow:hidden box. */
   flex-shrink: 0;
@@ -690,39 +690,11 @@ conversation-sidebar .mobile-close-btn {
   display: none;
 }
 
-/* ── Sidebar tabs ───────────────────────────────────────────────────────── */
-
-.sidebar-tabs {
-  display: flex;
-  gap: 0;
+conversation-sidebar .sidebar-section-select {
   flex: 1;
-  /* Let the strip shrink below the sum of the tab labels' min-content so the
-     trailing collapse button keeps its slot instead of being pushed past the
-     sidebar's right edge and clipped by overflow:hidden. */
   min-width: 0;
-}
-
-.sidebar-tab {
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 0.25rem 0.5rem;
-  font-size: 0.9rem;
-  cursor: pointer;
-  color: var(--pico-muted-color);
+  width: auto;
   margin: 0;
-}
-
-/* Pico aliases --pico-color → --pico-primary-inverse (white) inside
-   <button>, so var(--pico-color) renders white. Use the brand primary
-   for active so it both reads in light mode and matches the underline. */
-.sidebar-tab.active {
-  color: var(--pico-primary);
-  border-bottom-color: var(--pico-primary);
-}
-
-.sidebar-tab:hover {
-  color: var(--pico-primary);
 }
 
 .vault-view-toggle {

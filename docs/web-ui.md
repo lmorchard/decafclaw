@@ -164,6 +164,8 @@ During an active or long-running turn, users can ask out-of-band explanation que
 
 The sidebar lists conversations organized into folders:
 
+The header's `Sidebar section` selector switches between Chats, Vault, Files, Schedules, Calendar, and Tags.
+
 - **Create** new conversations
 - **Open in a new tab** — Cmd-click (macOS) or Ctrl-click (Windows/Linux) a
   row, or middle-click it. The new tab opens `?conv=<id>`, the same deep link
