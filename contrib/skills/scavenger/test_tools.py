@@ -1027,3 +1027,85 @@ def test_selfcheck_cli_exit_codes(tmp_path, mock_fleet):
         with pytest.raises(SystemExit) as exc:
             scavenger.cmd_selfcheck(args)
     assert exc.value.code != 0
+
+
+# --- env_vars through the tool layer -----------------------------------------
+
+
+@pytest.fixture
+def tool_env_store(tmp_path, monkeypatch):
+    path = tmp_path / "env-vars.json"
+    monkeypatch.setattr(sc, "ENV_VARS_FILE", str(path))
+    return path
+
+
+def test_tool_env_create_forwards_env_vars(mock_fleet, tool_env_store):
+    ctx = MagicMock()
+    ctx.config.workspace_path = "/tmp"
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return EnvReservation(
+            env_id="e1",
+            host="desktop-linux",
+            kind="container",
+            created_at=0.0,
+            expires_at=10**11,
+            ttl_seconds=60,
+            container_name="scavenger-env-e1",
+        )
+
+    with (
+        patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet),
+        patch("contrib.skills.scavenger.tools.env_create", side_effect=fake_create),
+    ):
+        out = scavenger_env_create(ctx, "e1", env_vars={"OPENAI_API_KEY": "sk-1"})
+
+    assert captured["env_vars"] == {"OPENAI_API_KEY": "sk-1"}
+    assert "OPENAI_API_KEY" in out
+
+
+def test_tool_env_create_rejects_invalid_env_name(mock_fleet, tool_env_store):
+    ctx = MagicMock()
+    ctx.config.workspace_path = "/tmp"
+
+    with patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet):
+        out = scavenger_env_create(ctx, "e1", env_vars={"BAD NAME": "x"})
+
+    assert out.startswith("Error:")
+
+
+def test_tool_env_create_without_env_vars_passes_none(mock_fleet, tool_env_store):
+    ctx = MagicMock()
+    ctx.config.workspace_path = "/tmp"
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return EnvReservation(
+            env_id="e1",
+            host="desktop-linux",
+            kind="container",
+            created_at=0.0,
+            expires_at=10**11,
+            ttl_seconds=60,
+            container_name="scavenger-env-e1",
+        )
+
+    with (
+        patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet),
+        patch("contrib.skills.scavenger.tools.env_create", side_effect=fake_create),
+    ):
+        scavenger_env_create(ctx, "e1")
+
+    assert captured["env_vars"] is None
+
+
+def test_env_create_tool_schema_declares_env_vars():
+    from contrib.skills.scavenger.tools import TOOL_DEFINITIONS
+
+    spec = next(d for d in TOOL_DEFINITIONS if d["function"]["name"] == "scavenger_env_create")
+    props = spec["function"]["parameters"]["properties"]
+    assert "env_vars" in props
+    assert props["env_vars"]["type"] == "object"

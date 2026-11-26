@@ -125,7 +125,48 @@ python3 projects/ghflow/scripts/run_queue.py --model openai/gpt-5.4
 
 ---
 
-## 5. Recipe & Setup Libraries
+## 5. Remote Burndown Composition
+
+Running a whole unattended delivery loop (`ghflow`'s `run_queue.py`) on a scavenger host instead of the controller. Every piece already exists; this is the shape to assemble them in.
+
+### Prerequisites
+
+- An `opencode-dev` container recipe, already cached on the target host.
+- The worker command path reachable from **inside** the container (not just on the controller).
+- A model id the container's `opencode.json` knows about. The bundled recipe ships one that resolves its API key from `OPENAI_API_KEY` at runtime.
+
+### Tool sequence
+
+```
+scavenger_env_create(env_id="ghflow-1940", recipe="opencode-dev",
+                     env_vars={"OPENAI_API_KEY": ..., "OPENAI_BASE_URL": ..., "GH_TOKEN": ...})
+scavenger_env_exec("ghflow-1940", "git clone … /workspace/decafclaw && git clone … /workspace/ghflow")
+scavenger_env_exec("ghflow-1940", "cd /workspace/decafclaw && python3 /workspace/ghflow/scripts/run_queue.py …",
+                   bg=True, wake_on="exit")
+scavenger_env_sync("ghflow-1940", direction="down", local_path="tmp/run-1940")   # when you want the logs
+scavenger_env_destroy("ghflow-1940")
+```
+
+### Gotchas worth knowing up front
+
+- **Credentials go in `env_vars`, never in the volume.** A shell script that re-exports from a file in `/workspace` defeats the point: the volume outlives the run and holds secrets on the target disk. `env_vars` is stored on the *controller* in a 0600 file and passed to each exec.
+- **`bg=True` needs a wake condition.** Without `wake_on="exit"` (or `env_watch`), the turn ends and nothing notices the run finished.
+- **Scope the run.** Use `--issue N` (ghflow ≥ #266) for a single issue. `--exclude` denylists go stale.
+- **The runner needs both checkouts.** `run_queue.py --skill-dir /workspace/ghflow` reads its own skill directory; the target repo is a separate clone under `/workspace`.
+- **Destroy on failure too.** A lease left behind holds a container and a volume until TTL expiry.
+
+### Failure modes
+
+| Symptom | Cause |
+|---|---|
+| `Environment 'x' is not active` | Lease missing, expired, or reaped; re-create it. |
+| Image pull at create time | Recipe not cached on that host yet; the first create builds it. |
+| Run exits 0 but no PR appears | Agent produced no commits; read the session log before assuming success. |
+| Wake never fires | `env_exec` without `wake_on`; re-arm with `env_watch`. |
+
+---
+
+## 6. Recipe & Setup Libraries
 
 - **Workspace Custom Recipes (`dockerfiles/`)**: Operators and agents can author custom Dockerfiles in `dockerfiles/<name>.Dockerfile` in the workspace root.
 - **Bundled Container Recipes (`dockerfiles/` in skill)**:
@@ -136,7 +177,7 @@ python3 projects/ghflow/scripts/run_queue.py --model openai/gpt-5.4
 
 ---
 
-## 6. CLI Alternative
+## 7. CLI Alternative
 
 The underlying deterministic Python CLI is available directly within the skill. It uses only the standard library and works outside decafclaw. Every command accepts `--json` and exits non-zero on failure. See `SKILL-cli.md` for the full command list (including `wake`, `exec-native`, and `env-info`).
 

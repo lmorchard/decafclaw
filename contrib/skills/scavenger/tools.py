@@ -30,6 +30,7 @@ from contrib.skills.scavenger.scavenger import (
     find_lease,
     load_fleet_config,
     load_leases,
+    parse_env_assignments,
     probe_host,
     reconcile_leases,
     resolve_recipes_dir,
@@ -272,6 +273,7 @@ def scavenger_env_create(
     network: str = "default",
     ttl: str = "2h",
     arch: str = "",
+    env_vars: Optional[Dict[str, str]] = None,
 ) -> str:
     """Reserve a stateful environment (container or native workspace) on the fleet."""
     if network not in NETWORK_MODES:
@@ -290,6 +292,15 @@ def scavenger_env_create(
     ws_root = getattr(cfg, "workspace_path", None)
     recipes_dir = resolve_recipes_dir(default=os.path.join(str(ws_root), "dockerfiles") if ws_root else None)
 
+    clean_env: Optional[Dict[str, str]] = None
+    if env_vars:
+        if not isinstance(env_vars, dict):
+            return "Error: env_vars must be an object mapping names to values."
+        try:
+            clean_env = parse_env_assignments([f"{k}={v}" for k, v in env_vars.items()])
+        except ValueError as e:
+            return f"Error: {e}"
+
     try:
         res = env_create(
             fleet=fleet,
@@ -306,12 +317,14 @@ def scavenger_env_create(
             ttl=ttl,
             arch=arch or None,
             recipes_dir=recipes_dir,
+            env_vars=clean_env,
         )
+        env_note = f"\nEnv vars: {', '.join(sorted(clean_env))}" if clean_env else ""
         return (
             f"Environment '{res.env_id}' reserved on {res.host} ({res.kind}).\n"
             f"TTL: {res.ttl_seconds}s (expires in {int(res.expires_at - time.time())}s)\n"
             f"Target: {res.container_name if res.kind == 'container' else res.workspace_path}\n"
-            f"Image/Recipe: {res.image or 'N/A'}"
+            f"Image/Recipe: {res.image or 'N/A'}{env_note}"
         )
     except Exception as e:
         return f"Failed to create environment: {e}"
@@ -801,6 +814,11 @@ TOOL_DEFINITIONS = [
                         "type": "string",
                         "enum": ["arm64", "x86_64"],
                         "description": "Optional architecture preference.",
+                    },
+                    "env_vars": {
+                        "type": "object",
+                        "description": "Environment variables passed to every later env-exec in this environment (e.g. API keys, model endpoints). Stored in a 0600 file on the controller and never written to container labels.",
+                        "additionalProperties": {"type": "string"},
                     },
                 },
                 "required": ["env_id"],
