@@ -14,6 +14,7 @@ import pathlib
 import re
 import socket
 import threading
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import uvicorn
@@ -22,8 +23,10 @@ from starlette.staticfiles import StaticFiles
 
 from decafclaw import notifications as notifs
 from decafclaw.archive import append_message, archive_path
+from decafclaw.calendar_events import CalendarEvent, save_calendar_events
 from decafclaw.config_types import ModelConfig
 from decafclaw.context_sidecars import write_context_sidecar
+from decafclaw.conversation_paths import conversation_dir
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
 from decafclaw.sticky import write_sticky_state
@@ -2392,3 +2395,78 @@ def test_browser_sidebar_collapse_button_visible_when_narrow(built_static, chrom
         }"""
         )
         assert_collapse_button_visible("narrow sidebar (160px drag-resize floor)")
+
+
+def test_browser_calendar_tab(built_static, chromium, config):
+    """Calendar tab: list, view switching, create for the current conversation, cancel."""
+    conv_id = seed_conversation(config, "Browser calendar")
+    conversation_dir(config, conv_id).mkdir(parents=True, exist_ok=True)
+    when = datetime.now(timezone.utc) + timedelta(hours=2)
+    save_calendar_events(
+        config,
+        conv_id,
+        [
+            CalendarEvent(
+                event_id="cal_browser",
+                conv_id=conv_id,
+                target_conv_id=conv_id,
+                session_mode="current",
+                title="Seeded event",
+                reason="Seeded for the browser test",
+                fire_at=when.isoformat(),
+                fire_at_ts=when.timestamp(),
+                created_at=when.isoformat(),
+                updated_at=when.isoformat(),
+                user_id="browser-user",
+            )
+        ],
+    )
+
+    with browser_scenario(built_static, chromium, config) as scenario:
+        page = scenario.page
+        page.evaluate(
+            """async ({ convId }) => {
+                await import('/static/components/calendar-sidebar.js');
+                await import('/static/components/calendar-page.js');
+                const host = document.createElement('conversation-sidebar');
+                host.store = { currentConvId: convId };
+                document.body.append(host);
+                const sidebar = document.createElement('calendar-sidebar');
+                sidebar.id = 'browser-calendar-sidebar';
+                sidebar.active = true;
+                document.body.append(sidebar);
+                await sidebar.updateComplete;
+            }""",
+            {"convId": conv_id},
+        )
+        page.wait_for_selector("#browser-calendar-sidebar .calendar-row")
+        page.wait_for_selector("#browser-calendar-sidebar .calendar-view-btn")
+        assert page.evaluate(
+            "document.querySelector('#browser-calendar-sidebar .calendar-row-title').textContent"
+        ).startswith("Seeded event")
+
+        page.locator("#browser-calendar-sidebar .calendar-view-btn", has_text="Week").click()
+        page.wait_for_function("new URL(window.location.href).searchParams.get('calendar_view') === 'week'")
+
+        page.locator("#browser-calendar-sidebar .calendar-view-btn", has_text="Month").click()
+        page.wait_for_selector("#browser-calendar-sidebar .calendar-month-grid")
+
+        page.evaluate("""() => {
+            const pageEl = document.createElement('calendar-page');
+            pageEl.id = 'browser-calendar-page';
+            document.body.append(pageEl);
+        }""")
+        page.wait_for_selector("#browser-calendar-page form")
+        page.fill("#browser-calendar-page input[name=title]", "Browser event")
+        page.fill("#browser-calendar-page textarea[name=reason]", "Created in browser")
+        page.fill("#browser-calendar-page input[name=fire_at]", "2027-01-01T09:00")
+        page.click("#browser-calendar-page form button[type=submit]")
+        page.wait_for_function("document.querySelector('#browser-calendar-page')?._event?.event_id")
+        assert any(request.method == "POST" and request.path == "/api/calendar/events" for request in scenario.requests)
+
+        page.wait_for_selector("#browser-calendar-page .calendar-cancel")
+        page.click("#browser-calendar-page .calendar-cancel")
+        page.wait_for_function("document.querySelector('#browser-calendar-page')?._message === 'Cancelled.'")
+        assert any(
+            request.method == "DELETE" and "/api/calendar/events/" in request.path for request in scenario.requests
+        )
