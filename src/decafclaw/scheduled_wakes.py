@@ -118,9 +118,16 @@ def compose_wake_context_setup(
 class ScheduledWakeManager:
     """Coordinates in-memory timers and persistent sidecars for scheduled wakes."""
 
-    def __init__(self, config, manager: ConversationManager | None = None) -> None:
+    def __init__(
+        self,
+        config,
+        manager: ConversationManager | None = None,
+        *,
+        sleep=asyncio.sleep,
+    ) -> None:
         self.config = config
         self.manager = manager
+        self._sleep = sleep
         self._tasks: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
         self._shutting_down = False
@@ -247,7 +254,7 @@ class ScheduledWakeManager:
         remaining = max(0.0, entry.fire_at_ts - time.time())
         try:
             if remaining > 0:
-                await asyncio.sleep(remaining)
+                await self._sleep(remaining)
             await self._fire_wake(entry)
         except asyncio.CancelledError:
             log.debug("Wake timer cancelled for %s", entry.schedule_id)
