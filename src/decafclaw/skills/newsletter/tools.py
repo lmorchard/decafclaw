@@ -223,10 +223,57 @@ async def newsletter_list_scheduled_activity(ctx, hours: int | None = None, wind
     except ValueError as exc:
         return ToolResult(text=f"[error: {exc}]")
     activity = _collect_scheduled_activity(ctx, resolved_hours)
+    degraded_count = sum(1 for item in activity if item.get("degraded"))
     summary = f"Found {len(activity)} scheduled-task conversation(s) in the last {display}."
+    if degraded_count:
+        summary += f" {degraded_count} degraded run(s) need review."
     return ToolResult(
         text=summary,
-        data={"activity": activity, "hours": resolved_hours, "window": display},
+        data={
+            "activity": activity,
+            "hours": resolved_hours,
+            "window": display,
+            "degraded_count": degraded_count,
+        },
+    )
+
+
+async def newsletter_scheduled_faults(ctx, hours: int | None = None, window: str = "") -> ToolResult:
+    """Return a Markdown checklist of scheduled runs with silent degradation.
+
+    Degradation means a tool refusal followed by a later non-error tool result:
+    the run hit a boundary, worked around it, and continued. The checklist is
+    evidence only — refusal, tool, later tools, and a final-message excerpt.
+    """
+    try:
+        resolved_hours, display = _resolve_hours(window, hours)
+    except ValueError as exc:
+        return ToolResult(text=f"[error: {exc}]")
+    activity = _collect_scheduled_activity(ctx, resolved_hours)
+    faults = [item for item in activity if item.get("degraded")]
+    if not faults:
+        return ToolResult(
+            text=f"No degraded scheduled runs in the last {display}.",
+            data={"faults": [], "degraded_count": 0, "hours": resolved_hours, "window": display},
+        )
+    lines = [f"# Scheduled runs needing review ({display})", ""]
+    for item in faults:
+        lines.append(f"- [ ] **{item['skill_name']}** — `{item['conv_id']}`")
+        for degradation in item.get("degradations") or []:
+            later = ", ".join(degradation.get("later_tools") or []) or "none"
+            lines.append(f"  - Refusal: {degradation.get('refusal')}")
+            lines.append(f"  - Tool: `{degradation.get('tool')}`; later tools: {later}")
+        excerpt = (item.get("final_message") or "").strip().replace("\n", " ")[:200]
+        if excerpt:
+            lines.append(f"  - Final: {excerpt}")
+    return ToolResult(
+        text="\n".join(lines),
+        data={
+            "faults": faults,
+            "degraded_count": len(faults),
+            "hours": resolved_hours,
+            "window": display,
+        },
     )
 
 
@@ -528,6 +575,7 @@ async def newsletter_publish(
 
 TOOLS = {
     "newsletter_list_scheduled_activity": newsletter_list_scheduled_activity,
+    "newsletter_scheduled_faults": newsletter_scheduled_faults,
     "newsletter_list_vault_changes": newsletter_list_vault_changes,
     "newsletter_list_recent_memories": newsletter_list_recent_memories,
     "newsletter_publish": newsletter_publish,
@@ -543,6 +591,37 @@ TOOL_DEFINITIONS = [
                 "List scheduled-task conversations within a time window (excludes "
                 "newsletter's own runs). Returns skill_name, conv_id, started_at, "
                 "final_message, vault_pages_touched, workspace_files_touched, has_error, and errors per conversation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "window": {
+                        "type": "string",
+                        "description": (
+                            "Compact time-range string like '24h', '7d', '2w'. "
+                            "Takes precedence over 'hours' when non-empty."
+                        ),
+                    },
+                    "hours": {
+                        "type": "integer",
+                        "description": (
+                            "Numeric window fallback in hours. Defaults to 24 (or SkillConfig.window_hours)."
+                        ),
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "writes": False,
+        "function": {
+            "name": "newsletter_scheduled_faults",
+            "description": (
+                "Return a Markdown checklist of scheduled runs with silent degradation: "
+                "a tool refusal followed by a later non-error tool result. Each item "
+                "carries the refusal, tool, later tools, and a final-message excerpt. "
+                "Use this for the 'Needs review' section; do not infer faults from prose."
             ),
             "parameters": {
                 "type": "object",
