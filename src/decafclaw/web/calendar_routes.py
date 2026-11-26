@@ -26,7 +26,7 @@ from ..calendar_events import (
     validate_session_key,
 )
 from ..calendar_manager import CalendarManager
-from ..calendar_recurrence import validate_recurrence, validate_timezone
+from ..calendar_recurrence import next_occurrence, validate_recurrence, validate_timezone
 from ..conversation_paths import conversation_dir
 from .conversations import ConversationIndex
 from .http_auth import _authenticated
@@ -62,6 +62,21 @@ class CalendarEventOut(BaseModel):
 
 class CalendarEventListResponse(BaseModel):
     events: list[CalendarEventOut]
+
+
+class CalendarOccurrenceOut(BaseModel):
+    event_id: str
+    occurrence_at: str
+    occurrence_ts: float
+    title: str
+    target_conv_id: str
+    target_title: str = ""
+    status: str
+    recurrence: bool = False
+
+
+class CalendarOccurrenceListResponse(BaseModel):
+    occurrences: list[CalendarOccurrenceOut]
 
 
 class CalendarEventResponse(BaseModel):
@@ -188,6 +203,71 @@ async def calendar_events_list(request: Request, username: str) -> JSONResponse:
         events = [event for event in events if event.fire_at_ts <= to_ts]
     events.sort(key=lambda event: event.fire_at_ts)
     return JSONResponse({"events": [_event_out(config, event).model_dump() for event in events]})
+
+
+@_authenticated
+async def calendar_occurrences_list(request: Request, username: str) -> JSONResponse:
+    """GET /api/calendar/occurrences — expand events in a range."""
+    config = request.app.state.config
+    from_raw = request.query_params.get("from", "")
+    to_raw = request.query_params.get("to", "")
+    conv_id = request.query_params.get("conv_id", "")
+    include_fired = request.query_params.get("include_fired", "false").lower() == "true"
+    try:
+        from_ts = parse_fire_at(from_raw)[1] if from_raw else time.time()
+        to_ts = parse_fire_at(to_raw)[1] if to_raw else from_ts + 86400
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if to_ts < from_ts:
+        return JSONResponse({"error": "to must be after from"}, status_code=400)
+
+    occurrences: list[dict] = []
+    index = ConversationIndex(config)
+    for event in _events_for(config, username):
+        if conv_id and event.conv_id != conv_id:
+            continue
+        if event.status == "cancelled":
+            continue
+        if not include_fired and event.status in ("fired", "completed"):
+            continue
+        if event.recurrence:
+            cursor = from_ts - 1
+            while True:
+                following = next_occurrence(event, cursor)
+                if following is None:
+                    break
+                iso, ts = following
+                if ts > to_ts:
+                    break
+                if ts >= from_ts:
+                    occurrences.append(
+                        {
+                            "event_id": event.event_id,
+                            "occurrence_at": iso,
+                            "occurrence_ts": ts,
+                            "title": event.title,
+                            "target_conv_id": event.target_conv_id,
+                            "target_title": _title(index, event.target_conv_id),
+                            "status": event.status,
+                            "recurrence": True,
+                        }
+                    )
+                cursor = ts
+        elif from_ts <= event.fire_at_ts <= to_ts:
+            occurrences.append(
+                {
+                    "event_id": event.event_id,
+                    "occurrence_at": event.fire_at,
+                    "occurrence_ts": event.fire_at_ts,
+                    "title": event.title,
+                    "target_conv_id": event.target_conv_id,
+                    "target_title": _title(index, event.target_conv_id),
+                    "status": event.status,
+                    "recurrence": False,
+                }
+            )
+    occurrences.sort(key=lambda item: item["occurrence_ts"])
+    return JSONResponse({"occurrences": occurrences})
 
 
 @_authenticated
@@ -376,6 +456,20 @@ calendar_router.add_api_route(
             {"name": "to", "in": "query", "required": False, "schema": {"type": "string"}},
             {"name": "status", "in": "query", "required": False, "schema": {"type": "string"}},
             {"name": "conv_id", "in": "query", "required": False, "schema": {"type": "string"}},
+        ]
+    },
+)
+calendar_router.add_api_route(
+    "/api/calendar/occurrences",
+    calendar_occurrences_list,
+    methods=["GET"],
+    response_model=CalendarOccurrenceListResponse,
+    openapi_extra={
+        "parameters": [
+            {"name": "from", "in": "query", "required": False, "schema": {"type": "string"}},
+            {"name": "to", "in": "query", "required": False, "schema": {"type": "string"}},
+            {"name": "conv_id", "in": "query", "required": False, "schema": {"type": "string"}},
+            {"name": "include_fired", "in": "query", "required": False, "schema": {"type": "boolean"}},
         ]
     },
 )

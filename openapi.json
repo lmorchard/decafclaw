@@ -2327,6 +2327,58 @@
         }
       }
     },
+    "/api/calendar/occurrences": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_calendar_occurrences_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarOccurrenceListResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conv_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_fired",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ]
+      }
+    },
     "/api/calendar/events/{event_id}": {
       "put": {
         "summary": "Wrapper",
@@ -4087,6 +4139,70 @@
           "event"
         ],
         "title": "CalendarEventResponse"
+      },
+      "CalendarOccurrenceListResponse": {
+        "properties": {
+          "occurrences": {
+            "items": {
+              "$ref": "#/components/schemas/CalendarOccurrenceOut"
+            },
+            "type": "array",
+            "title": "Occurrences"
+          }
+        },
+        "type": "object",
+        "required": [
+          "occurrences"
+        ],
+        "title": "CalendarOccurrenceListResponse"
+      },
+      "CalendarOccurrenceOut": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "occurrence_at": {
+            "type": "string",
+            "title": "Occurrence At"
+          },
+          "occurrence_ts": {
+            "type": "number",
+            "title": "Occurrence Ts"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "target_conv_id": {
+            "type": "string",
+            "title": "Target Conv Id"
+          },
+          "target_title": {
+            "type": "string",
+            "title": "Target Title",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "recurrence": {
+            "type": "boolean",
+            "title": "Recurrence",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "occurrence_at",
+          "occurrence_ts",
+          "title",
+          "target_conv_id",
+          "status"
+        ],
+        "title": "CalendarOccurrenceOut"
       },
       "CanvasMutationResponse": {
         "properties": {

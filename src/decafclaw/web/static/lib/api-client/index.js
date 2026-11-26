@@ -1471,6 +1471,27 @@ var DefaultService = class {
   }
   /**
    * Wrapper
+   * @param from
+   * @param to
+   * @param convId
+   * @param includeFired
+   * @returns CalendarOccurrenceListResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiCalendarOccurrencesGet(from, to, convId, includeFired) {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/calendar/occurrences",
+      query: {
+        "from": from,
+        "to": to,
+        "conv_id": convId,
+        "include_fired": includeFired
+      }
+    });
+  }
+  /**
+   * Wrapper
    * @param eventId
    * @param requestBody
    * @returns CalendarEventResponse Successful Response
