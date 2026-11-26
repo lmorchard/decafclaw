@@ -277,6 +277,7 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
 
         cache_key = (mc.provider, mc.model)
         if cache_key not in _failed_model_info:
+            provider = None
             try:
                 provider = get_provider(mc.provider)
                 if hasattr(provider, "get_model_info"):
@@ -297,6 +298,11 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
                                 mc.context_window_size,
                             )
                             return mc.context_window_size
+            except Exception as e:
+                log.debug("Failed to auto-detect context window size for %r: %s", model_name, e)
+            # The defaults table is independent of discovery: a raise in
+            # get_model_info must not hide it (#1830).
+            if provider is not None:
                 default_window = getattr(provider, "default_context_window", None)
                 if default_window is not None:
                     window = default_window(mc.model)
@@ -309,11 +315,8 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
                             mc.context_window_size,
                         )
                         return mc.context_window_size
-                _failed_model_info.add(cache_key)
-                _warn_no_context_window(config, mc)
-            except Exception as e:
-                log.debug("Failed to auto-detect context window size for %r: %s", model_name, e)
-                _failed_model_info.add(cache_key)
+            _failed_model_info.add(cache_key)
+            _warn_no_context_window(config, mc)
 
         if mc.context_window_size and mc.context_window_size > 0:
             return mc.context_window_size

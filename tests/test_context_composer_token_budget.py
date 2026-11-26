@@ -51,6 +51,32 @@ class TestGetContextWindowSize:
         finally:
             clear_providers()
 
+    @pytest.mark.asyncio
+    async def test_default_table_survives_model_info_failure(self, config):
+        """A raise from get_model_info must not hide the provider defaults table (#1830)."""
+
+        class MockProvider:
+            async def get_model_info(self, model: str, **kwargs):
+                raise RuntimeError("discovery down")
+
+            def default_context_window(self, model: str):
+                return 111111
+
+        from decafclaw.config_types import ModelConfig
+        from decafclaw.llm import _failed_model_info, ensure_model_context_window
+        from decafclaw.llm.registry import clear_providers, register_provider
+
+        clear_providers()
+        register_provider("mock", MockProvider())
+        try:
+            config.model_configs["test-model"] = ModelConfig(provider="mock", model="m", context_window_size=0)
+            _failed_model_info.discard(("mock", "m"))
+            size = await ensure_model_context_window(config, "test-model")
+            assert size == 111111
+            assert config.model_configs["test-model"].context_window_size == 111111
+        finally:
+            clear_providers()
+
 
 class TestComputeFixedTokens:
     def test_fixed_total_charges_mention_entries(self):
