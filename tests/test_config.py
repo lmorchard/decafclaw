@@ -1,5 +1,6 @@
 """Tests for the config loader (JSON file + env vars + defaults)."""
 
+import dataclasses
 import json
 import os
 
@@ -193,6 +194,22 @@ class TestDefaults:
     def test_reflection_verifier_model_defaults_empty(self):
         """Unset by default, so the existing fallback chain is untouched (#591)."""
         assert Config().reflection.verifier_model == ""
+
+
+class TestFieldIntrospection:
+    def test_load_materializes_all_fields(self, tmp_path, monkeypatch):
+        """A fresh load materializes every declared Config field (#1326).
+
+        The construction step iterates dataclasses.fields(Config), so a
+        newly declared field must appear on the loaded instance even when
+        config.json is absent.
+        """
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()  # no config.json — pure defaults path
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        loaded = load_config()
+        for f in dataclasses.fields(Config):
+            assert f.name in vars(loaded), f"field {f.name!r} missing from loaded config"
 
 
 class TestJsonFileLoading:
