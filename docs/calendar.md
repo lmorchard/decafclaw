@@ -43,7 +43,7 @@ An event stores:
 |------|--------------|
 | `calendar_create` | Create a one-shot or recurring event. Target the current conversation or a dedicated session. |
 | `calendar_list` | List events for the origin conversation. Each row shows the next occurrence and a short recurrence description. |
-| `calendar_update` | Change a pending event. Rescheduling is an update with a new `fire_at`; `recurrence`, `timezone`, and `recurrence_until` change the series. |
+| `calendar_update` | Change a pending event. Rescheduling is an update with a new `fire_at`; for a recurring event that also moves `recurrence_start` and `occurrence_at`, so the whole series shifts. `recurrence`, `timezone`, and `recurrence_until` change the series. |
 | `calendar_cancel` | Cancel a pending event or the whole recurring series. |
 | `calendar_snooze` | Move the next occurrence forward by a duration or to an absolute time. The series anchor does not move. |
 
@@ -66,7 +66,9 @@ FREQ=MONTHLY;BYMONTHDAY=1       the first of each month
 
 After each fire, the manager computes the next occurrence after `occurrence_at` and keeps the same `event_id`, `target_conv_id`, and dedicated session. A recurring event that became due while the server was offline fires **once** on startup, then schedules the next future occurrence instead of replaying every missed one.
 
-`calendar_snooze` moves only the current occurrence. `occurrence_at` and `recurrence_start` stay at the original anchor, so the following occurrence is computed from the series, not from the snoozed time. `calendar_cancel` cancels the whole series.
+`calendar_snooze` moves only the current occurrence. `occurrence_at` and `recurrence_start` stay at the original anchor, so the following occurrence is computed from the series, not from the snoozed time. A snooze that moves past one or more whole intervals skips the intervening occurrences and lands on the next future one. `calendar_cancel` cancels the whole series.
+
+`fire_at` must satisfy the RRULE. A `fire_at` that the rule does not produce — a Thursday time with `BYDAY=MO` — is rejected rather than firing once on the wrong day. `UNTIL` may be written in the RFC's UTC form (`UNTIL=20261201T000000Z`). Recurrence is limited to daily or coarser: `HOURLY`, `MINUTELY`, and `SECONDLY` are refused, because a month view of such a series is unbounded work.
 
 ## Target conversations
 
@@ -117,12 +119,18 @@ The REST API lives under `/api/calendar`:
 | `DELETE` | `/api/calendar/events/{event_id}` | Cancel an event or series |
 | `POST` | `/api/calendar/events/{event_id}/snooze` | Move the next occurrence |
 
-`/api/calendar/occurrences` returns one record per occurrence in the range. Recurring events are expanded with the same RRULE logic; one-shot events return one occurrence. Cancelled events are excluded, and fired events appear only with `include_fired=true`.
+`/api/calendar/events` defaults to upcoming events. Pass an explicit `from` to read a past window — the editor uses `from=1970-01-01T00:00:00.000Z` so a fired event can be opened and snoozed.
+
+`/api/calendar/occurrences` returns one record per occurrence in the range. Recurring events are expanded with the same RRULE logic; one-shot events return one occurrence. Cancelled events are excluded, and fired events appear only with `include_fired=true`. Expansion is bounded: at most `MAX_OCCURRENCES` (2000) records are returned, with `truncated: true` when the range held more, and a span wider than `MAX_OCCURRENCE_SPAN_SEC` (400 days) is refused with a 400.
+
+Creation requires the caller to be able to read the origin conversation. A cross-user `conv_id` returns 404. System conversations (schedule, heartbeat, delegated children) remain valid origins, matching `can_read_conversation`.
 
 The route module is `src/decafclaw/web/calendar_routes.py`. It uses the same session-cookie auth as the rest of the Web UI; unauthenticated requests return 401 and unknown event ids return 404.
 
 ## Limits
 
-Recurring events use RFC 5545 RRULEs; exception dates, attendees, and attachments are not stored. The Calendar Web UI and calendar views are separate issues. External calendar sync, such as CalDAV or Google Calendar, is out of scope.
+Recurring events use RFC 5545 RRULEs; exception dates, attendees, and attachments are not stored. External calendar sync, such as CalDAV or Google Calendar, is out of scope.
 
 The server does not store all-day events, attendees, attachments, or exception dates.
+
+Each request scans every per-conversation sidecar under `data/{agent_id}/calendar/` and filters in memory, so read cost grows with the total number of event sidecars rather than with one user's events. The conversation index is read once per request, not per occurrence.
