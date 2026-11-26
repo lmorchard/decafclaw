@@ -419,6 +419,76 @@ def _load_extensions(file_data: dict[str, Any]) -> dict[str, ExtensionConfig]:
 
 
 # ---------------------------------------------------------------------------
+# Runtime state holder (#1330)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ConfigRuntime:
+    """Process-lifetime runtime state, kept off the config data fields (#1330).
+
+    ``Config`` is resolved data (defaults → config.json → env); this holder
+    carries the state that side-effecting operations apply at runtime, so a
+    config reload mutates this holder rather than the Config's data fields:
+
+    - ``applied_env`` — the config.json "env" section as last applied to
+      ``os.environ``, which :meth:`apply_env_update` diffs against a fresh
+      section to decide which live variables the config owns (#149).
+    - ``catalog_materialized`` — model names this process materialized into
+      ``model_configs`` from the model catalog sidecar (#1211), letting
+      enable/disable and picker computation distinguish hand-authored entries
+      from discovered ones without touching config.json.
+    """
+
+    applied_env: dict[str, str] = field(default_factory=dict)
+    catalog_materialized: set[str] = field(default_factory=set)
+
+    def apply_env(self, env_section: dict[str, str]) -> None:
+        """Apply the config's env section to ``os.environ``.
+
+        Only sets vars not already in the environment (real env > .env >
+        config.json). Records the section as applied so a later
+        :meth:`apply_env_update` knows which live variables it owns. Call at
+        startup and after a config reload.
+        """
+        for key, value in env_section.items():
+            if key not in os.environ:
+                os.environ[key] = value
+        self.applied_env = dict(env_section)
+
+    def apply_env_update(self, env_section: dict[str, str]) -> None:
+        """Apply an env-section hot-reload, honoring apply_env's priority rule.
+
+        Diffs the freshly loaded section against :attr:`applied_env` (the
+        previous section). A reload may only touch variables the previous
+        section owned — detected by the live environment still holding the
+        previous config value. Changed keys are updated, dropped keys are
+        unset, and brand-new keys are set only when absent, exactly like
+        :meth:`apply_env` at startup.
+        """
+        previous = self.applied_env
+        for key in set(previous) | set(env_section):
+            old = previous.get(key)
+            new = env_section.get(key)
+            if old == new:
+                continue
+            current = os.environ.get(key)
+            # A key the previous section did not set but that already exists
+            # belongs to the real env/.env — apply_env would have skipped it.
+            if old is None and current is not None:
+                continue
+            # The previous section set it, but the live value differs — the
+            # real env/.env overrode us. Leave it alone.
+            if old is not None and current != old:
+                continue
+            if new is None:
+                del os.environ[key]
+            else:
+                os.environ[key] = new
+        self.applied_env = dict(env_section)
+
+
+# ---------------------------------------------------------------------------
 # Top-level Config
 # ---------------------------------------------------------------------------
 
@@ -494,50 +564,12 @@ class Config:
     # error path and by tool_search to route hidden-tool-name guesses
     # back to the skill that owns the tool.
     skill_tool_owners: dict[str, str] = field(default_factory=dict, metadata={"runtime_only": True})
-    # Model names this process materialized into model_configs from the
-    # model catalog sidecar (#1211). Lets enable/disable and picker
-    # computation distinguish hand-authored entries from discovered ones
-    # without touching config.json.
-    catalog_materialized: set[str] = field(default_factory=set, metadata={"runtime_only": True})
-
-    def apply_env(self) -> None:
-        """Apply env vars from the config. Only sets vars not already in the environment.
-
-        Priority: real env vars > .env file > config.json env section.
-        Call at startup and after config reload.
-        """
-        for key, value in self.env.items():
-            if key not in os.environ:
-                os.environ[key] = value
-
-    def apply_env_update(self, previous_env: dict[str, str]) -> None:
-        """Apply an env-section hot-reload, honoring apply_env's priority rule.
-
-        Config hot-reload (#149) captures the live env dict before applying
-        the fresh one and passes it as ``previous_env``. A reload may only
-        touch variables the previous section owned — detected by the live
-        environment still holding the previous config value. Changed keys are
-        updated, dropped keys are unset, and brand-new keys are set only when
-        absent, exactly like apply_env at startup.
-        """
-        for key in set(previous_env) | set(self.env):
-            old = previous_env.get(key)
-            new = self.env.get(key)
-            if old == new:
-                continue
-            current = os.environ.get(key)
-            # A key the previous section did not set but that already exists
-            # belongs to the real env/.env — apply_env would have skipped it.
-            if old is None and current is not None:
-                continue
-            # The previous section set it, but the live value differs — the
-            # real env/.env overrode us. Leave it alone.
-            if old is not None and current != old:
-                continue
-            if new is None:
-                del os.environ[key]
-            else:
-                os.environ[key] = new
+    # Process-lifetime runtime state holder (#1330): the env section as last
+    # applied to os.environ and the catalog-materialized tracking set live on
+    # this holder, not on config data fields. Runtime-only like the fields
+    # above — a fresh load always differs, and applying it would clobber the
+    # live holder.
+    runtime: ConfigRuntime = field(default_factory=ConfigRuntime, metadata={"runtime_only": True})
 
     @property
     def agent_path(self) -> Path:
@@ -941,8 +973,9 @@ def load_config() -> Config:
     resolved = {f.name: local_values[f.name] for f in dc_fields(Config) if f.name in local_values}
     config = Config(**resolved)
 
-    # Apply custom env vars (only sets those not already in environment)
-    config.apply_env()
+    # Apply custom env vars (only sets those not already in environment) and
+    # record the applied section on the runtime holder for hot-reload diffs.
+    config.runtime.apply_env(config.env)
 
     # Validate vault.user_writable_paths once at load time so misconfigured
     # entries surface in the logs without spamming per-call (the gate runs

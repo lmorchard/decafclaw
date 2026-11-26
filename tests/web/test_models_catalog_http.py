@@ -238,7 +238,7 @@ async def test_models_catalog_provider_bulk_never_touches_hand_configs(client, c
     colliding_key = catalog_model_key("local", "on")
     catalog_config.model_configs[colliding_key] = hand
     apply_catalog(catalog_config, load_catalog(catalog_config))
-    assert colliding_key not in catalog_config.catalog_materialized
+    assert colliding_key not in catalog_config.runtime.catalog_materialized
 
     resp = await client.post("/api/models/catalog/provider", json={"provider": "local", "enabled": False})
     assert resp.status_code == 200

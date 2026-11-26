@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from decafclaw.config import Config, load_config
+from decafclaw.config import Config, ConfigRuntime, load_config
 from decafclaw.config_types import (
     AgentConfig,
     CompactionConfig,
@@ -949,12 +949,46 @@ class TestEnvSection:
     def test_apply_env_idempotent(self):
         c = Config(env={"TEST_APPLY": "val"})
         os.environ.pop("TEST_APPLY", None)
-        c.apply_env()
+        c.runtime.apply_env(c.env)
         assert os.environ["TEST_APPLY"] == "val"
         # Second call shouldn't fail
-        c.apply_env()
+        c.runtime.apply_env(c.env)
         assert os.environ["TEST_APPLY"] == "val"
         os.environ.pop("TEST_APPLY", None)
+
+
+class TestConfigRuntime:
+    """The runtime state holder keeps env-applied and catalog-materialized
+    values off the config data fields (#1330)."""
+
+    def test_apply_env_records_applied_section(self, monkeypatch):
+        """apply_env sets absent vars, skips present ones, and records the
+        section so a later update knows which variables it owns."""
+        monkeypatch.delenv("PR1330_NEW", raising=False)
+        monkeypatch.setenv("PR1330_REAL", "real")
+        runtime = ConfigRuntime()
+        runtime.apply_env({"PR1330_NEW": "from-config", "PR1330_REAL": "from-config"})
+        assert os.environ["PR1330_NEW"] == "from-config"  # absent → set
+        assert os.environ["PR1330_REAL"] == "real"  # present → untouched
+        assert runtime.applied_env == {"PR1330_NEW": "from-config", "PR1330_REAL": "from-config"}
+
+    def test_apply_env_update_uses_recorded_section(self, monkeypatch):
+        """apply_env_update diffs the fresh section against applied_env: owned
+        vars update, dropped vars unset, real-env overrides stay untouched."""
+        monkeypatch.setenv("PR1330_OWNED", "old")  # live value matches recorded → owned
+        monkeypatch.setenv("PR1330_FOREIGN", "real")  # live value differs from recorded → foreign
+        runtime = ConfigRuntime(applied_env={"PR1330_OWNED": "old", "PR1330_FOREIGN": "config"})
+        runtime.apply_env_update({"PR1330_OWNED": "new", "PR1330_FOREIGN": "mine"})
+        assert os.environ["PR1330_OWNED"] == "new"  # owned → updated
+        assert os.environ["PR1330_FOREIGN"] == "real"  # real env overrode us → untouched
+        assert runtime.applied_env == {"PR1330_OWNED": "new", "PR1330_FOREIGN": "mine"}
+
+    def test_config_data_fields_stay_untouched_by_apply(self):
+        """The holder mutates its own state and os.environ, never the Config."""
+        c = Config(env={"PR1330_KEY": "one"})
+        before = dict(c.env)
+        c.runtime.apply_env(c.env)
+        assert c.env == before  # the config data field is not rewritten
 
 
 class TestCompatRemoved:

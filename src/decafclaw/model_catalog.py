@@ -380,9 +380,9 @@ def apply_catalog(config: "Config", catalog: ModelCatalog) -> None:
     (never overwriting a hand-authored entry under the same key) and prunes
     materialized entries that were disabled or vanished from the catalog.
     Only entries this function actually creates are tracked in
-    ``catalog_materialized`` — a colliding hand-authored entry is never
-    catalog-owned, so disabling the discovered model cannot prune it.
-    Writes no files; ``config.json`` is untouched.
+    ``config.runtime.catalog_materialized`` — a colliding hand-authored entry
+    is never catalog-owned, so disabling the discovered model cannot prune
+    it. Writes no files; ``config.json`` is untouched.
     """
     live_keys: set[str] = set()
     for provider_name, pentry in catalog.providers.items():
@@ -398,13 +398,13 @@ def apply_catalog(config: "Config", catalog: ModelCatalog) -> None:
                 # already tracked from the apply that created it.
                 continue
             config.model_configs[key] = materialize_model_config(provider_name, entry)
-            config.catalog_materialized.add(key)
+            config.runtime.catalog_materialized.add(key)
 
     # Drop entries this issue materialized earlier that are no longer
     # enabled. Hand-authored configs are never in catalog_materialized.
-    for key in config.catalog_materialized - live_keys:
+    for key in config.runtime.catalog_materialized - live_keys:
         config.model_configs.pop(key, None)
-        config.catalog_materialized.discard(key)
+        config.runtime.catalog_materialized.discard(key)
 
 
 def warn_unresolvable_model_configs(config: "Config", catalog: ModelCatalog) -> list[str]:
@@ -419,7 +419,7 @@ def warn_unresolvable_model_configs(config: "Config", catalog: ModelCatalog) -> 
     """
     problems: list[str] = []
     for key, entry in config.model_configs.items():
-        if key in config.catalog_materialized:
+        if key in config.runtime.catalog_materialized:
             continue
         provider = entry.provider
         if not provider:
@@ -456,7 +456,7 @@ def picker_models(config: "Config") -> list[str]:
     configs plus enabled discovered models. Disabled discovered models
     are excluded; the default pointer does not re-add anything."""
     catalog = load_catalog(config)
-    hand = set(config.model_configs) - config.catalog_materialized
+    hand = set(config.model_configs) - config.runtime.catalog_materialized
     return sorted(hand | enabled_catalog_keys(catalog))
 
 
@@ -473,7 +473,7 @@ def picker_model_groups(config: "Config") -> list[dict[str, object]]:
     """
     catalog = load_catalog(config)
     discovered = enabled_catalog_keys(catalog)
-    hand = set(config.model_configs) - config.catalog_materialized
+    hand = set(config.model_configs) - config.runtime.catalog_materialized
 
     groups: list[dict[str, object]] = []
     for provider_name, pentry in catalog.providers.items():

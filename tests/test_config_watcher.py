@@ -238,8 +238,10 @@ async def test_env_reload_updates_owned_vars_only(ctx, monkeypatch, tmp_path):
     """env hot-apply must update config-owned vars, set new ones, leave
     real-env overrides alone (#149 review: apply_env never updated anything)."""
     _align_config(ctx, monkeypatch, tmp_path)
-    # Simulate the startup result: the config's env section set these.
+    # Simulate the startup result: the config's env section set these, and
+    # the runtime holder recorded the applied section (#1330).
     ctx.config.env = {"PR1200_KEY": "old", "PR1200_KEPT": "kept"}
+    ctx.config.runtime.applied_env = dict(ctx.config.env)
     monkeypatch.setenv("PR1200_KEY", "old")
     monkeypatch.setenv("PR1200_KEPT", "kept")
     monkeypatch.setenv("PR1200_FOREIGN", "real")  # real env, config doesn't own it
@@ -272,7 +274,10 @@ async def test_env_reload_updates_owned_vars_only(ctx, monkeypatch, tmp_path):
 async def test_env_reload_unsets_removed_owned_vars(ctx, monkeypatch, tmp_path):
     """A key dropped from the env section is unset — if the config owned it."""
     _align_config(ctx, monkeypatch, tmp_path)
+    # Simulate the startup result: the config's env section set these, and
+    # the runtime holder recorded the applied section (#1330).
     ctx.config.env = {"PR1200_KEY": "old", "PR1200_KEPT": "kept"}
+    ctx.config.runtime.applied_env = dict(ctx.config.env)
     monkeypatch.setenv("PR1200_KEY", "old")
     monkeypatch.setenv("PR1200_KEPT", "kept")
     monkeypatch.setenv("PR1200_OVERRIDE", "real")  # foreign, dropped later too
@@ -291,6 +296,58 @@ async def test_env_reload_unsets_removed_owned_vars(ctx, monkeypatch, tmp_path):
         assert os.environ["PR1200_KEPT"] == "kept"
         assert os.environ["PR1200_OVERRIDE"] == "real"  # never ours → untouched
         assert events[-1]["requires_restart"] is False
+    finally:
+        ctx.event_bus.unsubscribe(sub_id)
+        await _cancel(task)
+
+
+async def test_reload_mutates_runtime_holder_not_config_data(ctx, monkeypatch, tmp_path):
+    """A reload mutates the live ConfigRuntime in place (applied_env tracks
+    the new section, catalog tracking survives) while base config data keeps
+    its identity and only file-driven values change (#1330)."""
+    _write_config(
+        tmp_path,
+        {"env": {"PR1330_KEY": "one"}, "llm": {"model": "base-model"}},
+    )
+    monkeypatch.delenv("PR1330_KEY", raising=False)
+    _align_config(ctx, monkeypatch, tmp_path)
+    config = ctx.config
+
+    # The startup load applied the env section and recorded it on the runtime
+    # holder; discovery would have tracked a catalog-materialized model.
+    assert config.runtime.applied_env == {"PR1330_KEY": "one"}
+    assert os.environ["PR1330_KEY"] == "one"
+    config.runtime.catalog_materialized.add("local/m1")
+
+    runtime_before = config.runtime
+    llm_before = config.llm
+
+    task, shutdown_event = await _run_watcher(ctx)
+    events: list[dict] = []
+    sub_id = ctx.event_bus.subscribe(events.append)
+
+    try:
+        await _settle()
+
+        # Only the env section changes in the file; llm stays as loaded.
+        _write_config(
+            tmp_path,
+            {"env": {"PR1330_KEY": "two"}, "llm": {"model": "base-model"}},
+        )
+        await _wait_for(lambda: config.env == {"PR1330_KEY": "two"})
+
+        # The reload mutated the live runtime holder in place...
+        assert config.runtime is runtime_before
+        assert config.runtime.applied_env == {"PR1330_KEY": "two"}
+        assert os.environ["PR1330_KEY"] == "two"  # owned → updated
+        # ...and the fresh load's empty tracking set did not clobber it.
+        assert config.runtime.catalog_materialized == {"local/m1"}
+        # Base config data for an unchanged section keeps its identity; only
+        # the file-driven env field was replaced.
+        assert config.llm is llm_before
+        assert not shutdown_event.is_set()
+        assert events[-1]["requires_restart"] is False
+        assert "env" in events[-1]["keys"]
     finally:
         ctx.event_bus.unsubscribe(sub_id)
         await _cancel(task)
@@ -491,7 +548,7 @@ async def test_model_configs_reload_reapplies_model_catalog(ctx, monkeypatch, tm
             assert not shutdown_event.is_set()
             # Hand entry and re-materialized discovered entry coexist.
             assert "hand-model" in config.model_configs
-            assert "local/m1" in config.catalog_materialized
+            assert "local/m1" in config.runtime.catalog_materialized
             assert picker_models(config) == ["hand-model", "local/m1"]
             # The default pointer still resolves (was stranded before).
             assert effective_default_model(config) == "local/m1"

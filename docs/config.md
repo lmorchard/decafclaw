@@ -722,9 +722,10 @@ Arbitrary environment variables set at startup. Useful for API keys and tool-spe
 - Displayed as secrets in `config show` (masked unless `--reveal`)
 - `config set env.MY_VAR value` and `config get env.MY_VAR` work
 - Config hot-reload (#149) re-applies an updated env section via
-  `Config.apply_env_update(previous_env)`, which updates/unsets only
-  variables the config owns (the live value still matches what the previous
-  section set; real env vars and `.env` keep winning)
+  `ConfigRuntime.apply_env_update(section)` on the live config's runtime
+  holder, which updates/unsets only variables the config owns (the live value
+  still matches what the previous section set; real env vars and `.env` keep
+  winning)
 
 ## Config hot-reload (#149)
 
