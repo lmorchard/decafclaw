@@ -170,6 +170,82 @@ def extract_activity(
     return final_text, vault_touched
 
 
+REFUSAL_MARKERS = (
+    "denied by user",
+    "denied on an unattended turn",
+    "requires explicit confirmation",
+    "blocked by security monitor",
+    "[cancelled:",
+    "was denied",
+)
+
+
+def extract_degradations(path: Path) -> list[dict]:
+    """Return silent-degradation evidence from one scheduled-run archive.
+
+    A run is degraded when a tool result contains a refusal marker and a later
+    tool result in the same run does not contain ``[error:`` — the agent hit a
+    refusal, worked around it, and continued. A refusal followed only by a final
+    message is a visible failure, not silent degradation. Final prose is never
+    consulted (#1651).
+    """
+    records: list[dict] = []
+    try:
+        with path.open() as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError as exc:
+        log.debug("Failed to read %s for degradations: %s", path, exc)
+        return []
+
+    tool_names: dict[str, str] = {}
+    for rec in records:
+        if rec.get("role") != "assistant":
+            continue
+        for call in rec.get("tool_calls") or []:
+            call_id = call.get("id")
+            fn = (call.get("function") or {}).get("name")
+            if call_id and fn:
+                tool_names[call_id] = fn
+
+    tool_results: list[tuple[int, str, str]] = []
+    for index, rec in enumerate(records):
+        if rec.get("role") == "tool":
+            tool_results.append((index, rec.get("tool_call_id") or "", str(rec.get("content") or "")))
+
+    degradations: list[dict] = []
+    for pos, (index, call_id, content) in enumerate(tool_results):
+        marker = next((candidate for candidate in REFUSAL_MARKERS if candidate in content), None)
+        if marker is None:
+            continue
+        later_tools = [
+            tool_names.get(later_id, "unknown")
+            for _, later_id, later_content in tool_results[pos + 1 :]
+            if "[error:" not in later_content
+        ]
+        if not later_tools:
+            continue
+        refusal_line = next(
+            (line.strip() for line in content.splitlines() if marker in line),
+            marker,
+        )
+        degradations.append(
+            {
+                "refusal": refusal_line[:200],
+                "tool": tool_names.get(call_id, "unknown"),
+                "later_tools": list(dict.fromkeys(later_tools)),
+                "message_index": index,
+            }
+        )
+    return degradations
+
+
 def collect_scheduled_activity(
     config,
     hours: int = 24,
@@ -187,6 +263,8 @@ def collect_scheduled_activity(
       - workspace_files_touched: list[str]
       - has_error: bool
       - errors: list[str]
+      - degraded: bool
+      - degradations: list[dict] (refusal, tool, later_tools, message_index)
     """
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     out: list[dict] = []
@@ -207,6 +285,7 @@ def collect_scheduled_activity(
         final, touched_vault, touched_workspace, has_error, errors = extract_activity(
             path, include_workspace_files=True, include_errors=True
         )
+        degradations = extract_degradations(path)
         out.append(
             {
                 "skill_name": name,
@@ -217,6 +296,8 @@ def collect_scheduled_activity(
                 "workspace_files_touched": touched_workspace,
                 "has_error": has_error,
                 "errors": errors,
+                "degraded": bool(degradations),
+                "degradations": degradations,
             }
         )
     return out

@@ -11,6 +11,7 @@ from decafclaw.archive import append_message
 from decafclaw.scheduled_activity import (
     collect_scheduled_activity,
     extract_activity,
+    extract_degradations,
     is_status_token,
     parse_scheduled_conv_id,
 )
@@ -283,3 +284,89 @@ def test_extract_activity_errors(tmp_path):
     assert len(errors) == 2
     assert any("Kindle session expired" in e for e in errors)
     assert any("Kindle auth failed" in e for e in errors)
+
+
+def _write_jsonl(path, records):
+    with path.open("w", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(json.dumps(record) + "\n")
+
+
+def test_extract_degradations_refusal_then_workaround(tmp_path):
+    path = tmp_path / "archive.jsonl"
+    _write_jsonl(
+        path,
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "activate_skill", "arguments": json.dumps({"name": "ambient-vibes"})},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "c1",
+                "content": "[error: activation of skill 'ambient-vibes' was denied on an unattended turn]",
+            },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c2",
+                        "type": "function",
+                        "function": {"name": "workspace_read", "arguments": json.dumps({"path": "SKILL.md"})},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c2", "content": "skill body"},
+            {"role": "assistant", "content": "Completed the task successfully."},
+        ],
+    )
+
+    degradations = extract_degradations(path)
+
+    assert len(degradations) == 1
+    assert degradations[0]["tool"] == "activate_skill"
+    assert degradations[0]["later_tools"] == ["workspace_read"]
+    assert "denied" in degradations[0]["refusal"]
+    assert isinstance(degradations[0]["message_index"], int)
+
+
+def test_extract_degradations_visible_failure_is_not_degraded(tmp_path):
+    path = tmp_path / "archive.jsonl"
+    _write_jsonl(
+        path,
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "activate_skill", "arguments": json.dumps({"name": "ambient-vibes"})},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "c1",
+                "content": "[error: activation of skill 'ambient-vibes' was denied on an unattended turn]",
+            },
+            {"role": "assistant", "content": "Could not proceed: activation was denied."},
+        ],
+    )
+
+    assert extract_degradations(path) == []
+
+
+def test_extract_degradations_clean_run(tmp_path):
+    path = tmp_path / "archive.jsonl"
+    _write_jsonl(path, [{"role": "assistant", "content": "All good."}])
+    assert extract_degradations(path) == []
