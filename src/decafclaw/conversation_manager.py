@@ -671,6 +671,10 @@ class ConversationManager:
 
         self.file_watches = FileWatchManager(self.config, self)
 
+        from .calendar_manager import CalendarManager
+
+        self.calendar = CalendarManager(self.config, self)
+
     def get_busy_conversations(self) -> list[str]:
         """Return IDs of all conversations with an active turn."""
         busy = []
@@ -764,6 +768,7 @@ class ConversationManager:
         command_ctx: Any = None,
         wiki_page: str | None = None,
         metadata: dict | None = None,
+        bypass_wake_rate_limit: bool = False,
     ) -> asyncio.Future:
         """Submit a turn of any kind. Returns an awaitable that resolves
         when the turn completes."""
@@ -783,22 +788,27 @@ class ConversationManager:
         # lock. See issue #440.
         async with state.lock:
             # WAKE-kind: rate limiter — drop excess wakes within the window.
+            # Calendar events pass bypass_wake_rate_limit=True because a
+            # reminder must not be dropped.
             if kind is TurnKind.WAKE:
-                now = time.monotonic()
-                cutoff = now - self._wake_window_sec
-                state.wake_times = [t for t in state.wake_times if t > cutoff]
-                if len(state.wake_times) >= self._wake_max_per_window:
-                    log.warning(
-                        "Wake rate limit exceeded for conv %s (%d wakes in last %ds) — dropping wake",
-                        conv_id[:8],
-                        len(state.wake_times),
-                        self._wake_window_sec,
-                    )
-                    setattr(future, "rate_limited", True)
-                    future.set_result(None)
-                    return future
-                state.wake_times.append(now)
-                setattr(future, "rate_limited", False)
+                if bypass_wake_rate_limit:
+                    setattr(future, "rate_limited", False)
+                else:
+                    now = time.monotonic()
+                    cutoff = now - self._wake_window_sec
+                    state.wake_times = [t for t in state.wake_times if t > cutoff]
+                    if len(state.wake_times) >= self._wake_max_per_window:
+                        log.warning(
+                            "Wake rate limit exceeded for conv %s (%d wakes in last %ds) — dropping wake",
+                            conv_id[:8],
+                            len(state.wake_times),
+                            self._wake_window_sec,
+                        )
+                        setattr(future, "rate_limited", True)
+                        future.set_result(None)
+                        return future
+                    state.wake_times.append(now)
+                    setattr(future, "rate_limited", False)
 
             # USER-kind only: circuit breaker check + user_message event emission.
             if kind is TurnKind.USER:
@@ -1536,6 +1546,7 @@ class ConversationManager:
         # Stop timers first so idle conversations cannot spawn new turns during shutdown (#1119 review)
         await self.scheduled_wakes.shutdown()
         await self.file_watches.shutdown()
+        await self.calendar.shutdown()
 
         tasks = [s.agent_task for s in self._conversations.values() if s.agent_task and not s.agent_task.done()]
         if tasks:
@@ -2289,7 +2300,11 @@ class ConversationManager:
                 # also fires below. Issue #491.
                 if state.cancel_observed_by_agent:
                     self._write_cancel_marker_once(conv_id, state)
-                suppress = kind is TurnKind.WAKE and is_background_wake_ok(result)
+                suppress = (
+                    kind is TurnKind.WAKE
+                    and (metadata or {}).get("suppressible", True)
+                    and is_background_wake_ok(result)
+                )
                 response_thinking = getattr(result, "thinking", None) or (
                     "".join(state.partial_assistant_thinking_chunks)
                     if state.partial_assistant_thinking_chunks
@@ -2704,9 +2719,11 @@ class ConversationManager:
         for conv_id in workflow_candidates:
             resumed_workflows += await self._recover_workflow(conv_id)
 
-        # Resume pending scheduled wakes (#1103) and file watches (#1560)
+        # Resume pending scheduled wakes (#1103), file watches (#1560), and
+        # calendar events (#1896)
         await self.startup_scan_scheduled_wakes()
         await self.startup_scan_file_watches()
+        await self.startup_scan_calendar()
 
         log.info(
             "Startup recovery: scanned %d conversation(s) in %.2fs (confirmations=%d, inbox=%d, workflows=%d)",
@@ -2725,6 +2742,10 @@ class ConversationManager:
     async def startup_scan_file_watches(self) -> int:
         """Scan and resume pending file watches after transports are ready (#1560)."""
         return await self.file_watches.startup_scan()
+
+    async def startup_scan_calendar(self) -> int:
+        """Scan and resume pending calendar events after transports are ready (#1896)."""
+        return await self.calendar.startup_scan()
 
     async def startup_scan_restart_wakes(self) -> int:
         """Wake conversations that requested a post-restart notification (#1554).

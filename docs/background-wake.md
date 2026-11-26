@@ -133,6 +133,20 @@ Configuration (`config.json`, env prefix `FILE_WATCH_`):
 | `max_watches_per_conversation` | `16` | Cap on pending watches per conversation |
 | `notify_on_timeout` | `false` | Wake on expiry instead of expiring silently |
 
+## Calendar Event Wakes (#1896)
+
+Calendar events are absolute-time one-shot reminders. They complement timer wakes and file watches: the user or agent names a calendar time instead of a relative delay or a filesystem change.
+
+- **Durable sidecar.** Events live in `data/{agent_id}/calendar/{conv_id}.json` outside the workspace.
+- **Target conversation.** An event targets its origin conversation or a dedicated web session. A dedicated session is upserted by a stable session key.
+- **Firing.** At the fire time the manager enqueues a `TurnKind.WAKE` turn with the conversation history. The event is marked `fired` after the manager accepts the turn.
+- **No rate-limit drop.** Calendar wakes pass `bypass_wake_rate_limit=True` because a reminder must not be dropped.
+- **No sentinel suppression.** Calendar prompts do not offer `BACKGROUND_WAKE_OK`, and the turn metadata sets `suppressible=False`.
+- **Non-duplicating delivery.** Calendar wakes keep the existing Mattermost `wake_delivery` fallback and write an inbox-only `calendar` notification for the Web UI.
+- **Restart recovery.** The startup scan fires events that became due while the server was offline. The prompt names the original due time.
+
+See [Calendar Events](calendar.md) for the event model, tools, and dedicated-session rules.
+
 ## History rendering — tool-result framing
 
 The `background_event` archive role is not a native LLM role. At

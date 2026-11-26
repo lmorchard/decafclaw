@@ -388,6 +388,7 @@ async def run_all(app_ctx, *, on_shutdown_complete: Callable[[], None] | None = 
         # Resume pending scheduled wake timers now that transports are listening (#1119 review)
         await manager.startup_scan_scheduled_wakes()
         await manager.startup_scan_file_watches()
+        await manager.startup_scan_calendar()
 
         # Resume post-restart conversation wakes after transports are up (#1554)
         await manager.startup_scan_restart_wakes()

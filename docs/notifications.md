@@ -79,7 +79,7 @@ can't corrupt the inbox.
 class NotificationRecord:
     id: str                    # 12-char hex, unique per record
     timestamp: str             # ISO-8601 UTC, e.g. "2026-04-22T10:15:00Z"
-    category: str              # "heartbeat" | "schedule" | "background" | ...
+    category: str              # "heartbeat" | "schedule" | "background" | "calendar" | ...
     title: str
     priority: str = "normal"   # "low" | "normal" | "high"
     body: str = ""
@@ -97,6 +97,7 @@ Three day-one producers emit notifications during normal operation:
 | `heartbeat` | `run_heartbeat_cycle` in `heartbeat.py` — after all sections finish | `high` if any section alerts, else `normal` | none (cycle spans conversations) |
 | `schedule` | `run_schedule_task` in `schedules.py` — after each task turn | `high` on failure, else `normal` | `conv://<id>` (the task's run) |
 | `background` | `_run_reader` in `skills/background/tools.py` — after `process.wait()`; unattended jobs only (#1842) | `high` on non-zero exit, else `normal` | originating `conv_id` populated |
+| `calendar` | `CalendarManager._notify` in `calendar_manager.py` — when a calendar event fires with no live subscriber (#1896) | `normal` | `conv://<target conversation>` |
 
 Compaction and reflection are intentionally *not* producers — both are
 mid-turn events visible in-line in the conversation UI, so emitting a

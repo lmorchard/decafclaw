@@ -194,6 +194,18 @@ Tools for scheduling asynchronous wake turns in long-running workflows (#1103). 
 | `schedule_cancel` | | Cancel a pending scheduled wake turn by schedule_id |
 | `schedule_list` | | List all pending scheduled wake turns for the current conversation |
 
+## Calendar Events (`tools/calendar_tools.py`)
+
+One-shot absolute-time reminders (#1896). An event fires a `TurnKind.WAKE` turn into its origin conversation or a dedicated session. State is persisted per-conversation in `data/{agent_id}/calendar/{conv_id}.json` outside the agent-writable workspace. See [Calendar Events](calendar.md).
+
+| Tool | Always | What it does |
+|------|:------:|--------------|
+| `calendar_create` | | Create a one-shot event for the current conversation or a dedicated session |
+| `calendar_list` | | List events for the current conversation, filtered by status and time range |
+| `calendar_update` | | Update a pending event. Use `fire_at` to reschedule. |
+| `calendar_cancel` | | Cancel a pending event by event_id |
+| `calendar_snooze` | | Move a pending or fired event forward by a duration or to an absolute time |
+
 ## File Watches (`tools/watch_tools.py`)
 
 One-shot file watches (#1560). The agent arms a watch on a workspace file; the first matching filesystem event (or the timeout) disarms it and enqueues a `TurnKind.WAKE` turn. State is persisted per-conversation in `data/{agent_id}/file_watches/{conv_id}.json` outside the agent-writable workspace, so it resumes across restarts — a change that landed while the server was down fires on the startup scan from the persisted baseline signature. The watcher polls a stat signature (mtime/size/inode) at `file_watch.poll_interval_sec`, so no new runtime dependency is required. Use this instead of polling with `wait` or guessing a delay with `schedule_turn` when an external app or person writes a known file.

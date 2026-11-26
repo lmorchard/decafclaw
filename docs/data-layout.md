@@ -26,6 +26,8 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
   web_tokens.json                   # Web UI auth tokens (managed by decafclaw-token CLI)
   scheduled_wakes/
     {conv_id}.json                  # Pending timer-based wake turns (#1103)
+  calendar/
+    {conv_id}.json                  # Pending one-shot calendar events (#1896)
   file_watches/
     {conv_id}.json                  # Pending one-shot file watches (#1560)
   restart_wakes/

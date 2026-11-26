@@ -310,6 +310,35 @@ class ConversationIndex:
         log.info(f"Created web conversation {conv.conv_id} for {user_id}")
         return conv
 
+    def get_or_create(self, conv_id: str, user_id: str, title: str = "") -> ConversationMeta:
+        """Return a conversation by id, or create it with that id.
+
+        Used by dedicated calendar sessions. An existing conversation keeps its
+        title. A conversation owned by another user is refused. An archived
+        conversation is unarchived.
+        """
+        existing = self.get(conv_id)
+        if existing is not None:
+            if existing.user_id != user_id:
+                raise ValueError(f"conversation {conv_id} belongs to another user")
+            if existing.archived:
+                self.unarchive(conv_id)
+                existing = self.get(conv_id) or existing
+            return existing
+        now = datetime.now(timezone.utc).isoformat()
+        conv = ConversationMeta(
+            conv_id=conv_id,
+            user_id=user_id,
+            title=title or "New conversation",
+            created_at=now,
+            updated_at=now,
+        )
+        data = self._load()
+        data.append(asdict(conv))
+        self._save(data)
+        log.info(f"Created web conversation {conv_id} for {user_id}")
+        return conv
+
     def get_or_create_home(self, user_id: str) -> ConversationMeta:
         """Get or lazily initialize the canonical Home / Lobby conversation for user_id."""
         home_id = f"web-{user_id}-home"
