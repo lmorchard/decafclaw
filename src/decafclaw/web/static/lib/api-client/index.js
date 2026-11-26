@@ -1436,6 +1436,113 @@ var DefaultService = class {
   }
   /**
    * Wrapper
+   * @param from
+   * @param to
+   * @param status
+   * @param convId
+   * @returns CalendarEventListResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiCalendarEventsGet(from, to, status, convId) {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/calendar/events",
+      query: {
+        "from": from,
+        "to": to,
+        "status": status,
+        "conv_id": convId
+      }
+    });
+  }
+  /**
+   * Wrapper
+   * @param requestBody
+   * @returns CalendarEventResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiCalendarEventsPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/calendar/events",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param from
+   * @param to
+   * @param convId
+   * @param includeFired
+   * @returns CalendarOccurrenceListResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiCalendarOccurrencesGet(from, to, convId, includeFired) {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/calendar/occurrences",
+      query: {
+        "from": from,
+        "to": to,
+        "conv_id": convId,
+        "include_fired": includeFired
+      }
+    });
+  }
+  /**
+   * Wrapper
+   * @param eventId
+   * @param requestBody
+   * @returns CalendarEventResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiCalendarEventsEventIdPut(eventId, requestBody) {
+    return request2(OpenAPI, {
+      method: "PUT",
+      url: "/api/calendar/events/{event_id}",
+      path: {
+        "event_id": eventId
+      },
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param eventId
+   * @returns any Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiCalendarEventsEventIdDelete(eventId) {
+    return request2(OpenAPI, {
+      method: "DELETE",
+      url: "/api/calendar/events/{event_id}",
+      path: {
+        "event_id": eventId
+      }
+    });
+  }
+  /**
+   * Wrapper
+   * @param eventId
+   * @param requestBody
+   * @returns CalendarEventResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiCalendarEventsEventIdSnoozePost(eventId, requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/calendar/events/{event_id}/snooze",
+      path: {
+        "event_id": eventId
+      },
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
    * @returns ScheduleListResponse Successful Response
    * @throws ApiError
    */

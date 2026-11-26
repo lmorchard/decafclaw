@@ -27,6 +27,7 @@ from .calendar_events import (
     parse_fire_at,
     save_calendar_events,
 )
+from .calendar_recurrence import next_occurrence
 from .conversation_paths import conversation_dir
 
 if TYPE_CHECKING:
@@ -158,7 +159,7 @@ class CalendarManager:
             for index, event in enumerate(events):
                 if event.event_id != event_id:
                     continue
-                if event.status in ("cancelled", "orphaned"):
+                if event.status in ("cancelled", "orphaned", "completed"):
                     raise ValueError(f"cannot snooze a {event.status} event")
                 if duration_seconds is not None:
                     if not isinstance(duration_seconds, (int, float)) or int(duration_seconds) < 1:
@@ -357,8 +358,63 @@ class CalendarManager:
             self._discard_current_task_locked(current.event_id)
             return
 
-        if await self._mark_status(current, "fired", last_fired_at=now_iso()):
+        if current.recurrence:
+            if await self._reschedule_or_complete(current):
+                await self._notify_if_unattended(current, target_conv_id)
+        elif await self._mark_status(current, "fired", last_fired_at=now_iso()):
             await self._notify_if_unattended(current, target_conv_id)
+
+    async def _reschedule_or_complete(self, event: CalendarEvent) -> bool:
+        """Advance a recurring event to its next occurrence, or mark it completed.
+
+        A normal fire advances from ``occurrence_at``. A snoozed occurrence
+        keeps the original anchor, so the next occurrence is not shifted. A
+        missed occurrence (late by more than a minute) advances from now, so a
+        restart fires once instead of replaying every missed occurrence.
+        """
+        occurrence_ts = datetime.fromisoformat(event.occurrence_at or event.fire_at).timestamp()
+        now = time.time()
+        base_ts = occurrence_ts
+        if not event.snooze_until and now - occurrence_ts > 60:
+            base_ts = now
+        try:
+            following = next_occurrence(event, base_ts)
+        except ValueError as exc:
+            log.warning("Calendar event %s recurrence failed: %s", event.event_id, exc)
+            following = None
+
+        async with self._lock:
+            events = load_calendar_events(self.config, event.conv_id)
+            for index, current in enumerate(events):
+                if current.event_id != event.event_id or current.fire_at_ts != event.fire_at_ts:
+                    continue
+                if following is None:
+                    events[index] = replace(
+                        current,
+                        status="completed",
+                        last_fired_at=now_iso(),
+                        updated_at=now_iso(),
+                    )
+                    save_calendar_events(self.config, event.conv_id, events)
+                    self._discard_current_task_locked(event.event_id)
+                    return True
+                fire_iso, fire_ts = following
+                updated = replace(
+                    current,
+                    status="pending",
+                    fire_at=fire_iso,
+                    fire_at_ts=fire_ts,
+                    occurrence_at=fire_iso,
+                    snooze_until="",
+                    last_fired_at=now_iso(),
+                    updated_at=now_iso(),
+                )
+                events[index] = updated
+                save_calendar_events(self.config, event.conv_id, events)
+                self._discard_current_task_locked(event.event_id)
+                self._arm_locked(updated)
+                return True
+        return False
 
     def _resolve_target(self, event: CalendarEvent) -> str | None:
         if event.session_mode == "current":

@@ -3,6 +3,7 @@
 
 export const MESSAGE_TYPES = Object.freeze({
   BACKGROUND_EVENT: 'background_event',
+  CALENDAR_CHANGED: 'calendar_changed',
   CANVAS_UPDATE: 'canvas_update',
   CHUNK: 'chunk',
   COMMAND_ACK: 'command_ack',

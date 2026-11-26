@@ -6,6 +6,9 @@ import { textRequest as __textRequest } from '../core/request';
 import type { AttachmentResponse } from '../models/AttachmentResponse';
 import type { AutocompleteResponse } from '../models/AutocompleteResponse';
 import type { BookmarksResponse } from '../models/BookmarksResponse';
+import type { CalendarEventListResponse } from '../models/CalendarEventListResponse';
+import type { CalendarEventResponse } from '../models/CalendarEventResponse';
+import type { CalendarOccurrenceListResponse } from '../models/CalendarOccurrenceListResponse';
 import type { CanvasMutationResponse } from '../models/CanvasMutationResponse';
 import type { CanvasNewTabResponse } from '../models/CanvasNewTabResponse';
 import type { CanvasStateResponse } from '../models/CanvasStateResponse';
@@ -1277,6 +1280,157 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/models/catalog/provider',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param from
+     * @param to
+     * @param status
+     * @param convId
+     * @returns CalendarEventListResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiCalendarEventsGet(
+        from?: string,
+        to?: string,
+        status?: string,
+        convId?: string,
+    ): CancelablePromise<CalendarEventListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/calendar/events',
+            query: {
+                'from': from,
+                'to': to,
+                'status': status,
+                'conv_id': convId,
+            },
+        });
+    }
+    /**
+     * Wrapper
+     * @param requestBody
+     * @returns CalendarEventResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiCalendarEventsPost(
+        requestBody: {
+            conv_id: string;
+            title: string;
+            reason: string;
+            fire_at: string;
+            timezone?: string;
+            recurrence?: string;
+            recurrence_until?: string;
+            session_mode?: 'current' | 'dedicated';
+            session_key?: string;
+            session_title?: string;
+        },
+    ): CancelablePromise<CalendarEventResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/calendar/events',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param from
+     * @param to
+     * @param convId
+     * @param includeFired
+     * @returns CalendarOccurrenceListResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiCalendarOccurrencesGet(
+        from?: string,
+        to?: string,
+        convId?: string,
+        includeFired?: boolean,
+    ): CancelablePromise<CalendarOccurrenceListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/calendar/occurrences',
+            query: {
+                'from': from,
+                'to': to,
+                'conv_id': convId,
+                'include_fired': includeFired,
+            },
+        });
+    }
+    /**
+     * Wrapper
+     * @param eventId
+     * @param requestBody
+     * @returns CalendarEventResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiCalendarEventsEventIdPut(
+        eventId: string,
+        requestBody: {
+            title?: (string | null);
+            reason?: (string | null);
+            fire_at?: (string | null);
+            timezone?: (string | null);
+            recurrence?: (string | null);
+            recurrence_until?: (string | null);
+            session_mode?: ('current' | 'dedicated' | null);
+            session_key?: (string | null);
+            session_title?: (string | null);
+        },
+    ): CancelablePromise<CalendarEventResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/calendar/events/{event_id}',
+            path: {
+                'event_id': eventId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param eventId
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiCalendarEventsEventIdDelete(
+        eventId: string,
+    ): CancelablePromise<Record<string, any>> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/calendar/events/{event_id}',
+            path: {
+                'event_id': eventId,
+            },
+        });
+    }
+    /**
+     * Wrapper
+     * @param eventId
+     * @param requestBody
+     * @returns CalendarEventResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiCalendarEventsEventIdSnoozePost(
+        eventId: string,
+        requestBody: {
+            duration_seconds?: (number | null);
+            until?: (string | null);
+        },
+    ): CancelablePromise<CalendarEventResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/calendar/events/{event_id}/snooze',
+            path: {
+                'event_id': eventId,
+            },
             body: requestBody,
             mediaType: 'application/json',
         });

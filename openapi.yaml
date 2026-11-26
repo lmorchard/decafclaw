@@ -1381,6 +1381,258 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModelCatalogResponse'
+  /api/calendar/events:
+    get:
+      summary: Wrapper
+      operationId: wrapper_api_calendar_events_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEventListResponse'
+      parameters:
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: conv_id
+        in: query
+        required: false
+        schema:
+          type: string
+    post:
+      summary: Wrapper
+      operationId: wrapper_api_calendar_events_post
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEventResponse'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                conv_id:
+                  title: Conv Id
+                  type: string
+                title:
+                  title: Title
+                  type: string
+                reason:
+                  title: Reason
+                  type: string
+                fire_at:
+                  title: Fire At
+                  type: string
+                timezone:
+                  default: ''
+                  title: Timezone
+                  type: string
+                recurrence:
+                  default: ''
+                  title: Recurrence
+                  type: string
+                recurrence_until:
+                  default: ''
+                  title: Recurrence Until
+                  type: string
+                session_mode:
+                  default: current
+                  enum:
+                  - current
+                  - dedicated
+                  title: Session Mode
+                  type: string
+                session_key:
+                  default: ''
+                  title: Session Key
+                  type: string
+                session_title:
+                  default: ''
+                  title: Session Title
+                  type: string
+              required:
+              - conv_id
+              - title
+              - reason
+              - fire_at
+              title: CalendarEventCreateRequest
+              type: object
+  /api/calendar/occurrences:
+    get:
+      summary: Wrapper
+      operationId: wrapper_api_calendar_occurrences_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarOccurrenceListResponse'
+      parameters:
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: conv_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: include_fired
+        in: query
+        required: false
+        schema:
+          type: boolean
+  /api/calendar/events/{event_id}:
+    put:
+      summary: Wrapper
+      operationId: wrapper_api_calendar_events__event_id__put
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEventResponse'
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                title:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Title
+                reason:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Reason
+                fire_at:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Fire At
+                timezone:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Timezone
+                recurrence:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Recurrence
+                recurrence_until:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Recurrence Until
+                session_mode:
+                  anyOf:
+                  - enum:
+                    - current
+                    - dedicated
+                    type: string
+                  - type: 'null'
+                  title: Session Mode
+                session_key:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Session Key
+                session_title:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Session Title
+              title: CalendarEventUpdateRequest
+              type: object
+    delete:
+      summary: Wrapper
+      operationId: wrapper_api_calendar_events__event_id__delete
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Wrapper Api Calendar Events  Event Id  Delete
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/calendar/events/{event_id}/snooze:
+    post:
+      summary: Wrapper
+      operationId: wrapper_api_calendar_events__event_id__snooze_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEventResponse'
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                duration_seconds:
+                  anyOf:
+                  - type: integer
+                  - type: 'null'
+                  title: Duration Seconds
+                until:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Until
+              title: CalendarSnoozeRequest
+              type: object
   /api/schedules:
     get:
       summary: Wrapper
@@ -2212,6 +2464,170 @@ components:
       - files
       - vault
       title: BookmarksResponse
+    CalendarEventListResponse:
+      properties:
+        events:
+          items:
+            $ref: '#/components/schemas/CalendarEventOut'
+          type: array
+          title: Events
+      type: object
+      required:
+      - events
+      title: CalendarEventListResponse
+    CalendarEventOut:
+      properties:
+        event_id:
+          type: string
+          title: Event Id
+        conv_id:
+          type: string
+          title: Conv Id
+        target_conv_id:
+          type: string
+          title: Target Conv Id
+        session_mode:
+          type: string
+          title: Session Mode
+        session_key:
+          type: string
+          title: Session Key
+          default: ''
+        session_title:
+          type: string
+          title: Session Title
+          default: ''
+        title:
+          type: string
+          title: Title
+        reason:
+          type: string
+          title: Reason
+        fire_at:
+          type: string
+          title: Fire At
+        fire_at_ts:
+          type: number
+          title: Fire At Ts
+        created_at:
+          type: string
+          title: Created At
+        updated_at:
+          type: string
+          title: Updated At
+        status:
+          type: string
+          title: Status
+        last_fired_at:
+          type: string
+          title: Last Fired At
+          default: ''
+        snooze_until:
+          type: string
+          title: Snooze Until
+          default: ''
+        recurrence:
+          type: string
+          title: Recurrence
+          default: ''
+        timezone:
+          type: string
+          title: Timezone
+          default: ''
+        recurrence_start:
+          type: string
+          title: Recurrence Start
+          default: ''
+        occurrence_at:
+          type: string
+          title: Occurrence At
+          default: ''
+        recurrence_until:
+          type: string
+          title: Recurrence Until
+          default: ''
+        origin_title:
+          type: string
+          title: Origin Title
+          default: ''
+        target_title:
+          type: string
+          title: Target Title
+          default: ''
+        recurrence_summary:
+          type: string
+          title: Recurrence Summary
+          default: ''
+      type: object
+      required:
+      - event_id
+      - conv_id
+      - target_conv_id
+      - session_mode
+      - title
+      - reason
+      - fire_at
+      - fire_at_ts
+      - created_at
+      - updated_at
+      - status
+      title: CalendarEventOut
+    CalendarEventResponse:
+      properties:
+        event:
+          $ref: '#/components/schemas/CalendarEventOut'
+      type: object
+      required:
+      - event
+      title: CalendarEventResponse
+    CalendarOccurrenceListResponse:
+      properties:
+        occurrences:
+          items:
+            $ref: '#/components/schemas/CalendarOccurrenceOut'
+          type: array
+          title: Occurrences
+      type: object
+      required:
+      - occurrences
+      title: CalendarOccurrenceListResponse
+    CalendarOccurrenceOut:
+      properties:
+        event_id:
+          type: string
+          title: Event Id
+        occurrence_at:
+          type: string
+          title: Occurrence At
+        occurrence_ts:
+          type: number
+          title: Occurrence Ts
+        title:
+          type: string
+          title: Title
+        target_conv_id:
+          type: string
+          title: Target Conv Id
+        target_title:
+          type: string
+          title: Target Title
+          default: ''
+        status:
+          type: string
+          title: Status
+        recurrence:
+          type: boolean
+          title: Recurrence
+          default: false
+      type: object
+      required:
+      - event_id
+      - occurrence_at
+      - occurrence_ts
+      - title
+      - target_conv_id
+      - status
+      title: CalendarOccurrenceOut
     CanvasMutationResponse:
       properties:
         ok:

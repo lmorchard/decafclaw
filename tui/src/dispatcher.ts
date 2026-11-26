@@ -191,6 +191,7 @@ export function dispatch(s: State, m: ServerMessage): State {
 
     // Spike-deferred. Acknowledged in types.ts but not surfaced in UI.
     case "background_event":
+    case "calendar_changed":
     case "canvas_update":
     case "command_ack":
     case "conversation_status":

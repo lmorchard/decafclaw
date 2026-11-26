@@ -7,6 +7,11 @@
       "description": "Background-task lifecycle event surfaced into a conversation timeline (e.g. delegated task started/finished).",
       "fields": {"conv_id": "string", "record": "object"}
     },
+    "calendar_changed": {
+      "direction": "server_to_client",
+      "description": "A calendar event was created, updated, snoozed, or cancelled; refresh the Calendar tab.",
+      "fields": {"conv_id": "string", "event_id": "string?", "action": "string?"}
+    },
     "canvas_update": {
       "direction": "server_to_client",
       "description": "The conversation's canvas state changed; client should re-render the canvas panel.",

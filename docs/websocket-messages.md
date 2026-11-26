@@ -18,6 +18,16 @@ Background-task lifecycle event surfaced into a conversation timeline (e.g. dele
 - `conv_id` — string
 - `record` — object
 
+### `calendar_changed`
+
+A calendar event was created, updated, snoozed, or cancelled; refresh the Calendar tab.
+
+**Fields:**
+
+- `conv_id` — string
+- `event_id` — string?
+- `action` — string?
+
 ### `canvas_update`
 
 The conversation's canvas state changed; client should re-render the canvas panel.

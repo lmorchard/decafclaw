@@ -42,6 +42,7 @@ import './components/wiki-page.js';
 import './components/file-page.js';
 import './components/config-panel.js';
 import './components/schedule-page.js';
+import './components/calendar-page.js';
 import './components/copy-conversation-menu.js';
 import './components/chat-controls.js';
 import './components/side-question-drawer.js';
@@ -211,6 +212,7 @@ const wikiPageEl = /** @type {any} */ (document.querySelector('#wiki-main wiki-p
 const filePageEl = /** @type {any} */ (document.querySelector('#wiki-main file-page'));
 const configPanelEl = /** @type {any} */ (document.querySelector('#wiki-main config-panel'));
 const schedulePageEl = /** @type {any} */ (document.querySelector('#wiki-main schedule-page'));
+const calendarPageEl = /** @type {any} */ (document.querySelector('#wiki-main calendar-page'));
 
 // Panel registry for hideSiblingPanels: each entry resets its content prop
 // when hidden so a later re-open starts clean. The config panel has no URL
@@ -219,6 +221,7 @@ const sidePanels = {
   wiki: { el: wikiPageEl, reset: () => { if (wikiPageEl) wikiPageEl.page = ''; } },
   file: { el: filePageEl, reset: () => { if (filePageEl) filePageEl.path = ''; } },
   schedule: { el: schedulePageEl, reset: () => { if (schedulePageEl) schedulePageEl.name = ''; } },
+  calendar: { el: calendarPageEl, reset: () => { if (calendarPageEl) calendarPageEl.eventId = ''; } },
   config: { el: configPanelEl },
 };
 
@@ -338,6 +341,8 @@ function showConfigPanel() {
   if (filePageEl) filePageEl.path = '';
   schedulePageEl?.classList.add('hidden');
   if (schedulePageEl) schedulePageEl.name = '';
+  calendarPageEl?.classList.add('hidden');
+  if (calendarPageEl) calendarPageEl.eventId = '';
   if (sidebar) sidebar.clearOpenFile();
   if (sidebar) sidebar.clearOpenSchedule();
   configPanelEl?.classList.remove('hidden');
@@ -375,6 +380,33 @@ function hideSchedulePage() {
   const fileVisible = filePageEl && !filePageEl.classList.contains('hidden');
   const configVisible = configPanelEl && !configPanelEl.classList.contains('hidden');
   if (!wikiVisible && !fileVisible && !configVisible) {
+    wikiMainEl?.classList.add('hidden');
+    wikiResizeHandle?.classList.add('hidden');
+  }
+}
+
+/** Show the calendar editor/page in the wiki/side panel area. */
+function showCalendarPage(eventId = '') {
+  if (!calendarPageEl) return;
+  calendarPageEl.eventId = eventId;
+  calendarPageEl.classList.remove('hidden');
+  hideSiblingPanels(sidePanels, 'calendar');
+  if (sidebar) sidebar.clearOpenPage();
+  if (sidebar) sidebar.clearOpenFile();
+  if (sidebar) sidebar.clearOpenSchedule();
+  wikiMainEl?.classList.remove('hidden');
+  wikiResizeHandle?.classList.remove('hidden');
+}
+
+/** Hide the calendar page. */
+function hideCalendarPage() {
+  calendarPageEl?.classList.add('hidden');
+  if (calendarPageEl) calendarPageEl.eventId = '';
+  const wikiVisible = wikiPageEl && !wikiPageEl.classList.contains('hidden');
+  const fileVisible = filePageEl && !filePageEl.classList.contains('hidden');
+  const configVisible = configPanelEl && !configPanelEl.classList.contains('hidden');
+  const scheduleVisible = schedulePageEl && !schedulePageEl.classList.contains('hidden');
+  if (!wikiVisible && !fileVisible && !configVisible && !scheduleVisible) {
     wikiMainEl?.classList.add('hidden');
     wikiResizeHandle?.classList.add('hidden');
   }
@@ -470,6 +502,7 @@ document.addEventListener('sidebar-tab-change', (e) => {
     hideWikiView();
     hideFileView();
     hideSchedulePage();
+    hideCalendarPage();
   }
   if ((tab === 'wiki' || tab === 'files' || tab === 'tags')
       && window.matchMedia('(max-width: 639px)').matches) {
@@ -493,6 +526,12 @@ document.addEventListener('schedule-open', (e) => {
 
 // Close schedule page via back button
 schedulePageEl?.addEventListener('close', () => hideSchedulePage());
+document.addEventListener('calendar-open', (e) => {
+  const eventId = /** @type {CustomEvent} */ (e).detail?.eventId;
+  if (eventId) showCalendarPage(eventId);
+});
+document.addEventListener('calendar-new', () => showCalendarPage(''));
+calendarPageEl?.addEventListener('close', () => hideCalendarPage());
 
 // Listen for WebSocket error messages directly
 ws.addEventListener('message', (e) => {
@@ -524,6 +563,9 @@ ws.addEventListener('message', (e) => {
   }
   if (msg?.type === MESSAGE_TYPES.VAULT_CHANGED) {
     window.dispatchEvent(new CustomEvent('vault-changed', { detail: msg }));
+  }
+  if (msg?.type === MESSAGE_TYPES.CALENDAR_CHANGED) {
+    window.dispatchEvent(new CustomEvent('calendar-changed', { detail: msg }));
   }
   if (msg?.type === MESSAGE_TYPES.CANVAS_UPDATE) {
     applyEvent(msg);

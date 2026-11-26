@@ -7,6 +7,13 @@ export interface SrvBackgroundEvent {
   record: Record<string, unknown>;
 }
 
+export interface SrvCalendarChanged {
+  type: "calendar_changed";
+  conv_id: string;
+  event_id?: string;
+  action?: string;
+}
+
 export interface SrvCanvasUpdate {
   type: "canvas_update";
   conv_id: string;
@@ -333,6 +340,7 @@ export interface CliWidgetResponse {
 
 export type ServerMessage =
   | SrvBackgroundEvent
+  | SrvCalendarChanged
   | SrvCanvasUpdate
   | SrvChunk
   | SrvCommandAck

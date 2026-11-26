@@ -1,17 +1,17 @@
 ---
 ghflow_project_facts: 1
-written: 2026-11-25
+written: 2026-11-26
 sources:
-  - AGENTS.md 2745a53e0de299f65938ab136382fba7314427d6
-  - CLAUDE.md 2745a53e0de299f65938ab136382fba7314427d6
-  - Makefile 5c566d7d51b8d9fca722d69184164f4215447ca9
-  - .github/workflows/ci.yml aa8dd08ffe089400fe54b30172d21f740a0b05cf
+  - AGENTS.md 2b8c7b9510883792dc97ce3bcf05e7925d1c463a
+  - CLAUDE.md 2b8c7b9510883792dc97ce3bcf05e7925d1c463a
+  - Makefile 117048f9668d222d165ea3f5fd709516000bd410
+  - .github/workflows/ci.yml ec6ef8f98a0a7ef7911df8ce3b302212255e31d0
   - conftest.py 2b63e029a3b2c4524ade2c71f18f181f3997dff1
   - tests/conftest.py 3e6f545a3c6d2adf28d926ba539fbba8d574b559
   - tests/web/conftest.py 10cc18c08878e55b406bd3c1d6ed80e8baae60b8
-  - pyproject.toml f193dfb0594a0c875571d3a6a47beb6f2da134ab
+  - pyproject.toml aa087fb9d09cc0b4941afbfa4af643153eb115a5
   - scripts/gen_message_types.py 06a0ab1456ab2e0655d70eab5e68f24a2eda9be9
-  - docs/config.md 3e383a9e7a5639641ea2280a0330f36535996630
+  - docs/config.md c2b1dce35052989122e98519f103998a2148e1d1
   - docs/testing.md 162454c9807cfed6ae7fb45399b31cfb891ed600
 worktree:
   copy:
@@ -33,12 +33,12 @@ worktree:
 
 ## Gates
 - `make fmt` before every commit. `make check` = `install-js check-npm-policy check-message-types check-skill-annotations fmt-check lint typecheck check-js check-browser-assets`; `make test` = `uv run pytest tests/ contrib/skills/`.
-- CI required: `lint-and-test` (`make check`, then pytest `-m "not integration and not browser"`) and `js-test` (`make test-js`). Separate jobs: `browser-test` (Playwright chromium, pytest `-m "browser and not integration"`) and `check-tui` (`make check-tui test-tui`).
+- CI required: `lint-and-test` (`make check`, then pytest `-m "not integration and not browser"`) and `js-test` (`make test-js`). Separate jobs: `browser-test` (Playwright chromium, pytest `-m "browser and not integration"`) and `check-tui` (`make check-tui test-tui`). Required checks also run on the merge queue's `merge_group`.
 - npm policy (#930): direct deps exact-pinned; every Makefile npm install runs `--ignore-scripts` (allowlisted scripts via `npm rebuild`); `make check-npm-policy` gates it. `make install-js` uses `npm ci`; do not `npm install` in `src/decafclaw/web/static/` — dependency changes go through `make vendor`.
 
 ## Generated files
-- `src/decafclaw/web/message_types.json` generates `message_types.py`, `static/lib/message-types.js`, `docs/websocket-messages.md`, and `tui/src/types.generated.ts` via `make gen-message-types`; `make check-message-types` (in `make check`) fails on a hand edit.
-- `make gen-api-client` regenerates `openapi.json`/`openapi.yaml` and the committed client under `static/lib/api-client/`; `make check-js` (in `make check`) fails on drift there. `make vendor` rebuilds the committed vendor bundle.
+- `make gen` regenerates every committed generated output — `gen-message-types` (from `src/decafclaw/web/message_types.json`: `message_types.py`, `static/lib/message-types.js`, `docs/websocket-messages.md`, `tui/src/types.generated.ts`) and `gen-api-client` (`openapi.json`/`openapi.yaml`, client under `static/lib/api-client/`). Run it after changing wire types or the HTTP API, and commit the output with the code.
+- Drift gates `check-message-types` and `check-js` (both in `make check`) fail on a hand edit or stale output, naming `make gen`; `make vendor` rebuilds the committed vendor bundle.
 
 ## Test layout
 - Root `conftest.py`: fixtures `config`, `ctx` (seeds the extension manager with default-enabled core extensions), `tmp_data`; autouse `mock_embed_text`. `tests/conftest.py`: `stub_llm`, plus autouse guards that fail unstubbed LLM calls, tests setting OpenTelemetry's global tracer provider (#1424), and tests leaking asyncio's running-loop mark. `tests/web/conftest.py`: package-scoped `http_config`, `bus`, `app`, `client`.
