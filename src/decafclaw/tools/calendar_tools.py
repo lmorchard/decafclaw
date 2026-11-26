@@ -13,9 +13,11 @@ from ..calendar_events import (
     new_event_id,
     now_iso,
     parse_fire_at,
+    recurrence_summary,
     validate_session_key,
 )
 from ..calendar_manager import CalendarManager
+from ..calendar_recurrence import validate_recurrence, validate_timezone
 from ..media import ToolResult, WidgetRequest
 from .schedule_tools import _is_disallowed_task_mode
 
@@ -59,7 +61,11 @@ def _parse_optional_time(value: str | None) -> tuple[str, float] | None:
 
 def _event_line(event: CalendarEvent) -> str:
     target = event.session_title or event.target_conv_id
-    return f"- {event.event_id}: {event.fire_at} — {event.title} (target: {target}, status: {event.status})"
+    line = f"- {event.event_id}: {event.fire_at} — {event.title} (target: {target}, status: {event.status})"
+    summary = recurrence_summary(event)
+    if summary:
+        line += f" [repeats: {summary}]"
+    return line
 
 
 async def tool_calendar_create(
@@ -70,8 +76,11 @@ async def tool_calendar_create(
     session_mode: str = "current",
     session_key: str = "",
     session_title: str = "",
+    recurrence: str = "",
+    timezone: str = "",
+    recurrence_until: str = "",
 ) -> ToolResult:
-    """Create a one-shot calendar event."""
+    """Create a calendar event, optionally recurring."""
     error = _guard(ctx)
     if error is not None:
         return error
@@ -92,6 +101,27 @@ async def tool_calendar_create(
         return ToolResult(text=f"[error: {exc}]", data={"error": "invalid_fire_at"})
     if fire_at_ts <= time.time():
         return ToolResult(text="[error: fire_at must be in the future]", data={"error": "past_fire_at"})
+
+    recurrence_text = str(recurrence or "").strip()
+    timezone_text = str(timezone or "").strip()
+    until_text = str(recurrence_until or "").strip()
+    if recurrence_text:
+        try:
+            timezone_text = validate_timezone(timezone_text)
+            validate_recurrence(recurrence_text, fire_at_iso, timezone_text, until_text)
+        except ValueError as exc:
+            return ToolResult(text=f"[error: {exc}]", data={"error": "invalid_recurrence"})
+    else:
+        if until_text:
+            return ToolResult(
+                text="[error: recurrence_until requires recurrence]",
+                data={"error": "recurrence_until_without_recurrence"},
+            )
+        if timezone_text:
+            try:
+                timezone_text = validate_timezone(timezone_text)
+            except ValueError as exc:
+                return ToolResult(text=f"[error: {exc}]", data={"error": "invalid_timezone"})
 
     mode = str(session_mode or "current").strip().lower()
     if mode not in SESSION_MODES:
@@ -136,6 +166,11 @@ async def tool_calendar_create(
         channel_id=getattr(ctx, "channel_id", "") or "",
         thread_id=getattr(ctx, "thread_id", "") or "",
         transport=getattr(ctx, "transport", "") or "",
+        recurrence=recurrence_text,
+        timezone=timezone_text,
+        recurrence_start=fire_at_iso if recurrence_text else "",
+        occurrence_at=fire_at_iso if recurrence_text else "",
+        recurrence_until=until_text,
     )
 
     mgr = _get_calendar_manager(ctx)
@@ -153,8 +188,9 @@ async def tool_calendar_create(
         return ToolResult(text=f"[error: Failed to create calendar event: {exc}]", data={"error": str(exc)})
 
     target = event.session_title or event.target_conv_id
+    suffix = f" (repeats: {recurrence_summary(event)})" if event.recurrence else ""
     return ToolResult(
-        text=f"Created calendar event '{event.event_id}' at {event.fire_at} for {target}: {event.title}",
+        text=f"Created calendar event '{event.event_id}' at {event.fire_at} for {target}: {event.title}{suffix}",
         data=asdict(event),
     )
 
@@ -208,6 +244,7 @@ async def tool_calendar_list(
                 {"key": "title", "label": "Title"},
                 {"key": "target", "label": "Target"},
                 {"key": "status", "label": "Status"},
+                {"key": "recurrence", "label": "Repeats"},
             ],
             "rows": [
                 {
@@ -216,6 +253,7 @@ async def tool_calendar_list(
                     "title": event.title,
                     "target": event.session_title or event.target_conv_id,
                     "status": event.status,
+                    "recurrence": recurrence_summary(event),
                 }
                 for event in events
             ],
@@ -238,6 +276,9 @@ async def tool_calendar_update(
     session_mode: str | None = None,
     session_key: str | None = None,
     session_title: str | None = None,
+    recurrence: str | None = None,
+    timezone: str | None = None,
+    recurrence_until: str | None = None,
 ) -> ToolResult:
     """Update a pending calendar event."""
     error = _guard(ctx)
@@ -281,6 +322,39 @@ async def tool_calendar_update(
             return ToolResult(text="[error: fire_at must be in the future]", data={"error": "past_fire_at"})
         changes["fire_at"] = fire_at_iso
         changes["fire_at_ts"] = fire_at_ts
+
+    if recurrence is not None or timezone is not None or recurrence_until is not None:
+        fire_iso = changes.get("fire_at", event.fire_at)
+        final_rule = event.recurrence if recurrence is None else str(recurrence).strip()
+        final_tz = event.timezone if timezone is None else str(timezone).strip()
+        final_until = event.recurrence_until if recurrence_until is None else str(recurrence_until).strip()
+        if final_rule:
+            try:
+                final_tz = validate_timezone(final_tz)
+                validate_recurrence(final_rule, fire_iso, final_tz, final_until)
+            except ValueError as exc:
+                return ToolResult(text=f"[error: {exc}]", data={"error": "invalid_recurrence"})
+            changes.update(
+                {
+                    "recurrence": final_rule,
+                    "timezone": final_tz,
+                    "recurrence_until": final_until,
+                    "recurrence_start": fire_iso,
+                    "occurrence_at": fire_iso,
+                }
+            )
+        else:
+            if final_until:
+                return ToolResult(
+                    text="[error: recurrence_until requires recurrence]",
+                    data={"error": "recurrence_until_without_recurrence"},
+                )
+            changes.update({"recurrence": "", "recurrence_until": "", "recurrence_start": "", "occurrence_at": ""})
+            if timezone is not None:
+                try:
+                    changes["timezone"] = validate_timezone(final_tz)
+                except ValueError as exc:
+                    return ToolResult(text=f"[error: {exc}]", data={"error": "invalid_timezone"})
 
     mode = str(session_mode).strip().lower() if session_mode is not None else None
     if mode is None and (session_key is not None or session_title is not None):
@@ -435,13 +509,15 @@ CALENDAR_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
-        "summary": "Create a one-shot calendar event.",
+        "summary": "Create a calendar event, optionally recurring.",
         "function": {
             "name": "calendar_create",
             "description": (
-                "Create a one-shot calendar event with an absolute ISO-8601 time that includes a timezone. "
+                "Create a calendar event with an absolute ISO-8601 time that includes a timezone. "
                 "The event targets the current conversation by default. Set session_mode to 'dedicated' "
-                "to target a separate named session that is created if absent and reused if it exists."
+                "to target a separate named session that is created if absent and reused if it exists. "
+                "Set recurrence to an RFC 5545 RRULE (for example FREQ=DAILY or FREQ=WEEKLY;BYDAY=MO,WE,FR) "
+                "with an IANA timezone; recurrence_until optionally ends the series."
             ),
             "parameters": {
                 "type": "object",
@@ -454,6 +530,18 @@ CALENDAR_TOOL_DEFINITIONS = [
                     "fire_at": {
                         "type": "string",
                         "description": "Absolute ISO-8601 timestamp with a timezone, e.g. 2026-11-26T08:00:00-08:00",
+                    },
+                    "recurrence": {
+                        "type": "string",
+                        "description": "Optional RFC 5545 RRULE, e.g. FREQ=DAILY or FREQ=WEEKLY;BYDAY=MO,WE,FR",
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": "IANA timezone for a recurring event, e.g. America/Los_Angeles",
+                    },
+                    "recurrence_until": {
+                        "type": "string",
+                        "description": "Optional ISO-8601 end time with a timezone for the series",
                     },
                     "session_mode": {
                         "type": "string",
@@ -486,7 +574,7 @@ CALENDAR_TOOL_DEFINITIONS = [
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["pending", "fired", "cancelled", "orphaned", "all"],
+                        "enum": ["pending", "fired", "cancelled", "orphaned", "completed", "all"],
                         "description": "Filter by status (default: pending)",
                     },
                     "from_time": {
@@ -511,6 +599,7 @@ CALENDAR_TOOL_DEFINITIONS = [
             "name": "calendar_update",
             "description": (
                 "Update a pending calendar event. Use fire_at to reschedule. "
+                "Set recurrence/timezone/recurrence_until to change or clear a series. "
                 "Set session_mode to 'dedicated' with session_key and session_title to retarget it."
             ),
             "parameters": {
@@ -522,6 +611,18 @@ CALENDAR_TOOL_DEFINITIONS = [
                     "fire_at": {
                         "type": "string",
                         "description": "New absolute ISO-8601 time with a timezone",
+                    },
+                    "recurrence": {
+                        "type": "string",
+                        "description": "New RFC 5545 RRULE, or an empty string to clear the series",
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": "New IANA timezone for the series",
+                    },
+                    "recurrence_until": {
+                        "type": "string",
+                        "description": "New ISO-8601 end time with a timezone, or an empty string to clear it",
                     },
                     "session_mode": {
                         "type": "string",

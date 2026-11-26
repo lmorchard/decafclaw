@@ -19,6 +19,7 @@ from decafclaw.calendar_events import (
     validate_session_key,
 )
 from decafclaw.calendar_manager import CalendarManager, ensure_dedicated_session
+from decafclaw.calendar_recurrence import next_occurrence
 from decafclaw.context import TaskMode
 from decafclaw.conversation_paths import calendar_path, conversation_dir, delete_conversation_files
 from decafclaw.tools.calendar_tools import (
@@ -46,6 +47,11 @@ def _event(
     title: str = "Test event",
     reason: str = "Do the thing",
     status: str = "pending",
+    recurrence: str = "",
+    timezone: str = "",
+    recurrence_start: str = "",
+    occurrence_at: str = "",
+    recurrence_until: str = "",
 ) -> CalendarEvent:
     ts = fire_at_ts if fire_at_ts is not None else time.time() + 3600
     now = _iso(time.time())
@@ -64,6 +70,11 @@ def _event(
         updated_at=now,
         user_id=user_id,
         status=status,
+        recurrence=recurrence,
+        timezone=timezone,
+        recurrence_start=recurrence_start,
+        occurrence_at=occurrence_at,
+        recurrence_until=recurrence_until,
     )
 
 
@@ -642,3 +653,182 @@ def test_calendar_tools_registered():
     expected = {"calendar_create", "calendar_list", "calendar_update", "calendar_cancel", "calendar_snooze"}
     assert expected <= set(TOOLS)
     assert expected <= {definition["function"]["name"] for definition in TOOL_DEFINITIONS}
+
+
+# -- recurrence ---------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recurring_event_reschedules_and_keeps_id(config, mock_manager):
+    _make_conv_dir(config, "conv-recur")
+    start_ts = time.time()
+    event = _event(
+        "conv-recur",
+        fire_at_ts=start_ts,
+        recurrence="FREQ=DAILY",
+        timezone="UTC",
+        recurrence_start=_iso(start_ts),
+        occurrence_at=_iso(start_ts),
+    )
+
+    added = await mock_manager.calendar.add(event)
+    task = mock_manager.calendar._tasks[added.event_id]
+    await task
+
+    loaded = load_calendar_events(config, "conv-recur")[0]
+    assert loaded.event_id == added.event_id
+    assert loaded.status == "pending"
+    assert loaded.target_conv_id == added.target_conv_id
+    assert loaded.fire_at_ts > time.time() + 3600
+    assert loaded.occurrence_at == loaded.fire_at
+    assert mock_manager.enqueue_turn.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_missed_recurrence_fires_once_and_skips_to_future(config, mock_manager):
+    _make_conv_dir(config, "conv-missed")
+    past_ts = time.time() - 3600
+    event = _event(
+        "conv-missed",
+        fire_at_ts=past_ts,
+        recurrence="FREQ=DAILY",
+        timezone="UTC",
+        recurrence_start=_iso(past_ts),
+        occurrence_at=_iso(past_ts),
+    )
+
+    added = await mock_manager.calendar.add(event)
+    await mock_manager.calendar._tasks[added.event_id]
+
+    loaded = load_calendar_events(config, "conv-missed")[0]
+    assert loaded.status == "pending"
+    assert loaded.fire_at_ts > time.time() + 3600
+    assert mock_manager.enqueue_turn.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_recurrence_completes_after_until(config, mock_manager):
+    _make_conv_dir(config, "conv-until")
+    now = time.time()
+    event = _event(
+        "conv-until",
+        fire_at_ts=now,
+        recurrence="FREQ=DAILY",
+        timezone="UTC",
+        recurrence_start=_iso(now),
+        occurrence_at=_iso(now),
+        recurrence_until=_iso(now + 60),
+    )
+
+    added = await mock_manager.calendar.add(event)
+    await mock_manager.calendar._tasks[added.event_id]
+
+    loaded = load_calendar_events(config, "conv-until")[0]
+    assert loaded.status == "completed"
+    assert added.event_id not in mock_manager.calendar._tasks
+
+
+@pytest.mark.asyncio
+async def test_snooze_moves_one_occurrence_then_next_uses_anchor(config, mock_manager):
+    _make_conv_dir(config, "conv-snooze")
+    start_ts = time.time() + 3600
+    event = _event(
+        "conv-snooze",
+        fire_at_ts=start_ts,
+        recurrence="FREQ=DAILY",
+        timezone="UTC",
+        recurrence_start=_iso(start_ts),
+        occurrence_at=_iso(start_ts),
+    )
+    added = await mock_manager.calendar.add(event)
+    anchor = added.occurrence_at
+
+    updated = await mock_manager.calendar.snooze("conv-snooze", added.event_id, duration_seconds=600)
+    assert updated is not None
+    assert updated.occurrence_at == anchor
+    assert updated.fire_at_ts > added.fire_at_ts
+
+    await mock_manager.calendar._fire(updated)
+
+    loaded = load_calendar_events(config, "conv-snooze")[0]
+    expected = next_occurrence(updated, datetime.fromisoformat(anchor).timestamp())
+    assert expected is not None
+    assert loaded.occurrence_at == expected[0]
+
+
+@pytest.mark.asyncio
+async def test_cancel_stops_a_recurring_series(config, mock_manager):
+    _make_conv_dir(config, "conv-cancel-series")
+    start_ts = time.time() + 3600
+    event = _event(
+        "conv-cancel-series",
+        fire_at_ts=start_ts,
+        recurrence="FREQ=DAILY",
+        timezone="UTC",
+        recurrence_start=_iso(start_ts),
+        occurrence_at=_iso(start_ts),
+    )
+    added = await mock_manager.calendar.add(event)
+
+    assert await mock_manager.calendar.cancel("conv-cancel-series", added.event_id) is True
+    loaded = load_calendar_events(config, "conv-cancel-series")[0]
+    assert loaded.status == "cancelled"
+    assert added.event_id not in mock_manager.calendar._tasks
+
+
+@pytest.mark.asyncio
+async def test_create_recurring_event_and_list(ctx, mock_manager):
+    ctx.manager = mock_manager
+    ctx.conv_id = "conv-tools"
+    fire_at = _iso(time.time() + 3600)
+
+    result = await tool_calendar_create(
+        ctx,
+        title="Daily standup",
+        reason="Check the queue",
+        fire_at=fire_at,
+        recurrence="FREQ=DAILY",
+        timezone="UTC",
+    )
+
+    assert "[error" not in result.text
+    assert result.data["recurrence"] == "FREQ=DAILY"
+    assert result.data["recurrence_start"] == fire_at
+    assert result.data["occurrence_at"] == fire_at
+
+    listed = await tool_calendar_list(ctx)
+    assert "repeats: daily" in listed.text
+    assert listed.widget.data["columns"][-1]["key"] == "recurrence"
+    assert listed.widget.data["rows"][0]["recurrence"] == "daily"
+
+
+@pytest.mark.asyncio
+async def test_invalid_recurrence_and_missing_timezone(ctx, mock_manager):
+    ctx.manager = mock_manager
+    ctx.conv_id = "conv-tools"
+    fire_at = _iso(time.time() + 3600)
+
+    bad_rule = await tool_calendar_create(
+        ctx, title="Bad", reason="Rule", fire_at=fire_at, recurrence="FREQ=NOPE", timezone="UTC"
+    )
+    assert "[error" in bad_rule.text
+    assert load_calendar_events(ctx.config, "conv-tools") == []
+
+    missing_tz = await tool_calendar_create(ctx, title="No tz", reason="Rule", fire_at=fire_at, recurrence="FREQ=DAILY")
+    assert "timezone" in missing_tz.text
+    assert load_calendar_events(ctx.config, "conv-tools") == []
+
+
+@pytest.mark.asyncio
+async def test_update_recurrence_reanchors(ctx, mock_manager):
+    ctx.manager = mock_manager
+    ctx.conv_id = "conv-tools"
+    created = await tool_calendar_create(ctx, title="One-shot", reason="Later", fire_at=_iso(time.time() + 3600))
+    event_id = created.data["event_id"]
+
+    result = await tool_calendar_update(ctx, event_id, recurrence="FREQ=WEEKLY;BYDAY=MO", timezone="UTC")
+
+    assert "[error" not in result.text
+    assert result.data["recurrence"] == "FREQ=WEEKLY;BYDAY=MO"
+    assert result.data["recurrence_start"] == result.data["fire_at"]
+    assert result.data["occurrence_at"] == result.data["fire_at"]
