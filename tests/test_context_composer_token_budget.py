@@ -31,7 +31,9 @@ class TestGetContextWindowSize:
                 return []
 
             async def get_model_info(self, model: str, **kwargs):
-                return {"inputTokenLimit": 2097152}
+                from decafclaw.llm.types import ModelInfo
+
+                return ModelInfo(context_window_size=2097152)
 
         from decafclaw.config_types import ModelConfig
         from decafclaw.llm.registry import clear_providers, register_provider

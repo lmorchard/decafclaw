@@ -1,6 +1,5 @@
 """Unit tests for scheduled wake turns (#1103)."""
 
-import asyncio
 import time
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -10,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from decafclaw.context import Context, TaskMode
+from decafclaw.conversation_manager import TurnFuture
 from decafclaw.conversation_paths import scheduled_wakes_path
 from decafclaw.media import WidgetRequest
 from decafclaw.scheduled_wakes import (
@@ -391,7 +391,7 @@ async def test_manager_shutdown_cancels_timers_when_idle(config):
 @pytest.mark.asyncio
 async def test_rate_limited_wake_re_arms_timer_and_preserves_sidecar(config, mock_manager):
     """When a wake turn is rate-limited, the schedule is re-armed and retained in sidecar (#1119 review)."""
-    rate_limited_fut = asyncio.get_running_loop().create_future()
+    rate_limited_fut = TurnFuture()
     rate_limited_fut.set_result(None)
     rate_limited_fut.rate_limited = True
     mock_manager.enqueue_turn.return_value = rate_limited_fut

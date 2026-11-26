@@ -12,6 +12,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from ..model_resolution import (  # noqa: F401  shared leaf for the config ↔ llm boundary (#1329)
+    effective_context_window,
+    effective_default_model,
+    resolve_model,
+)
 from ..telemetry import get_tracer
 from .registry import (  # noqa: F401
     _failed_model_info,
@@ -33,6 +38,7 @@ from .types import (  # noqa: F401
     PROVIDER_OPENAI_COMPAT,
     PROVIDER_OPENAI_RESPONSES,
     PROVIDER_VERTEX,
+    ModelInfo,
     Provider,
     StreamCallback,
 )
@@ -180,8 +186,6 @@ def _resolve(
 
     # Path 1: Named model config
     if model_name:
-        from ..config import resolve_model
-
         try:
             pc, mc = resolve_model(config, model_name)
             provider = get_provider(mc.provider)
@@ -200,8 +204,6 @@ def _resolve(
         return ResolvedModel(OpenAICompatProvider(url=url, api_key=api_key), model, timeout)
 
     # Path 3: Default from registry (model from config.llm or default_model)
-    from ..model_catalog import effective_default_model  # deferred: llm pkg import cycle
-
     model = llm_model or config.llm.model
     timeout = getattr(config.llm, "timeout", 300)
 
@@ -260,7 +262,7 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
 
     1. ``model_configs.context_window_size`` — always wins, so a stale table
        entry can be overridden without a release.
-    2. provider ``get_model_info()`` — discovery where the gateway reports it.
+    2. provider ``get_model_info()`` — the normalized window discovery reports.
     3. provider ``default_context_window()`` — Vertex's family table.
     4. ``effective_context_window`` — legacy config window, else the proxy.
 
@@ -282,22 +284,15 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
                 provider = get_provider(mc.provider)
                 if hasattr(provider, "get_model_info"):
                     info = await provider.get_model_info(mc.model)
-                    if info:
-                        limit = (
-                            info.get("inputTokenLimit")
-                            or info.get("input_token_limit")
-                            or info.get("contextWindow")
-                            or info.get("context_window_size")
+                    if info is not None and info.context_window_size:
+                        mc.context_window_size = int(info.context_window_size)
+                        log.info(
+                            "Auto-detected context window size for model %r (%r): %d",
+                            model_name,
+                            mc.model,
+                            mc.context_window_size,
                         )
-                        if limit:
-                            mc.context_window_size = int(limit)
-                            log.info(
-                                "Auto-detected context window size for model %r (%r): %d",
-                                model_name,
-                                mc.model,
-                                mc.context_window_size,
-                            )
-                            return mc.context_window_size
+                        return mc.context_window_size
             except Exception as e:
                 log.debug("Failed to auto-detect context window size for %r: %s", model_name, e)
             # The defaults table is independent of discovery: a raise in
@@ -323,6 +318,4 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
 
     # Shared ladder (#1360): configured model window → legacy llm window →
     # compaction cap. Detection above only populates the first rung.
-    from ..model_catalog import effective_context_window  # deferred: llm pkg import cycle
-
     return effective_context_window(config, model_name or "")

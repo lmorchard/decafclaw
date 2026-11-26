@@ -6,19 +6,19 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
-# Provider type constants — used in config.json "providers" section
-PROVIDER_OPENAI_COMPAT = "openai-compat"
-PROVIDER_OPENAI = "openai"
-PROVIDER_OPENAI_RESPONSES = "openai-responses"
-PROVIDER_VERTEX = "vertex"
-# Built-in in-process provider: local ONNX embeddings, registered without a
-# config.providers entry (see registry.init_providers).
-PROVIDER_FASTEMBED = "fastembed"
-# Legacy alias
-PROVIDER_LITELLM = "litellm"
-# Test-only: replayed in-memory provider (decafclaw.testing.ScriptedProvider).
-# Registered directly via the registry — init_providers never instantiates it.
-PROVIDER_SCRIPTED = "scripted"
+# Provider type constants — used in config.json "providers" section.
+# Defined in the shared leaf (decafclaw.model_resolution) so importing them
+# never triggers this package's __init__; re-exported here for backward
+# compatibility with `from decafclaw.llm.types import PROVIDER_*` (#1329).
+from ..model_resolution import (  # noqa: F401
+    PROVIDER_FASTEMBED,
+    PROVIDER_LITELLM,
+    PROVIDER_OPENAI,
+    PROVIDER_OPENAI_COMPAT,
+    PROVIDER_OPENAI_RESPONSES,
+    PROVIDER_SCRIPTED,
+    PROVIDER_VERTEX,
+)
 
 # Completion finish reason constants
 FINISH_REASON_STOP = "stop"
@@ -54,6 +54,20 @@ class LLMRetryExhaustedError(Exception):
         self.status = status
         self.body = body
         self.retry_after = retry_after
+
+
+@dataclass
+class ModelInfo:
+    """Normalized model metadata returned by a provider's ``get_model_info``.
+
+    Each provider translates its own wire shape (Vertex metadata, a gateway
+    listing entry, ...) into this type so generic consumers — the context-
+    window resolver in particular — read one field instead of a fallback
+    chain over provider-specific keys. ``None`` means "the gateway did not
+    report this fact"; it never carries a guessed value.
+    """
+
+    context_window_size: int | None = None
 
 
 class Provider(Protocol):
@@ -109,8 +123,12 @@ class Provider(Protocol):
         *,
         timeout: int = 30,
         **kwargs: Any,
-    ) -> dict[str, Any] | None:
-        """Get model metadata (e.g. token limits), or None if unsupported."""
+    ) -> ModelInfo | None:
+        """Get normalized model metadata, or None if the provider reports none.
+
+        Providers translate their own wire shapes into ``ModelInfo``; generic
+        consumers read the fields and never see provider-specific keys.
+        """
         return None
 
     def default_context_window(self, model: str) -> int | None:

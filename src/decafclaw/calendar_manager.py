@@ -350,7 +350,7 @@ class CalendarManager:
             self._discard_current_task_locked(current.event_id)
             return
 
-        if getattr(future, "rate_limited", None) is True:
+        if future.rate_limited is True:
             log.warning(
                 "Calendar event %s was rate-limited despite bypass; leaving it pending",
                 current.event_id,

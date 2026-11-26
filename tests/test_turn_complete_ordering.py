@@ -256,7 +256,7 @@ async def test_queued_followup_dispatches_after_settle(tmp_path):
 
         # Turn 1 is in flight; the follow-up must queue, not start.
         future2 = await h.enqueue("Second.")
-        assert getattr(future2, "queued", False) is True
+        assert future2.queued is True
         assert h.state.busy is True
         assert _types(h.events).count("turn_start") == 1
         assert "turn_complete" not in _types(h.events)

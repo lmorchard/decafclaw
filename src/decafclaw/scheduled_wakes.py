@@ -324,7 +324,7 @@ class ScheduledWakeManager:
             )
 
             # Check if rate-limited: do NOT drop the wake! Re-arm and retry (#1119 review).
-            if getattr(future, "rate_limited", None) is True:
+            if future.rate_limited is True:
                 log.info("Wake %s rate-limited; re-arming in 10s", entry.schedule_id)
                 entry.fire_at_ts = time.time() + 10.0
                 async with self._lock:
@@ -336,7 +336,7 @@ class ScheduledWakeManager:
             log.info("Dispatched wake turn for schedule %s (conv %s)", entry.schedule_id, entry.conv_id[:8])
 
             # Check whether enqueue_turn started the turn immediately or queued it in inbox (#1119 review).
-            is_queued = getattr(future, "queued", False) is True
+            is_queued = future.queued is True
             async with self._lock:
                 self._tasks.pop(entry.schedule_id, None)
                 schedules = load_scheduled_wakes(self.config, entry.conv_id)

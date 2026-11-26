@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from decafclaw.conversation_manager import ConversationManager, TurnKind
+from decafclaw.conversation_manager import ConversationManager, TurnFuture, TurnKind
 from decafclaw.events import EventBus
 from decafclaw.media import ToolResult
 from decafclaw.session_messaging import deliver_session_message, is_child_conv_id, parent_conv_id_of
@@ -148,7 +148,7 @@ class TestDeliverSessionMessageBusyPath:
 
         # Deliver while the target is mid-turn: must queue, not interrupt.
         fut = await deliver_session_message(manager, conv_id, source_conv_id, "peer status update", user_id="testuser")
-        assert getattr(fut, "queued", False) is True
+        assert fut.queued is True
         assert not first_future.done()
 
         release_first.set()
@@ -173,7 +173,7 @@ class TestDeliverSessionMessageBusyPath:
         monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
         fut = await deliver_session_message(manager, conv_id, "other-conv", "ping", user_id="testuser")
-        assert getattr(fut, "queued", True) is False
+        assert fut.queued is False
         result = await asyncio.wait_for(fut, 5.0)
         assert result is not None and result.text == "handled"
 
@@ -192,7 +192,7 @@ class TestSessionSendTool:
             captured["source"] = source
             captured["text"] = text
             captured["user_id"] = user_id
-            fut = asyncio.get_running_loop().create_future()
+            fut = TurnFuture()
             fut.set_result(None)
             fut.queued = False
             fut.rate_limited = False
@@ -263,7 +263,7 @@ class TestSessionSendTool:
     @pytest.mark.asyncio
     async def test_rate_limited_delivery_reports_drop(self, ctx, monkeypatch):
         async def fake_deliver(manager, target, source, text, *, user_id="", context_setup=None):
-            fut = asyncio.get_running_loop().create_future()
+            fut = TurnFuture()
             fut.set_result(None)
             fut.queued = False
             fut.rate_limited = True

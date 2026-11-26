@@ -109,16 +109,16 @@ async def tool_session_send(ctx: "Context", target_conv_id: str, text: str) -> T
         log.warning("session_send from %s to %s failed: %s", sender_conv_id, target_conv_id, exc)
         return ToolResult(text=f"[error: delivering session message failed: {exc}]")
 
-    # Both flags are attached by the manager's enqueue_turn; see
+    # Both flags are declared on the manager's TurnFuture (#1352); see
     # scheduled_wakes.py for the established read idiom.
-    if getattr(future, "rate_limited", None) is True:
+    if future.rate_limited is True:
         return ToolResult(
             text=(
                 f"[error: session message to {target_conv_id} was dropped by the wake rate "
                 "limiter — too many wakes in the current window; retry later.]"
             )
         )
-    queued = getattr(future, "queued", False) is True
+    queued = future.queued is True
     detail = " (will run after the conversation's current turn)" if queued else ""
     return ToolResult(
         text=f"Session message queued for delivery to {target_conv_id}{detail}.",

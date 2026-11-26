@@ -1111,7 +1111,7 @@ async def test_wake_rate_limit_bypass_for_calendar(manager, config, monkeypatch)
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
     dropped = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
-    assert getattr(dropped, "rate_limited", None) is True
+    assert dropped.rate_limited is True
 
     allowed = await manager.enqueue_turn(
         conv_id="c1",
@@ -1120,7 +1120,7 @@ async def test_wake_rate_limit_bypass_for_calendar(manager, config, monkeypatch)
         history=[],
         bypass_wake_rate_limit=True,
     )
-    assert getattr(allowed, "rate_limited", None) is False
+    assert allowed.rate_limited is False
     await asyncio.wait_for(allowed, timeout=2.0)
 
 

@@ -14,10 +14,11 @@ from dataclasses import fields as dc_fields
 from enum import StrEnum
 from typing import Any
 
-# Provider type constants (llm.types imports only stdlib, so this is cycle-free:
-# config -> config_types -> llm.types never loops back to config). Used as keys
-# for the verified image-budget limits below.
-from .llm.types import PROVIDER_OPENAI, PROVIDER_OPENAI_COMPAT, PROVIDER_VERTEX
+# Provider type constants from the shared leaf (decafclaw.model_resolution),
+# which imports nothing from decafclaw at runtime — so config -> config_types ->
+# model_resolution never triggers the llm package and stays cycle-free (#1329).
+# Used as keys for the verified image-budget limits below.
+from .model_resolution import PROVIDER_OPENAI, PROVIDER_OPENAI_COMPAT, PROVIDER_VERTEX
 
 log = logging.getLogger(__name__)
 

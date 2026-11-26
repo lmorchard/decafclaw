@@ -282,6 +282,26 @@ KIND_TASK_MODE = {
 }
 
 
+class TurnFuture(asyncio.Future):
+    """A turn's completion future with the manager's dispatch flags declared.
+
+    ``enqueue_turn`` returns one of these instead of a bare future so the
+    dispatch outcome is typed rather than attached via ``setattr`` (#1352):
+
+    - ``rate_limited``: a WAKE turn dropped by the per-conversation wake
+      rate limiter; the future resolves immediately with ``None``.
+    - ``queued``: the turn was appended to the inbox and waits behind a
+      busy conversation (or a pending restart) instead of starting now.
+
+    Both default to ``False``; the manager sets them on every dispatch
+    path before returning. Everything else is a plain ``asyncio.Future``:
+    callers await it, pass it to ``wait_for``, or fan out done callbacks.
+    """
+
+    rate_limited: bool = False
+    queued: bool = False
+
+
 def parse_task_mode(value: str | None) -> TaskMode | None:
     """Parse a free-form task_mode string from the inbox boundary.
 
@@ -769,15 +789,16 @@ class ConversationManager:
         wiki_page: str | None = None,
         metadata: dict | None = None,
         bypass_wake_rate_limit: bool = False,
-    ) -> asyncio.Future:
-        """Submit a turn of any kind. Returns an awaitable that resolves
-        when the turn completes."""
+    ) -> TurnFuture:
+        """Submit a turn of any kind. Returns the turn's ``TurnFuture``,
+        which resolves when the turn completes; its ``rate_limited`` and
+        ``queued`` flags describe how the dispatch decision went."""
         # Startup recovery reads archives and inboxes directly; a turn that
         # starts mid-scan could race those reads (#1645). Transports are
         # already listening, so requests wait here instead of blocking boot.
         await self.wait_for_startup_recovery()
         state = self._get_or_create(conv_id)
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        future = TurnFuture()
 
         # Dispatch decision runs under state.lock so the busy-check /
         # circuit-breaker / wake-limiter reads are atomic with the
@@ -792,7 +813,7 @@ class ConversationManager:
             # reminder must not be dropped.
             if kind is TurnKind.WAKE:
                 if bypass_wake_rate_limit:
-                    setattr(future, "rate_limited", False)
+                    future.rate_limited = False
                 else:
                     now = time.monotonic()
                     cutoff = now - self._wake_window_sec
@@ -804,11 +825,11 @@ class ConversationManager:
                             len(state.wake_times),
                             self._wake_window_sec,
                         )
-                        setattr(future, "rate_limited", True)
+                        future.rate_limited = True
                         future.set_result(None)
                         return future
                     state.wake_times.append(now)
-                    setattr(future, "rate_limited", False)
+                    future.rate_limited = False
 
             # USER-kind only: circuit breaker check + user_message event emission.
             if kind is TurnKind.USER:
@@ -869,7 +890,7 @@ class ConversationManager:
 
                     log.info("Conv %s busy, queued message", conv_id[:8])
 
-                setattr(future, "queued", True)
+                future.queued = True
 
                 # Persist the queued turn for crash recovery: a queued turn
                 # must survive restarts, so it lands in the inbox JSONL.
@@ -905,10 +926,9 @@ class ConversationManager:
                     state.inmemory_turn_data.pop(turn_id, None)
                     log.error("Failed to persist queued turn %s for conv %s: %s", turn_id, conv_id[:8], e)
                     raise
-
                 return future
 
-            setattr(future, "queued", False)
+            future.queued = False
 
             # Not busy: start the turn immediately. No inbox round-trip —
             # a turn that starts now is not crash-recoverable either way,

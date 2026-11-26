@@ -115,6 +115,10 @@
     min-height: 44px;
   }
 
+  conversation-sidebar .sidebar-section-select {
+    min-height: 44px;
+  }
+
   /* Exceptions: small inline / overlay buttons where 44px would break
      the design. Each documented inline. */
   chat-message .copy-btn,                            /* corner-overlay button on code blocks */

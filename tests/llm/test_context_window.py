@@ -14,7 +14,7 @@ from decafclaw.llm.providers.openai_compat import (
 )
 from decafclaw.llm.providers.vertex import VertexProvider, _vertex_default_context_window
 from decafclaw.llm.registry import clear_providers, register_provider
-from decafclaw.llm.types import DiscoveredModel
+from decafclaw.llm.types import DiscoveredModel, ModelInfo
 
 # A realistic otari-local listing: a configured deployment with the prefixed
 # id and a bare ``context_window``, plus entries the gateway reports as
@@ -103,7 +103,7 @@ async def test_get_model_info_reuses_discover_models(monkeypatch):
 
     monkeypatch.setattr(provider, "discover_models", fake_discover)
 
-    assert await provider.get_model_info("listed") == {"context_window_size": 262144}
+    assert await provider.get_model_info("listed") == ModelInfo(context_window_size=262144)
     assert await provider.get_model_info("bare") is None
     assert await provider.get_model_info("missing") is None
     # One discovery call per lookup — no second HTTP path was added.
@@ -118,7 +118,7 @@ async def test_get_model_info_reads_the_real_listing(monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
     provider = OpenAICompatProvider(url="http://gateway:4100/v1")
 
-    assert await provider.get_model_info("mandelbrot3-flint") == {"context_window_size": 262144}
+    assert await provider.get_model_info("mandelbrot3-flint") == ModelInfo(context_window_size=262144)
     assert await provider.get_model_info("moz-llama-70b") is None
     assert await provider.get_model_info("not-listed") is None
 
@@ -140,9 +140,9 @@ async def test_get_model_info_normalizes_every_dialect(monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
     provider = OpenAICompatProvider(url="http://gateway:4100/v1")
 
-    assert await provider.get_model_info("litellm") == {"context_window_size": 128000}
-    assert await provider.get_model_info("openrouter") == {"context_window_size": 64000}
-    assert await provider.get_model_info("otari") == {"context_window_size": 262144}
+    assert await provider.get_model_info("litellm") == ModelInfo(context_window_size=128000)
+    assert await provider.get_model_info("openrouter") == ModelInfo(context_window_size=64000)
+    assert await provider.get_model_info("otari") == ModelInfo(context_window_size=262144)
     assert await provider.get_model_info("bare") is None
 
 
@@ -156,9 +156,9 @@ async def test_get_model_info_resolves_bare_config_name_to_prefixed_gateway_id(m
 
     monkeypatch.setattr(provider, "discover_models", fake_discover)
 
-    assert await provider.get_model_info("claude-haiku-4.5") == {"context_window_size": 200000}
+    assert await provider.get_model_info("claude-haiku-4.5") == ModelInfo(context_window_size=200000)
     # The exact prefixed id also resolves.
-    assert await provider.get_model_info("anthropic/claude-haiku-4.5") == {"context_window_size": 200000}
+    assert await provider.get_model_info("anthropic/claude-haiku-4.5") == ModelInfo(context_window_size=200000)
 
 
 def test_suffix_match_rejects_an_ambiguous_id():
@@ -170,7 +170,7 @@ class _DiscoveryProvider:
     """Reports a window through get_model_info; no defaults table."""
 
     async def get_model_info(self, model, **kwargs):
-        return {"context_window_size": 111}
+        return ModelInfo(context_window_size=111)
 
     def default_context_window(self, model):
         return None
@@ -203,7 +203,7 @@ class _WindowProvider:
     async def get_model_info(self, model, **kwargs):
         if self.window is None:
             return None
-        return {"context_window_size": self.window}
+        return ModelInfo(context_window_size=self.window)
 
     def default_context_window(self, model):
         return None
@@ -389,3 +389,22 @@ async def test_vertex_hole_warns_about_the_defaults_table(config, caplog):
 )
 def test_vertex_family_table_uses_longest_prefix(model, expected):
     assert _vertex_default_context_window(model) == expected
+
+
+@pytest.mark.asyncio
+async def test_vertex_get_model_info_reports_none():
+    """Vertex publishes no machine-readable limits; None is the contract.
+
+    The family table (``default_context_window``) supplies the window, so
+    discovery must report nothing rather than a raw wire shape.
+    """
+    provider = VertexProvider(project="test")
+    assert await provider.get_model_info("gemini-3.8-flash") is None
+
+
+@pytest.mark.asyncio
+async def test_fastembed_get_model_info_reports_none():
+    """Embedding-only provider: no model metadata to report."""
+    from decafclaw.llm.providers.fastembed import FastembedProvider
+
+    assert await FastembedProvider().get_model_info("all-MiniLM-L6-v2") is None
