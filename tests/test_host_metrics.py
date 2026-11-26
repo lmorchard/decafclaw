@@ -8,6 +8,7 @@ presented as a live gauge — would be silently believable.
 """
 
 import asyncio
+import sys
 
 import pytest
 
@@ -24,6 +25,11 @@ from decafclaw.host_metrics import (
     read_process_count,
     read_uptime,
     reset_sampler,
+)
+
+# The host-facing tests read /proc; macOS has no /proc and no memory gauge.
+requires_linux_proc = pytest.mark.skipif(
+    sys.platform != "linux", reason="host metrics read /proc; this host has no /proc"
 )
 
 
@@ -266,6 +272,7 @@ def test_snapshot_refreshes_host_fields_without_consuming_delta(monkeypatch):
     assert len(calls) == 1
 
 
+@requires_linux_proc
 def test_snapshot_without_prior_sample_takes_one():
     sampler = HostSampler()
     snapshot = sampler.snapshot()
@@ -273,6 +280,7 @@ def test_snapshot_without_prior_sample_takes_one():
     assert snapshot["memory"] is not None
 
 
+@requires_linux_proc
 def test_sample_once_survives_a_failing_source(monkeypatch):
     """Fail-open: one unreadable source nulls its field, not the reading."""
 
@@ -339,6 +347,7 @@ async def test_run_loop_survives_sample_exception(monkeypatch):
 # -- against the real host ----------------------------------------------------
 
 
+@requires_linux_proc
 def test_collect_static_on_this_host_returns_a_full_snapshot():
     snapshot = collect_static()
     assert snapshot["timestamp"] > 0
@@ -351,6 +360,7 @@ def test_collect_static_on_this_host_returns_a_full_snapshot():
     assert snapshot["process_count"] >= 1
 
 
+@requires_linux_proc
 def test_memory_available_never_exceeds_total():
     mem = read_memory()
     assert mem["available_bytes"] <= mem["total_bytes"]
