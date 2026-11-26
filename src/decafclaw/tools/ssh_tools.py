@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
 import shlex
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from ..media import EndTurnConfirm, ToolResult
 from ..ssh_rules import decide as ssh_rule_decision
+from ..ssh_rules import format_rule, load_rules, rules_path, validate_rule
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -207,9 +209,100 @@ async def tool_ssh_copy(
     )
 
 
+def _raw_rule_lines(ctx) -> list[str]:
+    try:
+        return rules_path(ctx.config).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+
+async def _write_rule_lines(ctx, lines: list[str]):
+    """Write the rulebook through admin_write so the diff/confirmation path is kept."""
+    from .admin_tools import tool_admin_write
+
+    content = "\n".join(lines) + ("\n" if lines else "")
+    result = await tool_admin_write(ctx, "ssh_rules.jsonl", content)
+    return result if isinstance(result, ToolResult) else ToolResult(text=str(result))
+
+
+async def tool_ssh_rule_list(ctx: "Context") -> ToolResult:
+    """List valid SSH rules and malformed lines with line numbers."""
+    valid = []
+    malformed = []
+    for index, line in enumerate(_raw_rule_lines(ctx), 1):
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            data = json.loads(text)
+            rule = validate_rule(data.get("tool"), data.get("host"), data.get("action"))
+        except (json.JSONDecodeError, AttributeError, ValueError):
+            malformed.append({"line": index, "text": line})
+            continue
+        valid.append({"line": index, **rule.__dict__})
+    lines = [f"SSH rules: {len(valid)} valid, {len(malformed)} malformed"]
+    lines.extend(f"  {item['line']}: {item['tool']} {item['host']} -> {item['action']}" for item in valid)
+    lines.extend(f"  {item['line']}: MALFORMED {item['text']}" for item in malformed)
+    return ToolResult(
+        text="\n".join(lines),
+        data={"rules": valid, "malformed": malformed},
+    )
+
+
+async def tool_ssh_rule_add(ctx: "Context", tool: str, host: str, action: str) -> ToolResult:
+    """Append a validated SSH rule; duplicates are rejected."""
+    try:
+        rule = validate_rule(tool, host, action)
+    except ValueError as exc:
+        return ToolResult(text=f"[error: {exc}]", data={"error": "invalid_rule"})
+    if any(
+        existing.tool == rule.tool and existing.host == rule.host and existing.action == rule.action
+        for existing in load_rules(ctx.config)
+    ):
+        return ToolResult(text="[error: that SSH rule already exists]", data={"error": "duplicate_rule"})
+    lines = _raw_rule_lines(ctx)
+    lines.append(format_rule(rule))
+    result = await _write_rule_lines(ctx, lines)
+    return result
+
+
+async def tool_ssh_rule_remove(ctx: "Context", tool: str, host: str, action: str = "") -> ToolResult:
+    """Remove exact matching SSH rules, preserving malformed and unrelated lines."""
+    try:
+        target = validate_rule(tool, host, action, allow_empty_action=True)
+    except ValueError as exc:
+        return ToolResult(text=f"[error: {exc}]", data={"error": "invalid_rule"})
+    lines = _raw_rule_lines(ctx)
+    kept = []
+    removed = 0
+    for line in lines:
+        text = line.strip()
+        if text:
+            try:
+                data = json.loads(text)
+                existing = validate_rule(data.get("tool"), data.get("host"), data.get("action"))
+            except (json.JSONDecodeError, AttributeError, ValueError):
+                kept.append(line)
+                continue
+            if (
+                existing.tool == target.tool
+                and existing.host == target.host
+                and (not target.action or existing.action == target.action)
+            ):
+                removed += 1
+                continue
+        kept.append(line)
+    if removed == 0:
+        return ToolResult(text="[error: no matching SSH rule]", data={"error": "not_found"})
+    return await _write_rule_lines(ctx, kept)
+
+
 SSH_TOOLS = {
     "ssh_exec": tool_ssh_exec,
     "ssh_copy": tool_ssh_copy,
+    "ssh_rule_list": tool_ssh_rule_list,
+    "ssh_rule_add": tool_ssh_rule_add,
+    "ssh_rule_remove": tool_ssh_rule_remove,
 }
 
 SSH_TOOL_DEFINITIONS = [
@@ -266,6 +359,61 @@ SSH_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["host", "local_path", "remote_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "writes": False,
+        "summary": "List SSH host approval rules.",
+        "function": {
+            "name": "ssh_rule_list",
+            "description": "List valid SSH rules and malformed lines from ssh_rules.jsonl.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "writes": True,
+        "summary": "Add a validated SSH host approval rule.",
+        "function": {
+            "name": "ssh_rule_add",
+            "description": (
+                "Append a validated rule to ssh_rules.jsonl through admin_write "
+                "(diff + confirmation). Rejects invalid tools/actions, empty hosts, and duplicates."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string", "enum": ["ssh_exec", "ssh_copy", "*"]},
+                    "host": {"type": "string", "description": "fnmatch host pattern, e.g. scavenger-*"},
+                    "action": {"type": "string", "enum": ["allow", "ask", "deny"]},
+                },
+                "required": ["tool", "host", "action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "writes": True,
+        "summary": "Remove an SSH host approval rule.",
+        "function": {
+            "name": "ssh_rule_remove",
+            "description": (
+                "Remove exact matching rules from ssh_rules.jsonl through admin_write. "
+                "Unrelated and malformed lines are preserved. Omit action to remove all rules for tool+host."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string", "enum": ["ssh_exec", "ssh_copy", "*"]},
+                    "host": {"type": "string", "description": "Exact host pattern to remove"},
+                    "action": {"type": "string", "enum": ["allow", "ask", "deny"]},
+                },
+                "required": ["tool", "host"],
             },
         },
     },

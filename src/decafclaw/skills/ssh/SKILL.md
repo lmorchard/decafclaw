@@ -55,7 +55,7 @@ Admin rules live at `data/{agent_id}/ssh_rules.jsonl` (admin-protected, outside 
 
 Precedence is **deny > allow > ask** across all matching rules. `allow` skips the unlisted-host confirmation; `deny` refuses; `ask` or no match keeps normal behavior. A missing/malformed rulebook fails open to normal behavior; malformed lines are skipped and never treated as `allow`.
 
-To inspect or change rules, use `admin_read`/`admin_write` (admin writes are confirmation-gated). Read the current file first, keep one object per line, and do not add broad `allow` rules for raw IPs, production/edge hosts, or `tool: "*"` without explicit user review. Prefer the narrowest host pattern that covers the request.
+Use `ssh_rule_list()` to inspect, `ssh_rule_add(tool, host, action)` to add, and `ssh_rule_remove(tool, host, action)` to remove. They validate the tool/action and host, reject duplicates, preserve malformed lines, and write through `admin_write` (diff + confirmation). Do not add broad `allow` rules for raw IPs, production/edge hosts, or `tool: "*"` without explicit user review. Prefer the narrowest host pattern that covers the request.
 
 ## Safety
 

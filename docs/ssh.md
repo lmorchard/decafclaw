@@ -49,3 +49,6 @@ Admin rules live at `data/{agent_id}/ssh_rules.jsonl`, outside the agent-writabl
 Precedence is **deny > allow > ask** across all matching rules. `allow` runs the host without the unlisted-host confirmation; `deny` refuses; `ask` or no match keeps the normal behavior (known aliases run, unlisted aliases ask). A missing or malformed rulebook fails open to that normal behavior, and malformed lines are skipped — never treated as `allow`.
 
 The tool-level confirmation above is the fallback when no rule matches.
+
+
+Use `ssh_rule_list()`, `ssh_rule_add(tool, host, action)`, and `ssh_rule_remove(tool, host, action)`; they validate input and write through `admin_write` (diff + confirmation).
