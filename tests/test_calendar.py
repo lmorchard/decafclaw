@@ -2,9 +2,10 @@
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -823,7 +824,13 @@ async def test_invalid_recurrence_and_missing_timezone(ctx, mock_manager):
 async def test_update_recurrence_reanchors(ctx, mock_manager):
     ctx.manager = mock_manager
     ctx.conv_id = "conv-tools"
-    created = await tool_calendar_create(ctx, title="One-shot", reason="Later", fire_at=_iso(time.time() + 3600))
+    # Adding a rule keeps the existing fire_at as the anchor, so the anchor has
+    # to satisfy the rule: FREQ=WEEKLY;BYDAY=MO needs a Monday (#1954).
+    monday = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(days=1)
+    while monday.weekday() != 0:
+        monday += timedelta(days=1)
+    monday += timedelta(hours=1)
+    created = await tool_calendar_create(ctx, title="One-shot", reason="Later", fire_at=monday.isoformat())
     event_id = created.data["event_id"]
 
     result = await tool_calendar_update(ctx, event_id, recurrence="FREQ=WEEKLY;BYDAY=MO", timezone="UTC")
@@ -832,3 +839,135 @@ async def test_update_recurrence_reanchors(ctx, mock_manager):
     assert result.data["recurrence"] == "FREQ=WEEKLY;BYDAY=MO"
     assert result.data["recurrence_start"] == result.data["fire_at"]
     assert result.data["occurrence_at"] == result.data["fire_at"]
+
+
+@pytest.mark.asyncio
+async def test_update_recurrence_rejects_a_mismatched_anchor(ctx, mock_manager):
+    """A fire_at that cannot satisfy its rule is refused (#1954)."""
+    ctx.manager = mock_manager
+    ctx.conv_id = "conv-tools"
+    created = await tool_calendar_create(ctx, title="One-shot", reason="Later", fire_at=_iso(time.time() + 3600))
+    event_id = created.data["event_id"]
+
+    # 2026-11-30 is a Monday; pick a Thursday instead.
+    thursday = datetime(2026, 11, 26, 9, 0, tzinfo=timezone.utc)
+    await tool_calendar_update(ctx, event_id, fire_at=thursday.isoformat())
+    result = await tool_calendar_update(ctx, event_id, recurrence="FREQ=WEEKLY;BYDAY=MO", timezone="UTC")
+
+    assert "[error" in result.text
+    assert "does not match the recurrence rule" in result.text
+
+
+# -- recurrence anchor fixes (#1950, #1951) -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_snooze_that_overshoots_an_interval_does_not_fire_twice(config, mock_manager):
+    """Snoozing past a whole interval must not replay the occurrence (#1950)."""
+    _make_conv_dir(config, "conv-snooze-day")
+    tz = ZoneInfo("America/Los_Angeles")
+    start = datetime.now(tz).replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    iso = start.isoformat()
+    added = await mock_manager.calendar.add(
+        _event(
+            "conv-snooze-day",
+            fire_at_ts=start.timestamp(),
+            recurrence="FREQ=DAILY",
+            timezone="America/Los_Angeles",
+            recurrence_start=iso,
+            occurrence_at=iso,
+        )
+    )
+
+    snoozed = await mock_manager.calendar.snooze("conv-snooze-day", added.event_id, duration_seconds=86400)
+    assert snoozed is not None
+    assert snoozed.occurrence_at == added.occurrence_at  # anchor untouched
+
+    await mock_manager.calendar._fire(snoozed)
+
+    loaded = load_calendar_events(config, "conv-snooze-day")[0]
+    next_fire = datetime.fromisoformat(loaded.fire_at)
+    fired_at = datetime.fromisoformat(snoozed.fire_at)
+    assert next_fire > fired_at, "next occurrence must be strictly after the snoozed fire"
+    assert next_fire.hour == start.hour, "the series keeps its original wall-clock anchor"
+
+
+@pytest.mark.asyncio
+async def test_snooze_overshooting_several_intervals_lands_in_the_future(config, mock_manager):
+    _make_conv_dir(config, "conv-snooze-multi")
+    tz = ZoneInfo("America/Los_Angeles")
+    start = datetime.now(tz).replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    iso = start.isoformat()
+    added = await mock_manager.calendar.add(
+        _event(
+            "conv-snooze-multi",
+            fire_at_ts=start.timestamp(),
+            recurrence="FREQ=DAILY",
+            timezone="America/Los_Angeles",
+            recurrence_start=iso,
+            occurrence_at=iso,
+        )
+    )
+    snoozed = await mock_manager.calendar.snooze("conv-snooze-multi", added.event_id, duration_seconds=3 * 86400)
+    assert snoozed is not None
+    await mock_manager.calendar._fire(snoozed)
+
+    loaded = load_calendar_events(config, "conv-snooze-multi")[0]
+    next_fire = datetime.fromisoformat(loaded.fire_at)
+    assert next_fire > datetime.fromisoformat(snoozed.fire_at)
+
+
+@pytest.mark.asyncio
+async def test_reschedule_moves_the_series_anchor(config, mock_manager):
+    """Rescheduling a series must stick, not revert after one fire (#1951)."""
+    _make_conv_dir(config, "conv-resched")
+    tz = ZoneInfo("America/Los_Angeles")
+    start = datetime.now(tz).replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    iso = start.isoformat()
+    added = await mock_manager.calendar.add(
+        _event(
+            "conv-resched",
+            fire_at_ts=start.timestamp(),
+            recurrence="FREQ=DAILY",
+            timezone="America/Los_Angeles",
+            recurrence_start=iso,
+            occurrence_at=iso,
+        )
+    )
+
+    later = start + timedelta(hours=1)
+    updated = await mock_manager.calendar.update(
+        "conv-resched",
+        added.event_id,
+        fire_at=later.isoformat(),
+        fire_at_ts=later.timestamp(),
+        recurrence_start=later.isoformat(),
+        occurrence_at=later.isoformat(),
+    )
+    assert updated is not None
+    await mock_manager.calendar._fire(updated)
+
+    loaded = load_calendar_events(config, "conv-resched")[0]
+    assert datetime.fromisoformat(loaded.fire_at).hour == later.hour
+
+
+@pytest.mark.asyncio
+async def test_update_tool_reanchors_a_rescheduled_series(ctx, mock_manager):
+    """tool_calendar_update moves recurrence_start/occurrence_at with fire_at (#1951)."""
+    tz = ZoneInfo("UTC")
+    start = datetime.now(tz).replace(microsecond=0) + timedelta(days=1)
+    created = await tool_calendar_create(
+        ctx,
+        title="Standup",
+        reason="Say hi",
+        fire_at=start.isoformat(),
+        recurrence="FREQ=DAILY",
+        timezone="UTC",
+    )
+    event_id = created.data["event_id"]
+
+    later = start + timedelta(hours=2)
+    updated = await tool_calendar_update(ctx, event_id=event_id, fire_at=later.isoformat())
+    assert updated.data["recurrence_start"] == later.isoformat()
+    assert updated.data["occurrence_at"] == later.isoformat()
+    assert updated.data["fire_at_ts"] == pytest.approx(later.timestamp())
