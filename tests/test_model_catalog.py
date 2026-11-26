@@ -596,6 +596,73 @@ def test_refresh_catalog_skips_embedding_only_provider(config):
         clear_providers()
 
 
+async def test_refresh_prunes_provider_removed_from_config(config):
+    """A provider dropped from config is removed from the catalog (#1867)."""
+    from decafclaw.llm.registry import clear_providers, register_provider
+    from decafclaw.llm.types import DiscoveredModel
+
+    class Gateway:
+        async def discover_models(self):
+            return [DiscoveredModel(id="m1", chat=True, tools=True)]
+
+    config.providers = {"a": ProviderConfig(type="openai-compat", url="http://x/v1")}
+    save_catalog(
+        config,
+        ModelCatalog(
+            providers={
+                "a": CatalogProvider(models=[CatalogModel(id="m1", enabled=True)]),
+                "b": CatalogProvider(models=[CatalogModel(id="old", enabled=True)]),
+            }
+        ),
+    )
+    clear_providers()
+    register_provider("a", Gateway())
+    try:
+        catalog = await refresh_catalog(config)
+        assert "a" in catalog.providers
+        assert "b" not in catalog.providers
+    finally:
+        clear_providers()
+
+
+async def test_refresh_keeps_failed_provider_cache(config):
+    """A registered provider whose discovery fails keeps its cached models (#1867)."""
+    from decafclaw.llm.registry import clear_providers, register_provider
+    from decafclaw.llm.types import DiscoveredModel
+
+    class Good:
+        async def discover_models(self):
+            return [DiscoveredModel(id="m1", chat=True, tools=True)]
+
+    class Bad:
+        async def discover_models(self):
+            raise RuntimeError("gateway down")
+
+    config.providers = {
+        "a": ProviderConfig(type="openai-compat", url="http://x/v1"),
+        "b": ProviderConfig(type="openai-compat", url="http://y/v1"),
+    }
+    save_catalog(
+        config,
+        ModelCatalog(
+            providers={
+                "a": CatalogProvider(models=[CatalogModel(id="m1", enabled=True)]),
+                "b": CatalogProvider(models=[CatalogModel(id="cached", enabled=True)]),
+            }
+        ),
+    )
+    clear_providers()
+    register_provider("a", Good())
+    register_provider("b", Bad())
+    try:
+        catalog = await refresh_catalog(config)
+        assert "b" in catalog.providers
+        assert [model.id for model in catalog.providers["b"].models] == ["cached"]
+        assert catalog.providers["b"].error
+    finally:
+        clear_providers()
+
+
 # ---------------------------------------------------------------------------
 # Enable/disable persistence across restart + default disable fallback
 # ---------------------------------------------------------------------------

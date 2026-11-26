@@ -298,6 +298,16 @@ async def refresh_catalog(
         catalog = load_catalog(config)
         for name, found, error in results:
             _merge_discovered(catalog, name, found, error)
+        # Reap providers removed from (or renamed in) config. A provider that
+        # is still registered but whose discovery failed keeps its cached
+        # models: the live set is registry membership, never "did discovery
+        # return models" (#1867). A targeted refresh has no full-registry view,
+        # so it does not prune.
+        if provider_names is None:
+            live = set(list_providers())
+            for stale in sorted(set(catalog.providers) - live):
+                log.info("Pruning catalog provider removed from config: %s", stale)
+                del catalog.providers[stale]
         save_catalog(config, catalog)
         apply_catalog(config, catalog)
         warn_unresolvable_model_configs(config, catalog)
