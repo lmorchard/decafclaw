@@ -87,6 +87,40 @@ class TerminationReason(StrEnum):
     SKILL_ACTIVATION_FAILED = "skill_activation_failed"  # unattended turn with a denied skill activation
 
 
+class ToolStatus(StrEnum):
+    """Outcome of a tool call, as a structured field on ``ToolResult``.
+
+    Populated by the execution path (``execute_tool`` / ``_to_tool_result``,
+    via :func:`derive_tool_status`) so consumers read this instead of re-parsing
+    the legacy ``[error: ...]`` / ``[cancelled...]`` text prefixes (#1331).
+    String-valued so JSON round-trips and existing string comparisons keep
+    working (mirrors ``TerminationReason``). The values match the outcome
+    strings already produced by ``tool_telemetry.infer_outcome`` and
+    ``audit_log.infer_outcome``.
+    """
+
+    SUCCESS = "success"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+
+
+def derive_tool_status(text: str | None) -> ToolStatus:
+    """Map a tool result's text prefix to a structured :class:`ToolStatus`.
+
+    The single source of truth for the legacy text conventions: a
+    ``[cancelled...]`` / ``[tool interrupted...]`` prefix is a cancellation,
+    an ``[error...`` prefix is an error, and anything else succeeded. Used to
+    populate :attr:`ToolResult.status`; consumers should read that field rather
+    than re-parsing text.
+    """
+    t = (text or "").lstrip()
+    if t.startswith("[cancelled") or t.startswith("[tool interrupted"):
+        return ToolStatus.CANCELLED
+    if t.startswith("[error"):
+        return ToolStatus.ERROR
+    return ToolStatus.SUCCESS
+
+
 @dataclass
 class ToolResult:
     """Result from a tool execution — text plus optional media attachments."""
@@ -115,6 +149,19 @@ class ToolResult:
     # watchdog failure without parsing `text`.
     timed_out: bool = False
     timeout_sec: float | None = None
+    # Structured call outcome (#1331): success / error / cancelled. Derived from
+    # the text prefix at construction (see __post_init__) so consumers read this
+    # instead of re-parsing [error: ...] / [cancelled...] text. Set explicitly to
+    # override the derivation (e.g. a tool that knows its own outcome).
+    status: ToolStatus | None = None
+
+    def __post_init__(self) -> None:
+        # Derive the outcome from the text prefix unless a caller set it
+        # explicitly. This keeps every ToolResult — wherever constructed (tool
+        # bodies, execute_tool's early returns, the tool_execution fallbacks) —
+        # carrying a meaningful status, so consumers never see None.
+        if self.status is None:
+            self.status = derive_tool_status(self.text)
 
     @classmethod
     def from_text(cls, text: str) -> "ToolResult":
