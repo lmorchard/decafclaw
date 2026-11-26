@@ -1288,17 +1288,30 @@ class TurnRunner:
         # phrasing — without "STOP" / "Do not continue", models keep trying
         # to do the original task and bail mid-stream when they realize they
         # can't call a tool.
-        grace_note = {
-            "role": "user",
-            "content": (
+        # A child's audience is its parent, not a user. A child that simply
+        # ran out of budget should hand off what it established, not
+        # apologize (#1828).
+        is_child = self.ctx.is_child or self.ctx.task_mode == TaskMode.CHILD_AGENT
+        if is_child:
+            instruction = (
+                "[iteration_limit] You have reached your tool iteration "
+                "budget. STOP. No more tool calls are available. Do not "
+                "apologize; your parent agent needs the value you gathered. "
+                "Reply with a structured handoff: (1) findings — the concrete "
+                "results you established, each with its source; (2) unresolved "
+                "— what remains open; (3) next_action — the single next step a "
+                "successor should take."
+            )
+        else:
+            instruction = (
                 "[iteration_limit] You have reached your tool iteration "
                 "budget. STOP. Do not continue the task you were given — "
                 "no more tool calls are available. Reply with a brief "
                 "closing message (1-3 sentences) that summarizes what you "
                 "accomplished so far and tells the user you've hit your "
                 "iteration limit."
-            ),
-        }
+            )
+        grace_note = {"role": "user", "content": instruction}
         self.messages.append(grace_note)
         try:
             self._dispatch_before_llm_call(self.messages, [])

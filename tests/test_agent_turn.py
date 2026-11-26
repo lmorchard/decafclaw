@@ -1291,6 +1291,40 @@ async def test_run_agent_turn_max_iterations_grace_turn(ctx):
 
 
 @pytest.mark.asyncio
+async def test_child_grace_turn_requests_structured_handoff(ctx):
+    """A child at max iterations is asked for findings/unresolved/next_action (#1828)."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+    ctx.config.agent.max_tool_iterations = 2
+    ctx.is_child = True
+    ctx.task_mode = TaskMode.CHILD_AGENT
+
+    tool_call_response = _mock_llm_response(
+        content=None,
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {"name": "memory_recent", "arguments": "{}"},
+            }
+        ],
+    )
+    grace_response = _mock_llm_response(
+        content="Findings:\n- source A\nUnresolved:\n- B\nNext action: fetch B",
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [tool_call_response, tool_call_response, grace_response]
+        result = await run_agent_turn(ctx, "research the topic", [])
+
+    assert "Findings" in result.text
+    last_messages = mock_llm.call_args_list[-1].args[1]
+    instruction = last_messages[-1]["content"]
+    assert "structured handoff" in instruction
+    assert "next_action" in instruction
+    assert "closing message" not in instruction
+
+
+@pytest.mark.asyncio
 async def test_run_agent_turn_grace_turn_bumps_current_iteration(ctx):
     """The grace turn must use a fresh iteration number so llm_start /
     llm_end events don't collide with the last tool-enabled iteration."""
