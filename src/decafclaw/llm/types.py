@@ -56,6 +56,20 @@ class LLMRetryExhaustedError(Exception):
         self.retry_after = retry_after
 
 
+@dataclass
+class ModelInfo:
+    """Normalized model metadata returned by a provider's ``get_model_info``.
+
+    Each provider translates its own wire shape (Vertex metadata, a gateway
+    listing entry, ...) into this type so generic consumers — the context-
+    window resolver in particular — read one field instead of a fallback
+    chain over provider-specific keys. ``None`` means "the gateway did not
+    report this fact"; it never carries a guessed value.
+    """
+
+    context_window_size: int | None = None
+
+
 class Provider(Protocol):
     """Interface for LLM providers.
 
@@ -109,8 +123,12 @@ class Provider(Protocol):
         *,
         timeout: int = 30,
         **kwargs: Any,
-    ) -> dict[str, Any] | None:
-        """Get model metadata (e.g. token limits), or None if unsupported."""
+    ) -> ModelInfo | None:
+        """Get normalized model metadata, or None if the provider reports none.
+
+        Providers translate their own wire shapes into ``ModelInfo``; generic
+        consumers read the fields and never see provider-specific keys.
+        """
         return None
 
     def default_context_window(self, model: str) -> int | None:

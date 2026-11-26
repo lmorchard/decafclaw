@@ -20,6 +20,7 @@ from ..types import (
     FINISH_REASON_STOP,
     FINISH_REASON_TOOL_CALLS,
     DiscoveredModel,
+    ModelInfo,
     StreamCallback,
 )
 
@@ -225,8 +226,8 @@ class OpenAICompatProvider:
         *,
         timeout: int = 30,
         **kwargs: Any,
-    ) -> dict[str, Any] | None:
-        """Get model metadata (e.g. token limits), or None if unsupported.
+    ) -> ModelInfo | None:
+        """Get normalized model metadata (the context window), or None.
 
         Reuses ``discover_models`` — the same ``GET {base}/models`` listing
         the catalog uses — so there is no second HTTP path to keep in sync.
@@ -237,7 +238,7 @@ class OpenAICompatProvider:
         entry = _resolve_listed_model(await self.discover_models(timeout=timeout), model)
         if entry is None or not entry.context_window_size:
             return None
-        return {"context_window_size": entry.context_window_size}
+        return ModelInfo(context_window_size=entry.context_window_size)
 
     def default_context_window(self, model: str) -> int | None:
         """No provider defaults table — discovery is the only source here."""

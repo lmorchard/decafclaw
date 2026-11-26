@@ -327,7 +327,8 @@ Context-window discovery is an async enrichment, not a second ladder.
 `llm.ensure_model_context_window` resolves, highest first:
 
 1. the model config's `context_window_size` — always wins;
-2. the provider's `get_model_info()` — gateway discovery;
+2. the provider's `get_model_info()` — gateway discovery, as a normalized
+   `ModelInfo`;
 3. the provider's `default_context_window()` — Vertex's family table;
 4. `effective_context_window` — `llm.context_window_size`, else the
    `compaction.max_tokens` proxy.
@@ -341,11 +342,14 @@ same definition without the provider call.
 Discovery normalizes whichever window shape the gateway emits:
 `max_input_tokens` (LiteLLM), `context_length` (OpenRouter), and
 `context_window` (some LiteLLM deployments, top-level or nested under
-`capabilities` / `model_info`). `OpenAICompatProvider.get_model_info` reuses
-`discover_models()` rather than opening a second request path. Config names
-and gateway ids can differ (`claude-haiku-4.5` vs
-`anthropic/claude-haiku-4.5`): an exact id match wins, then an unambiguous
-final-path-segment match.
+`capabilities` / `model_info`). Each provider translates its wire shape into
+the normalized `ModelInfo` type, so the resolver reads one field instead of a
+fallback chain over provider-specific keys; providers that publish no
+machine-readable limit (Vertex, fastembed) return `None`.
+`OpenAICompatProvider.get_model_info` reuses `discover_models()` rather than
+opening a second request path. Config names and gateway ids can differ
+(`claude-haiku-4.5` vs `anthropic/claude-haiku-4.5`): an exact id match wins,
+then an unambiguous final-path-segment match.
 
 Vertex publishes no token limits through any machine-readable endpoint, so
 its adapter supplies a family-keyed defaults table (Gemini 2.5 / 3 / 4 at 1M)
