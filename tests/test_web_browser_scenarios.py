@@ -2440,15 +2440,15 @@ def test_browser_calendar_tab(built_static, chromium, config):
             {"convId": conv_id},
         )
         page.wait_for_selector("#browser-calendar-sidebar .calendar-row")
-        page.wait_for_selector("#browser-calendar-sidebar .calendar-view-btn")
+        page.wait_for_selector("#browser-calendar-sidebar .calendar-view-select")
         assert page.evaluate(
             "document.querySelector('#browser-calendar-sidebar .calendar-row-title').textContent"
         ).startswith("Seeded event")
 
-        page.locator("#browser-calendar-sidebar .calendar-view-btn", has_text="Week").click()
+        page.select_option("#browser-calendar-sidebar .calendar-view-select", "week")
         page.wait_for_function("new URL(window.location.href).searchParams.get('calendar_view') === 'week'")
 
-        page.locator("#browser-calendar-sidebar .calendar-view-btn", has_text="Month").click()
+        page.select_option("#browser-calendar-sidebar .calendar-view-select", "month")
         page.wait_for_selector("#browser-calendar-sidebar .calendar-month-grid")
 
         page.evaluate("""() => {
