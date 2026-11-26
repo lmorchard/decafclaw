@@ -25,6 +25,7 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {string} [tool_call_id]
  * @property {string} [display_short_text]
  * @property {object} [details]
+ * @property {Array<{kind: string, path?: string, page?: string, label?: string}>} [links]
  * @property {object[]} [tool_calls]
  * @property {boolean} [_merged]
  * @property {Array<{text: string, timestamp: string}>} [statusHistory]

@@ -1,5 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
 
+import { buildNativeWorkspaceUrl } from '../../lib/api-client/index.js';
+
 import '../widgets/widget-host.js';
 
 /** Tool result message — collapsible row with tool name and truncated preview. */
@@ -12,6 +14,8 @@ export class ToolMessage extends LitElement {
     display_short_text: { type: String },
     /** UI-only purpose/approval metadata from ToolResult.details (#1654) */
     details: { type: Object, attribute: false },
+    /** In-session file/page links from ToolResult.links (#1829) */
+    links: { type: Array, attribute: false },
     /** Array of {text, timestamp} status history entries from the tool_call phase */
     statusHistory: { type: Array, attribute: false },
     /** Optional widget payload: {widget_type, target, data} */
@@ -40,6 +44,8 @@ export class ToolMessage extends LitElement {
     this.display_short_text = '';
     /** @type {object|null} */
     this.details = null;
+    /** @type {Array<{kind: string, path?: string, page?: string, label?: string}>} */
+    this.links = [];
     /** @type {Array<{text: string, timestamp: string}>|null} */
     this.statusHistory = null;
     /** @type {{widget_type: string, target: string, data: object}|null} */
@@ -97,11 +103,19 @@ export class ToolMessage extends LitElement {
     }
   }
 
+  #linkHref(link) {
+    if (link.kind === 'vault') {
+      return '/vault/' + String(link.page || '').split('/').map(encodeURIComponent).join('/');
+    }
+    return buildNativeWorkspaceUrl(link.path || '', 'raw');
+  }
+
   render() {
     const hasContent = this.content && this.content.length > 0;
     const hasHistory = this.statusHistory?.length > 0;
     const hasWidget = !!this.widget;
-    const expandable = hasContent || hasHistory || hasWidget || !!this.command;
+    const hasLinks = this.links?.length > 0;
+    const expandable = hasContent || hasHistory || hasWidget || hasLinks || !!this.command;
     const failed = this.timedOut || this.isError;
     const failureClass = this.timedOut ? 'tool-timeout' : this.isError ? 'tool-error' : '';
     const failureLabel = this.timedOut
@@ -129,6 +143,18 @@ export class ToolMessage extends LitElement {
             <div class="tool-result-detail">
               <strong>Command</strong>
               <pre>${this.command}</pre>
+            </div>
+          ` : nothing}
+          ${hasLinks ? html`
+            <div class="tool-result-detail tool-links">
+              ${this.links.map(link => html`
+                <a
+                  class=${link.kind === 'vault' ? 'wiki-link' : 'workspace-link'}
+                  href=${this.#linkHref(link)}
+                  data-workspace-path=${link.kind === 'workspace' ? (link.path || '') : nothing}
+                  data-wiki-page=${link.kind === 'vault' ? (link.page || '') : nothing}
+                >${link.label || link.path || link.page || ''}</a>
+              `)}
             </div>
           ` : nothing}
           ${this.details ? html`

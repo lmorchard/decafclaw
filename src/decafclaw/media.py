@@ -99,6 +99,9 @@ class ToolResult:
     # UI-only metadata (purpose, approval decision/tier/reason). Never appended
     # to the model-visible text; `data` remains the structured model output.
     details: dict | None = None
+    # In-session editor/wiki links for the tool row: [{"kind": "workspace"|"vault",
+    # "path"|"page": str, "label": str}]. Never part of the model-visible text.
+    links: list[dict] = field(default_factory=list)
     # end_turn: True = end turn with final no-tools LLM call.
     # EndTurnConfirm = show confirmation buttons; approved → continue, denied → end.
     # WidgetInputPause = pause on input widget, resume with user selection.

@@ -271,6 +271,31 @@ def _to_tool_result(value) -> ToolResult:
     return ToolResult(text=str(value))
 
 
+# Tools whose successful result points at a file or page the web UI can open
+# in the in-session editor/wiki panel. The link comes from the validated
+# arguments, never from parsing the result text (#1829).
+_LINK_TOOLS = {
+    "workspace_read": ("workspace", "path"),
+    "workspace_write": ("workspace", "path"),
+    "workspace_edit": ("workspace", "path"),
+    "vault_read": ("vault", "page"),
+    "vault_write": ("vault", "page"),
+    "vault_edit": ("vault", "page"),
+    "vault_append": ("vault", "page"),
+}
+
+
+def _attach_links(result: ToolResult, name: str, arguments: dict) -> None:
+    spec = _LINK_TOOLS.get(name)
+    if spec is None or result.text.lstrip().startswith("[error"):
+        return
+    kind, key = spec
+    value = arguments.get(key)
+    if not isinstance(value, str) or not value:
+        return
+    result.links = [{"kind": kind, key: value, "label": value}]
+
+
 def _suggest_tool_names(name: str, candidates: set[str], max_results: int = 5) -> list[str]:
     """Suggest tool names close to ``name`` using difflib + suffix match.
 
@@ -515,7 +540,9 @@ async def execute_tool(ctx: "Context", name: str, arguments: dict) -> ToolResult
         )
         if interrupted:
             return interrupted
-        return _to_tool_result(tool_task.result())
+        result = _to_tool_result(tool_task.result())
+        _attach_links(result, name, arguments)
+        return result
     except TypeError as e:
         return _typeerror_result(ctx, name, fn, arguments, e)
     except Exception as e:

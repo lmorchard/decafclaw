@@ -170,6 +170,7 @@ export class ToolStatusStore {
             tool: msg.tool,
             display_short_text: msg.display_short_text || '',
             details: msg.details || null,
+            links: msg.links || null,
             widget: msg.widget || null,
             is_error: Boolean(msg.is_error),
             timed_out: Boolean(msg.timed_out),

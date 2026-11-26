@@ -82,3 +82,25 @@ it('keeps the row compact when no details are present', async () => {
     expect(el.querySelector('.tool-details')).toBeNull();
     el.remove();
 });
+
+it('renders workspace and vault links in the expanded row', async () => {
+    const el = document.createElement('tool-message');
+    el.tool = 'workspace_write';
+    el.content = 'Wrote 5 characters to notes.md';
+    el.links = [
+        { kind: 'workspace', path: 'notes.md', label: 'notes.md' },
+        { kind: 'vault', page: 'agent/pages/Notes', label: 'Notes' },
+    ];
+    document.body.append(el);
+    await el.updateComplete;
+    el.querySelector('.tool-result-header').click();
+    await el.updateComplete;
+
+    const workspace = el.querySelector('a.workspace-link');
+    expect(workspace.getAttribute('data-workspace-path')).toBe('notes.md');
+    expect(workspace.getAttribute('href')).toContain('notes.md');
+    const wiki = el.querySelector('a.wiki-link');
+    expect(wiki.getAttribute('data-wiki-page')).toBe('agent/pages/Notes');
+    expect(wiki.getAttribute('href')).toBe('/vault/agent/pages/Notes');
+    el.remove();
+});
