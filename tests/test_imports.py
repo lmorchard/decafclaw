@@ -1,54 +1,38 @@
 """Import smoke tests — verify all modules load without errors."""
 
+import importlib
 
-def test_import_events():
-    from decafclaw.events import EventBus
-
-    assert EventBus is not None
+import pytest
 
 
-def test_import_context():
-    from decafclaw.context import Context
-
-    assert Context is not None
-
-
-def test_import_agent():
-    from decafclaw.agent import run_agent_turn
-
-    assert run_agent_turn is not None
-
-
-def test_import_tools():
-    from decafclaw.tools import TOOL_DEFINITIONS, execute_tool
-
-    assert len(TOOL_DEFINITIONS) > 0
-    assert execute_tool is not None
-
-
-def test_import_llm():
-    from decafclaw.llm import call_llm
-
-    assert call_llm is not None
+@pytest.mark.parametrize(
+    ("module", "symbol"),
+    [
+        ("decafclaw.events", "EventBus"),
+        ("decafclaw.context", "Context"),
+        ("decafclaw.agent", "run_agent_turn"),
+        ("decafclaw.tools", "execute_tool"),
+        ("decafclaw.llm", "call_llm"),
+        ("decafclaw.llm", "call_llm_streaming"),
+        ("decafclaw.skills.vault.tools", "TOOLS"),
+        ("decafclaw.archive", "append_message"),
+        ("decafclaw.compaction", "compact_history"),
+        ("decafclaw.mattermost", "ConversationDisplay"),
+    ],
+)
+def test_module_imports(module, symbol):
+    imported = importlib.import_module(module)
+    assert getattr(imported, symbol) is not None
 
 
-def test_import_vault_tools():
-    from decafclaw.skills.vault.tools import TOOL_DEFINITIONS, TOOLS
+def test_tool_registries_are_not_empty():
+    from decafclaw.skills.vault.tools import TOOL_DEFINITIONS as VAULT_DEFINITIONS
+    from decafclaw.skills.vault.tools import TOOLS as VAULT_TOOLS
+    from decafclaw.tools import TOOL_DEFINITIONS
 
-    assert len(TOOLS) > 0
-    assert len(TOOL_DEFINITIONS) > 0
-
-
-def test_import_archive():
-    from decafclaw.archive import append_message, read_archive
-
-    assert append_message is not None
-
-
-def test_import_compaction():
-    from decafclaw.compaction import compact_history
-
-    assert compact_history is not None
+    assert TOOL_DEFINITIONS
+    assert VAULT_TOOLS
+    assert VAULT_DEFINITIONS
 
 
 def test_import_mattermost_client_methods():
@@ -61,11 +45,3 @@ def test_import_mattermost_client_methods():
     assert hasattr(MattermostClient, "_make_heartbeat_cycle")
     assert hasattr(MattermostClient, "_resolve_heartbeat_channel")
     assert hasattr(MattermostClient, "_poll_confirmation_manager")
-
-
-def test_import_streaming():
-    from decafclaw.llm import call_llm_streaming
-    from decafclaw.mattermost import ConversationDisplay
-
-    assert call_llm_streaming is not None
-    assert ConversationDisplay is not None
