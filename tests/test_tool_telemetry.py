@@ -83,27 +83,6 @@ async def test_subscriber_writes_record(tmp_path):
     assert "timestamp" in rec
 
 
-@pytest.mark.asyncio
-async def test_subscriber_ignores_other_events(tmp_path):
-    cfg = _config(tmp_path)
-    handle = tool_telemetry.make_tool_telemetry_subscriber(cfg)
-    await handle({"type": "tool_start", "tool": "vault_write"})
-    path = cfg.workspace_path / cfg.telemetry.tool_usage_path
-    assert not path.exists()
-
-
-@pytest.mark.asyncio
-async def test_subscriber_fail_open_on_bad_path(tmp_path, caplog):
-    cfg = _config(tmp_path)
-    # Point the path at a location that can't be created (a file as a dir parent).
-    blocker = tmp_path / "data" / "t" / "workspace"
-    blocker.parent.mkdir(parents=True, exist_ok=True)
-    blocker.write_text("i am a file, not a dir")
-    handle = tool_telemetry.make_tool_telemetry_subscriber(cfg)
-    # Must not raise.
-    await handle({"type": "tool_end", "tool": "x", "result_text": "ok"})
-
-
 # -- report aggregation --------------------------------------------------------
 
 

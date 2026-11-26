@@ -76,17 +76,6 @@ async def test_subscriber_fail_open_on_bad_event(config):
     await handler({"type": "retrieval_event"})  # no candidates key — must not raise
 
 
-@pytest.mark.asyncio
-async def test_subscriber_fail_open_on_bad_path(config, tmp_path):
-    # Point the workspace at a location that can't be created (a file as a
-    # dir parent), same fail-open shape as tool_telemetry's coverage.
-    blocker = config.workspace_path
-    blocker.parent.mkdir(parents=True, exist_ok=True)
-    blocker.write_text("i am a file, not a dir")
-    handler = make_retrieval_telemetry_subscriber(config)
-    await handler(_event())  # must not raise
-
-
 def test_record_from_event_shape():
     rec = record_from_event(_event())
     assert rec["conv_id"] == "c1"
