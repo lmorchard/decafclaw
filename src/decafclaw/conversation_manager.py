@@ -496,6 +496,11 @@ class ConversationState:
     conv_id: str = ""
     history: list = field(default_factory=list)
     busy: bool = False
+    # Kind of the turn currently in flight, or None when idle. Only used to
+    # decide whether queued WAKEs may be merged into one turn: merging while a
+    # WAKE is already running would discard the content the interrupting path
+    # was cancelled for (#1961).
+    busy_kind: Any = None
     inmemory_turn_data: dict = field(default_factory=dict)
     agent_task: asyncio.Task | None = None
     cancel_event: asyncio.Event | None = None
@@ -2064,12 +2069,14 @@ class ConversationManager:
 
         conv_id = state.conv_id
         state.busy = True
+        state.busy_kind = kind
         state.cancel_event = asyncio.Event()
         state.steer_event = asyncio.Event()
         try:
             await self._publish_status(conv_id, "busy")
         except BaseException:
             state.busy = False
+            state.busy_kind = None
             state.agent_task = None
             raise
         # -- Persist / inherit transport context --------------------------------
@@ -2423,6 +2430,7 @@ class ConversationManager:
                     if kind is TurnKind.USER:
                         self._circuit_breaker_record(state)
                     state.busy = False
+                    state.busy_kind = None
                     state.agent_task = None
                     state.active_context = None
                     state.cancel_event = None
@@ -2514,9 +2522,17 @@ class ConversationManager:
         """Process queued entries one batch at a time.
 
         Contiguous USER entries at the head of the queue are combined into a
-        single turn. Any other kind pops a single entry and fires it on its own.
-        The recursive _start_turn→_drain_pending path handles the rest of the
+        single turn. Contiguous WAKE entries are likewise combined (#1961);
+        any other kind pops a single entry and fires it on its own. The
+        recursive _start_turn→_drain_pending path handles the rest of the
         queue once each batch completes.
+
+        WAKE coalescing is suppressed while a WAKE turn is already running.
+        The cascade this guards against is many completed jobs each queueing
+        their own wake; the interrupting-message path deliberately cancels the
+        running turn when a newer wake arrives, so merging into it would discard
+        that newer wake's context. In that case one interrupt turn plus the
+        remainder is the correct shape, not a single merged turn.
 
         Acquires ``state.lock`` around the pop-and-dispatch sequence so
         a concurrent ``enqueue_turn`` can't observe ``busy=False`` while
@@ -2616,9 +2632,30 @@ class ConversationManager:
                     future=head_fut,
                 )
             else:
-                q = messages.pop(0)
+                # Coalesce consecutive WAKE turns into one (#1961). Background
+                # jobs that finish while this conversation is busy each queue
+                # their own wake, and the old single-pop dispatch turned that
+                # into a serial cascade: turn ends -> drain -> pop one -> turn
+                # ends -> drain. K jobs cost K full model round-trips, each
+                # discovering nothing new.
+                #
+                # Bounded to WAKE on purpose. WORKFLOW turns carry their own
+                # continuation semantics and file-watch wakes are one-shot
+                # facts; merging either would change behaviour this fix is not
+                # about.
+                #
+                # Also skipped while a WAKE turn is already in flight: the
+                # interrupting path cancels that turn when a newer wake lands,
+                # so merging would throw away the newer wake's context.
+                run = [messages.pop(0)]
+                coalescing = get_kind(run[0]["kind"]) is TurnKind.WAKE and state.busy_kind is not TurnKind.WAKE
+                if coalescing:
+                    while messages and get_kind(messages[0]["kind"]) is TurnKind.WAKE:
+                        run.append(messages.pop(0))
+
                 _write_inbox(self.config, state.conv_id, messages)
 
+                q = run[0]
                 tid = q.get("turn_id")
                 inmem = state.inmemory_turn_data.pop(tid, {})
                 drain_setup = inmem.get("context_setup")
@@ -2651,9 +2688,41 @@ class ConversationManager:
                                     ctx.transport = _tr
 
                 log.info("Draining queued %s turn for conv %s", q["kind"], state.conv_id[:8])
+
+                # Merge a coalesced run into one prompt. The shed turns are not
+                # discarded silently: their futures are resolved, their in-memory
+                # turn data released, and their text is named in the merged
+                # prompt so the agent can still see how many jobs reported and
+                # what each said (#1961).
+                text = q["text"]
+                if len(run) > 1:
+                    head_text = run[0].get("text") or ""
+                    rest = [m.get("text") or "" for m in run[1:]]
+                    text = (
+                        f"{len(run)} wake turns were queued while this conversation was busy. "
+                        f"They are combined into this one turn.\n\n"
+                        f"First: {head_text}\n\n" + "\n\n".join(f"Also: {t}" for t in rest)
+                    )
+                    log.info(
+                        "Coalesced %d queued WAKE turn(s) into one for conv %s",
+                        len(run),
+                        state.conv_id[:8],
+                    )
+                    for shed in run[1:]:
+                        shed_tid = shed.get("turn_id")
+                        # Each queued turn keeps its future in inmemory_turn_data
+                        # under its own turn_id; pop before reading so nothing
+                        # leaks when a coalesced turn never runs on its own.
+                        shed_inmem = state.inmemory_turn_data.pop(shed_tid, {})
+                        shed_fut = shed_inmem.get("future")
+                        # Resolve it so no caller parks forever on a turn that
+                        # will never start independently.
+                        if shed_fut is not None and not shed_fut.done():
+                            shed_fut.set_result(None)
+
                 await self._start_turn(
                     state,
-                    q["text"],
+                    text,
                     kind=get_kind(q["kind"]),
                     user_id=q.get("user_id", ""),
                     context_setup=drain_setup,
