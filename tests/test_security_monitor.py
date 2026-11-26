@@ -294,9 +294,24 @@ def test_kill_is_sensitive_only_in_command_position(tmp_path: Path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    for cmd in ["kill -9 1234", "pkill -f python", "killall node", "/bin/kill -9 1234"]:
+    for cmd in [
+        "kill -9 1234",
+        "pkill -f python",
+        "killall node",
+        "/bin/kill -9 1234",
+        "sudo kill -9 1234",
+        "sudo -u nobody kill 1234",
+        "env kill 1234",
+        "env -i kill 1234",
+        "env FOO=bar sudo kill 1234",
+        "timeout 5 kill 1234",
+        "timeout -s KILL 5 kill 1234",
+        "nohup kill 1234",
+        "command kill 1234",
+        "sudo timeout 5 kill 1234",
+    ]:
         decision = evaluate_command(cmd, workspace_path=workspace)
-        assert decision.status == SecurityStatus.ASK, f"Expected ASK for {cmd}"
+        assert decision.status == SecurityStatus.ASK, f"Expected ASK for {cmd}: {decision.reason}"
 
     for cmd in [
         "echo kill",
@@ -305,6 +320,9 @@ def test_kill_is_sensitive_only_in_command_position(tmp_path: Path):
         "git commit -F commit-msg-bg-kill.txt",
         "git log --grep=kill",
         "echo 'kill -9 1234'",
+        "command -v kill",
+        "command -V kill",
+        "timeout 5 echo kill",
     ]:
         decision = evaluate_command(cmd, workspace_path=workspace)
         assert decision.status == SecurityStatus.ALLOW, f"Expected ALLOW for {cmd}: {decision.reason}"
@@ -383,3 +401,11 @@ async def test_tier2_llm_classifier_ambiguous_command(tmp_path: Path):
         decision = await evaluate_command_llm(ambiguous_cmd, ctx=ctx, workspace_path=tmp_path)
         assert decision.status == SecurityStatus.BLOCK
         assert "Base64 obfuscated pipeline" in decision.reason
+
+
+def test_unresolved_wrapper_asks(tmp_path: Path):
+    """A wrapper value option with no value must not fall through to ALLOW (#1866)."""
+    for cmd in ["sudo -u", "timeout -s", "env -u"]:
+        decision = evaluate_command(cmd, workspace_path=tmp_path)
+        assert decision.status == SecurityStatus.ASK, f"Expected ASK for {cmd}: {decision.reason}"
+        assert "wrapper command could not be resolved" in decision.reason

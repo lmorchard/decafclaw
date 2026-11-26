@@ -330,6 +330,110 @@ def _executable_index(segment: list[str]) -> int | None:
     return None
 
 
+_WRAPPERS = frozenset({"sudo", "env", "command", "nohup", "timeout"})
+_WRAPPER_VALUE_OPTIONS = {
+    "sudo": frozenset(
+        {
+            "-u",
+            "--user",
+            "-g",
+            "--group",
+            "-C",
+            "-p",
+            "--prompt",
+            "-r",
+            "--role",
+            "-t",
+            "--type",
+            "-U",
+            "--other-user",
+            "-h",
+            "--host",
+            "-D",
+            "--chdir",
+            "-R",
+            "--chroot",
+            "-T",
+            "--command-timeout",
+        }
+    ),
+    "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
+    "timeout": frozenset({"-s", "--signal", "-k", "--kill-after"}),
+}
+
+
+def _skip_wrapper_args(segment: list[str], index: int, wrapper: str) -> int | None:
+    """Index of the command after one wrapper's options, or None if unresolved."""
+    count = len(segment)
+    i = index + 1
+    if wrapper == "command":
+        while i < count and segment[i] in ("-p", "--"):
+            i += 1
+        return i if i < count else None
+    if wrapper == "nohup":
+        while i < count and segment[i] in ("--help", "--version"):
+            i += 1
+        return i if i < count else None
+    if wrapper == "timeout":
+        while i < count:
+            token = segment[i]
+            if token in ("--preserve-status", "--foreground", "-v", "--verbose", "--"):
+                i += 1
+                continue
+            if token in _WRAPPER_VALUE_OPTIONS["timeout"]:
+                if i + 1 >= count:
+                    return None
+                i += 2
+                continue
+            if token.startswith("-"):
+                i += 1
+                continue
+            break
+        if i >= count:
+            return None
+        i += 1  # the required DURATION token
+        return i if i < count else None
+    value_options = _WRAPPER_VALUE_OPTIONS[wrapper]
+    while i < count:
+        token = segment[i]
+        if token == "--" or _ENV_ASSIGN_RE.match(token):
+            i += 1
+            continue
+        if token in value_options:
+            if i + 1 >= count:
+                return None
+            i += 2
+            continue
+        if token.startswith("-"):
+            i += 1
+            continue
+        break
+    return i if i < count else None
+
+
+def _wrapped_executable_index(segment: list[str], exe_index: int) -> int | None:
+    """Resolve a small wrapper chain to the command it executes.
+
+    Returns the command index, the original index when there is no wrapper, or
+    ``-1`` when a known wrapper's chain cannot be resolved (caller asks).
+    ``command -v``/``-V`` is a lookup, so it resolves to ``command`` itself.
+    """
+    index = exe_index
+    for _ in range(4):
+        if index is None or index < 0 or index >= len(segment):
+            return -1
+        token = os.path.basename(segment[index])
+        if token not in _WRAPPERS:
+            return index
+        if token == "command" and any(arg in ("-v", "-V") for arg in segment[index + 1 :]):
+            return index
+        next_index = _skip_wrapper_args(segment, index, token)
+        if next_index is None:
+            return -1
+        index = next_index
+    return -1
+
+
 def _heredoc_declarations(line: str) -> list[tuple[str, bool]]:
     """Heredoc delimiters declared on one line, in declaration order.
 
@@ -640,11 +744,18 @@ def evaluate_command(
 
     tokens = _tokenize_command(_mask_heredoc_bodies(command))
     executable_indices: set[int] = set()
+    wrapped_executable_indices: set[int] = set()
+    unresolved_wrapper = False
     expression_indices: set[int] = set()
     for start, segment in _command_segments(tokens):
         exe_index = _executable_index(segment)
         if exe_index is not None:
             executable_indices.add(start + exe_index)
+            wrapped = _wrapped_executable_index(segment, exe_index)
+            if wrapped == -1:
+                unresolved_wrapper = True
+            elif wrapped is not None:
+                wrapped_executable_indices.add(start + wrapped)
         expression_indices.update(start + i for i in _expression_argument_indices(segment, exe_index))
 
     for idx, token in enumerate(tokens):
@@ -726,11 +837,21 @@ def evaluate_command(
                 f"Sensitive command requires explicit confirmation: {reason}",
             )
 
-    # Process termination is sensitive only in command position (#1839): a
-    # filename or argument containing "kill" is not a process-termination
-    # command. Interpreters with an inline script (``bash -c 'kill ...'``) are
-    # already ambiguous and reach Tier 2.
-    for index in executable_indices:
+    # A wrapper chain that cannot be resolved might hide a termination command;
+    # ask rather than allowing it (#1866).
+    if unresolved_wrapper:
+        log.info(f"[security_monitor] ASK unresolved wrapper command: {command}")
+        return SecurityDecision(
+            SecurityStatus.ASK,
+            "Sensitive command requires explicit confirmation: wrapper command could not be resolved",
+        )
+
+    # Process termination is sensitive only in command position (#1839), and a
+    # small wrapper chain (sudo/env/command/nohup/timeout) is unwrapped first
+    # (#1866). A filename or argument containing "kill" is not a
+    # process-termination command. Interpreters with an inline script
+    # (``bash -c 'kill ...'``) are already ambiguous and reach Tier 2.
+    for index in wrapped_executable_indices:
         if os.path.basename(tokens[index]) in _KILL_EXECUTABLES:
             log.info(f"[security_monitor] ASK process termination command: {command}")
             return SecurityDecision(
