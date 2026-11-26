@@ -61,6 +61,7 @@ These docs are as much for me as they are for agents working on this project. Th
 - [Sub-Agent Delegation](delegation.md) — Fork child agents for concurrent subtasks
 - [Heartbeat](heartbeat.md) — Periodic agent wake-up for monitoring and recurring tasks
 - [Scheduled Tasks](schedules.md) — Cron-style per-task scheduling with model, tool, and skill configuration
+- [Calendar Events](calendar.md) — One-shot absolute-time reminders that fire into an existing conversation or a dedicated session
 - [Eval Loop](eval-loop.md) — Test prompts and tools with real LLM calls
 - [Suggested-Prompt Survey](suggested-prompt-survey.md) — Archive-replay harness for next-message prediction: offered-option ceiling, vault-direction calibration, baseline scoring
 - [Notifications](notifications.md) — Inbox for agent-initiated events: heartbeat, schedule, background-job, compaction, reflection
