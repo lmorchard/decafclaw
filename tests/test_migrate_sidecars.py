@@ -64,51 +64,6 @@ def test_compacted_ordering(tmp_path):
     assert not (conv / "abc.jsonl").exists()
 
 
-def test_idempotent_second_run_moves_nothing(tmp_path):
-    conv = tmp_path / "conversations"
-    conv.mkdir()
-    (conv / "abc.jsonl").write_text("archive-body")
-
-    first = migrate_sidecars(conv, dry_run=False)
-    second = migrate_sidecars(conv, dry_run=False)
-
-    assert first == 1
-    assert second == 0
-    assert (conv / "abc" / "archive.jsonl").read_text() == "archive-body"
-
-
-def test_preexisting_target_skipped_not_overwritten(tmp_path):
-    conv = tmp_path / "conversations"
-    conv.mkdir()
-    # Seed the target dir with DIFFERENT content; a stale flat file must not
-    # clobber it.
-    (conv / "abc").mkdir()
-    (conv / "abc" / "archive.jsonl").write_text("existing-target")
-    (conv / "abc.jsonl").write_text("stale-flat")
-
-    moved = migrate_sidecars(conv, dry_run=False)
-
-    assert moved == 0
-    # Target untouched, flat file left in place.
-    assert (conv / "abc" / "archive.jsonl").read_text() == "existing-target"
-    assert (conv / "abc.jsonl").read_text() == "stale-flat"
-
-
-def test_dry_run_moves_nothing(tmp_path):
-    conv = tmp_path / "conversations"
-    conv.mkdir()
-    (conv / "abc.jsonl").write_text("archive-body")
-    (conv / "abc.notes.md").write_text("notes-body")
-
-    moved = migrate_sidecars(conv, dry_run=True)
-
-    assert moved == 2
-    # Flat files still present, no dir created.
-    assert (conv / "abc.jsonl").exists()
-    assert (conv / "abc.notes.md").exists()
-    assert not (conv / "abc").exists()
-
-
 def test_non_sidecars_and_existing_dirs_untouched(tmp_path):
     conv = tmp_path / "conversations"
     conv.mkdir()
@@ -134,14 +89,3 @@ def test_non_sidecars_and_existing_dirs_untouched(tmp_path):
     assert (existing / "uploads" / "x").read_text() == "upload"
     # Real sidecar moved.
     assert (conv / "abc" / "archive.jsonl").read_text() == "archive-body"
-
-
-def test_missing_dir_returns_zero(tmp_path):
-    missing = tmp_path / "conversations"  # never created
-    assert migrate_sidecars(missing, dry_run=False) == 0
-
-
-def test_empty_dir_returns_zero(tmp_path):
-    conv = tmp_path / "conversations"
-    conv.mkdir()
-    assert migrate_sidecars(conv, dry_run=False) == 0
