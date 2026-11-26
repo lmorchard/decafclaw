@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 import sqlite_vec
 
-from .llm.types import PROVIDER_FASTEMBED
+from .model_resolution import PROVIDER_FASTEMBED
 
 log = logging.getLogger(__name__)
 
