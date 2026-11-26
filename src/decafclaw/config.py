@@ -925,60 +925,21 @@ def load_config() -> Config:
     elif not default_model and model_configs:
         default_model = next(iter(model_configs))
 
-    # Custom env vars from config file
-    env_vars: dict[str, str] = {str(k): str(v) for k, v in file_data.get("env", {}).items()}
+    # Custom env vars from config file. The local is named after the Config
+    # field: construction below resolves fields by name.
+    env: dict[str, str] = {str(k): str(v) for k, v in file_data.get("env", {}).items()}
 
     # Runtime-only field
     system_prompt = os.getenv("SYSTEM_PROMPT", "")
 
-    config = Config(
-        llm=llm,
-        mattermost=mattermost,
-        compaction=compaction,
-        cleanup=cleanup,
-        image_budget=image_budget,
-        notes=notes,
-        reminders=reminders,
-        recent_journal=recent_journal,
-        embedding=embedding,
-        heartbeat=heartbeat,
-        schedules=schedules,
-        http=http,
-        terminal=terminal,
-        shell=shell,
-        agent=agent,
-        skills=skills,
-        reflection=reflection,
-        providers=providers,
-        model_configs=model_configs,
-        default_model=default_model,
-        auxiliary_model=auxiliary_model,
-        extra_skill_paths=extra_skill_paths,
-        skills_always_loaded=skills_always_loaded,
-        max_tool_output_bytes=max_tool_output_bytes,
-        max_tool_output_lines=max_tool_output_lines,
-        max_tool_output_disk_bytes=max_tool_output_disk_bytes,
-        vault_retrieval=vault_retrieval,
-        relevance=relevance,
-        importance=importance,
-        vault=vault,
-        vault_guide=vault_guide,
-        notifications=notifications,
-        audit_log=audit_log,
-        email=email,
-        background=background,
-        file_watch=file_watch,
-        workflow=workflow,
-        loop_breaker=loop_breaker,
-        lifecycle=lifecycle,
-        extensions=extensions,
-        pre_script=pre_script,
-        telemetry=telemetry,
-        widgets=widgets,
-        secret_policy=secret_policy,
-        env=env_vars,
-        system_prompt=system_prompt,
-    )
+    # Build Config from field introspection (#1326): every declared field
+    # takes the value resolved above under its own name, falling back to
+    # its dataclass default when no local exists (the runtime-only fields
+    # other than system_prompt). Declaring a new field on Config needs no
+    # change here.
+    local_values = locals()
+    resolved = {f.name: local_values[f.name] for f in dc_fields(Config) if f.name in local_values}
+    config = Config(**resolved)
 
     # Apply custom env vars (only sets those not already in environment)
     config.apply_env()
