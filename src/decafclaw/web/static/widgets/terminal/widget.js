@@ -122,7 +122,16 @@ export class TerminalWidget extends LitElement {
     this._term.loadAddon(new WebLinksAddon());
     this._term.open(host);
     this._fit.fit();
-    this._term.onData((d) => this._send({ type: 'input', data: d }));
+    this._term.onData((d) => {
+      // xterm.js emits focus reports when its helper textarea blurs. In the
+      // normal buffer a line-oriented foreground process never reads them, and
+      // the PTY echoes them as ^[[I/^[[O garbage (#1476). Full-screen TUIs in
+      // the alternate buffer still receive focus in/out.
+      const data = this._term.buffer.active.type === 'alternate'
+        ? d
+        : d.replace(/\x1b\[[IO]/g, '');
+      if (data) this._send({ type: 'input', data });
+    });
     this._ro = new ResizeObserver(() => this._scheduleResize());
     this._ro.observe(host);
     // No live theme-change event exists in this codebase (theme-toggle.js
