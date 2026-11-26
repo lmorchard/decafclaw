@@ -24,12 +24,15 @@ vi.mock('@xterm/xterm', () => ({
       this.rows = 24;
       this.disposed = false;
       this.written = [];
+      this.buffer = { active: { type: 'normal' } };
+      /** @type {Function|null} */
+      this.dataHandler = null;
     }
     loadAddon() {}
     open() {}
     reset() {}
     write(data) { this.written.push(data); }
-    onData() {}
+    onData(cb) { this.dataHandler = cb; }
     dispose() { this.disposed = true; }
   },
 }));
@@ -200,5 +203,39 @@ describe('terminal widget dead-session handling', () => {
 
     expect(closedTabs).toEqual([]);
     expect(el.querySelector('.dc-terminal-status')?.textContent).toMatch(/reconnect/i);
+  });
+});
+
+describe('terminal input focus reports', () => {
+  beforeEach(() => {
+    toasts.length = 0;
+    closedTabs.length = 0;
+    FakeWebSocket.instances.length = 0;
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  const inputs = (ws) => ws.sent
+    .map((raw) => JSON.parse(raw))
+    .filter((msg) => msg.type === 'input')
+    .map((msg) => msg.data);
+
+  it('drops focus in/out reports in the normal buffer', async () => {
+    const { el, ws } = await mountConnected();
+    ws.serverJson({ type: 'buffer_replay_done' });
+    el._term.dataHandler('\x1b[O');
+    el._term.dataHandler('\x1b[I');
+    el._term.dataHandler('ls\r');
+    expect(inputs(ws)).toEqual(['ls\r']);
+  });
+
+  it('keeps focus reports in the alternate buffer', async () => {
+    const { el, ws } = await mountConnected();
+    ws.serverJson({ type: 'buffer_replay_done' });
+    el._term.buffer.active.type = 'alternate';
+    el._term.dataHandler('\x1b[O');
+    expect(inputs(ws)).toEqual(['\x1b[O']);
   });
 });
