@@ -19,6 +19,15 @@ const COLLAPSE_STORAGE_PREFIX = 'sidebar-collapsed:';
 /** Pre-per-conversation global key, migrated to the open conversation. */
 const LEGACY_COLLAPSE_STORAGE_KEY = 'sidebar-collapsed';
 
+const SIDEBAR_SECTIONS = [
+  { value: 'conversations', label: 'Chats' },
+  { value: 'wiki', label: 'Vault' },
+  { value: 'files', label: 'Files' },
+  { value: 'schedules', label: 'Schedules' },
+  { value: 'calendar', label: 'Calendar' },
+  { value: 'tags', label: 'Tags' },
+];
+
 export class ConversationSidebar extends LitElement {
   static properties = {
     store: { type: Object, attribute: false },
@@ -27,7 +36,7 @@ export class ConversationSidebar extends LitElement {
     _chatFolder: { type: String, state: true },
     _collapsed: { type: Boolean, state: true },
     _mobileOpen: { type: Boolean, state: true },
-    _sidebarTab: { type: String, state: true },
+    _sidebarSection: { type: String, state: true },
     _contextInspectorOpen: { type: Boolean, state: true },
     _contextVersion: { type: Number, state: true },
     _openSchedule: { type: String, state: true },
@@ -71,7 +80,7 @@ export class ConversationSidebar extends LitElement {
     /** @type {Set<string>} session ids the user expanded (#1262) */
     this._expandedSessions = new Set();
     this._mobileOpen = false;
-    this._sidebarTab = 'conversations';
+    this._sidebarSection = 'conversations';
     this._contextInspectorOpen = false;
     this._contextVersion = 0;
     this._openSchedule = '';
@@ -161,6 +170,14 @@ export class ConversationSidebar extends LitElement {
     return this.store?.currentConvId || '';
   }
 
+  get _sidebarTab() {
+    return this._sidebarSection;
+  }
+
+  set _sidebarTab(section) {
+    this._sidebarSection = section;
+  }
+
   /** @param {Map} changedProps */
   updated(changedProps) {
     if (changedProps.has('store')) {
@@ -176,30 +193,42 @@ export class ConversationSidebar extends LitElement {
     // the desktop session left _collapsed=true.
     this.toggleAttribute('collapsed', this._collapsed && !this._mobileOpen);
     this.toggleAttribute('mobile-open', this._mobileOpen);
+    this.#syncSectionSelectValue();
   }
 
-  /** @param {string} tab */
-  #switchTab(tab) {
-    this._sidebarTab = tab;
-    this.dispatchEvent(new CustomEvent('sidebar-tab-change', {
-      detail: { tab },
+  #syncSectionSelectValue() {
+    const select = this.querySelector('.sidebar-section-select');
+    if (select instanceof HTMLSelectElement && select.value !== this._sidebarSection) {
+      select.value = this._sidebarSection;
+    }
+  }
+
+  /** @param {string} section */
+  #switchSection(section, { notify = false } = {}) {
+    this._sidebarSection = section;
+    if (!notify) return;
+    this.dispatchEvent(new CustomEvent('sidebar-section-change', {
+      detail: { section },
       bubbles: true,
       composed: true,
     }));
   }
 
-  /** Public: switch to wiki tab (called from app.js when a wiki link is clicked). */
-  switchToWiki() {
-    if (this._sidebarTab !== 'wiki') {
-      this._sidebarTab = 'wiki';
-    }
+  /** @param {Event} e */
+  #onSectionSelectChange(e) {
+    const section = /** @type {HTMLSelectElement | null} */ (e.target)?.value;
+    if (!SIDEBAR_SECTIONS.some((option) => option.value === section)) return;
+    this.#switchSection(section, { notify: true });
   }
 
-  /** Public: switch to files tab. */
+  /** Public: switch to wiki section (called from app.js when a wiki link is clicked). */
+  switchToWiki() {
+    this.#switchSection('wiki');
+  }
+
+  /** Public: switch to files section. */
   switchToFiles() {
-    if (this._sidebarTab !== 'files') {
-      this._sidebarTab = 'files';
-    }
+    this.#switchSection('files');
   }
 
   /**
@@ -217,7 +246,7 @@ export class ConversationSidebar extends LitElement {
    * @param {string} pagePath
    */
   navigateToPageFolder(pagePath) {
-    this._sidebarTab = 'wiki';
+    this.#switchSection('wiki');
     const vs = /** @type {any} */ (this.querySelector('vault-sidebar'));
     vs?.navigateToPageFolder(pagePath);
     const ts = /** @type {any} */ (this.querySelector('tags-sidebar'));
@@ -237,7 +266,7 @@ export class ConversationSidebar extends LitElement {
    * @param {string} folderPath
    */
   navigateToFilesFolder(folderPath) {
-    this._sidebarTab = 'files';
+    this.#switchSection('files');
     const fs = /** @type {any} */ (this.querySelector('files-sidebar'));
     fs?.navigateToFolder(folderPath);
   }
@@ -248,7 +277,7 @@ export class ConversationSidebar extends LitElement {
    * @param {string} filePath
    */
   navigateToFileFolder(filePath) {
-    this._sidebarTab = 'files';
+    this.#switchSection('files');
     const fs = /** @type {any} */ (this.querySelector('files-sidebar'));
     fs?.navigateToFileFolder(filePath);
   }
@@ -259,7 +288,7 @@ export class ConversationSidebar extends LitElement {
     fs?.clearOpenFile();
   }
 
-  /** Public: switch to schedules tab and highlight the given schedule name. */
+  /** Public: switch to schedules section and highlight the given schedule name. */
   setOpenSchedule(name) {
     this._openSchedule = name;
     this.switchToSchedules();
@@ -270,11 +299,9 @@ export class ConversationSidebar extends LitElement {
     this._openSchedule = '';
   }
 
-  /** Public: switch to the schedules tab. */
+  /** Public: switch to the schedules section. */
   switchToSchedules() {
-    if (this._sidebarTab !== 'schedules') {
-      this._sidebarTab = 'schedules';
-    }
+    this.#switchSection('schedules');
   }
 
   /** @param {CustomEvent} _e */
@@ -1243,48 +1270,43 @@ export class ConversationSidebar extends LitElement {
 
     return html`
       <div class="sidebar-header dc-overlay-header">
-        <div class="sidebar-tabs">
-          <button class="sidebar-tab ${this._sidebarTab === 'conversations' ? 'active' : ''}"
-            @click=${() => this.#switchTab('conversations')}>Chats</button>
-          <button class="sidebar-tab ${this._sidebarTab === 'wiki' ? 'active' : ''}"
-            @click=${() => this.#switchTab('wiki')}>Vault</button>
-          <button class="sidebar-tab ${this._sidebarTab === 'files' ? 'active' : ''}"
-            @click=${() => this.#switchTab('files')}>Files</button>
-          <button class="sidebar-tab ${this._sidebarTab === 'schedules' ? 'active' : ''}"
-            @click=${() => this.#switchTab('schedules')}>Schedules</button>
-          <button class="sidebar-tab ${this._sidebarTab === 'calendar' ? 'active' : ''}"
-            @click=${() => this.#switchTab('calendar')}>Calendar</button>
-          <button class="sidebar-tab ${this._sidebarTab === 'tags' ? 'active' : ''}"
-            @click=${() => this.#switchTab('tags')}>Tags</button>
-        </div>
+        <select
+          class="sidebar-section-select"
+          aria-label="Sidebar section"
+          @change=${this.#onSectionSelectChange}
+        >
+          ${SIDEBAR_SECTIONS.map(({ value, label }) => html`
+            <option value=${value} ?selected=${this._sidebarSection === value}>${label}</option>
+          `)}
+        </select>
         <button class="mobile-close-btn dc-overlay-close-x" @click=${() => this.closeMobile()} title="Close sidebar" aria-label="Close sidebar">×</button>
         <button class="collapse-btn dc-icon-btn" @click=${this.#toggleCollapse} title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
       </div>
       <vault-sidebar
-        .active=${this._sidebarTab === 'wiki'}
-        style="${this._sidebarTab !== 'wiki' ? 'display:none' : ''}"
+        .active=${this._sidebarSection === 'wiki'}
+        style="${this._sidebarSection !== 'wiki' ? 'display:none' : ''}"
         @wiki-open=${(e) => this.#handleWikiOpen(e)}
       ></vault-sidebar>
       <files-sidebar
-        .active=${this._sidebarTab === 'files'}
-        style="${this._sidebarTab !== 'files' ? 'display:none' : ''}"
+        .active=${this._sidebarSection === 'files'}
+        style="${this._sidebarSection !== 'files' ? 'display:none' : ''}"
         @file-open=${(e) => this.#handleFileOpen(e)}
       ></files-sidebar>
       <schedules-sidebar
-        .active=${this._sidebarTab === 'schedules'}
+        .active=${this._sidebarSection === 'schedules'}
         .openName=${this._openSchedule}
-        style="${this._sidebarTab !== 'schedules' ? 'display:none' : ''}"
+        style="${this._sidebarSection !== 'schedules' ? 'display:none' : ''}"
       ></schedules-sidebar>
       <calendar-sidebar
-        .active=${this._sidebarTab === 'calendar'}
-        style="${this._sidebarTab !== 'calendar' ? 'display:none' : ''}"
+        .active=${this._sidebarSection === 'calendar'}
+        style="${this._sidebarSection !== 'calendar' ? 'display:none' : ''}"
       ></calendar-sidebar>
       <tags-sidebar
-        .active=${this._sidebarTab === 'tags'}
-        style="${this._sidebarTab !== 'tags' ? 'display:none' : ''}"
+        .active=${this._sidebarSection === 'tags'}
+        style="${this._sidebarSection !== 'tags' ? 'display:none' : ''}"
         @wiki-open=${(e) => this.#handleWikiOpen(e)}
       ></tags-sidebar>
-      <div class="conv-list" style="${this._sidebarTab !== 'conversations' ? 'display:none' : ''}">
+      <div class="conv-list" style="${this._sidebarSection !== 'conversations' ? 'display:none' : ''}">
         ${this.#renderSearchBox()}
         ${this._searchQuery.trim() ? this.#renderSearchResults() : html`
         ${this.#renderChatBreadcrumbs()}
@@ -1342,7 +1364,7 @@ export class ConversationSidebar extends LitElement {
         }
         `}
       </div>
-      ${this._sidebarTab === 'conversations' && this._chatSection === '' && !this._searchQuery.trim() ? html`
+      ${this._sidebarSection === 'conversations' && this._chatSection === '' && !this._searchQuery.trim() ? html`
         <div class="vault-action-btns">
           <button class="home-lobby-btn outline" @click=${() => this.#handleHome()} title="Home Lobby" aria-label="Home Lobby">⌂ Lobby</button>
           <button class="new-conv-btn outline" @click=${this.#handleNew} title="New chat (⌘K)" aria-label="New chat">+ Chat</button>

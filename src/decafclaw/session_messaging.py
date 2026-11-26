@@ -20,16 +20,16 @@ interrupts active processing (#1114 success condition 3): the manager's
 busy check queues it behind any in-flight turn (one turn per
 conversation at a time), and it is not rendered as a ``user_message``.
 Wakes are rate-limited per conversation (``wake_max_per_window`` within
-``wake_window_sec``); excess deliveries are dropped, marked by
-``future.rate_limited``.
+``wake_window_sec``); excess deliveries are dropped, marked by the
+``rate_limited`` flag on the returned ``TurnFuture``.
 """
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
+    from decafclaw.conversation_manager import TurnFuture
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ async def deliver_session_message(
     *,
     context_setup=None,
     user_id: str = "",
-) -> "asyncio.Future":
+) -> "TurnFuture":
     """Deliver an asynchronous peer message into the target conversation.
 
     The message is enqueued as a ``TurnKind.WAKE`` turn in
@@ -94,8 +94,10 @@ async def deliver_session_message(
         user_id: User id to stamp on the delivered turn.
 
     Returns:
-        The asyncio future the delivered turn resolves on. Errors and
-        timeouts surface through the target's turn machinery as usual.
+        The manager's ``TurnFuture`` the delivered turn resolves on; its
+        ``rate_limited`` flag marks a drop by the wake rate limiter.
+        Errors and timeouts surface through the target's turn machinery
+        as usual.
     """
     # Deferred: circular dep — tools/__init__ imports this module during
     # context_composer init, and conversation_manager imports

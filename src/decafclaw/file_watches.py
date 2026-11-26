@@ -428,7 +428,7 @@ class FileWatchManager:
         except Exception as exc:
             log.warning("Failed to enqueue wake for file watch %s: %s", watch.watch_id, exc)
             return
-        if getattr(future, "rate_limited", None) is True:
+        if future.rate_limited is True:
             log.info("File watch %s wake rate-limited; event dropped (one-shot)", watch.watch_id)
 
     def _display_path(self, path: str) -> str:

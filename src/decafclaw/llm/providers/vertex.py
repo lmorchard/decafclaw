@@ -15,6 +15,7 @@ from ..types import (
     FINISH_REASON_STOP,
     DiscoveredModel,
     LLMRetryExhaustedError,
+    ModelInfo,
     StreamCallback,
 )
 from .openai_compat import _cancellable_sleep, _RetryableError
@@ -319,7 +320,7 @@ class VertexProvider:
         *,
         timeout: int = 30,
         **kwargs: Any,
-    ) -> dict[str, Any] | None:
+    ) -> ModelInfo | None:
         """Vertex publishes no token limits in any reachable endpoint.
 
         Returning ``None`` (the Protocol's "unsupported" value) is the

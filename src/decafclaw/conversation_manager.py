@@ -282,6 +282,26 @@ KIND_TASK_MODE = {
 }
 
 
+class TurnFuture(asyncio.Future):
+    """A turn's completion future with the manager's dispatch flags declared.
+
+    ``enqueue_turn`` returns one of these instead of a bare future so the
+    dispatch outcome is typed rather than attached via ``setattr`` (#1352):
+
+    - ``rate_limited``: a WAKE turn dropped by the per-conversation wake
+      rate limiter; the future resolves immediately with ``None``.
+    - ``queued``: the turn was appended to the inbox and waits behind a
+      busy conversation (or a pending restart) instead of starting now.
+
+    Both default to ``False``; the manager sets them on every dispatch
+    path before returning. Everything else is a plain ``asyncio.Future``:
+    callers await it, pass it to ``wait_for``, or fan out done callbacks.
+    """
+
+    rate_limited: bool = False
+    queued: bool = False
+
+
 def parse_task_mode(value: str | None) -> TaskMode | None:
     """Parse a free-form task_mode string from the inbox boundary.
 
@@ -769,15 +789,16 @@ class ConversationManager:
         wiki_page: str | None = None,
         metadata: dict | None = None,
         bypass_wake_rate_limit: bool = False,
-    ) -> asyncio.Future:
-        """Submit a turn of any kind. Returns an awaitable that resolves
-        when the turn completes."""
+    ) -> TurnFuture:
+        """Submit a turn of any kind. Returns the turn's ``TurnFuture``,
+        which resolves when the turn completes; its ``rate_limited`` and
+        ``queued`` flags describe how the dispatch decision went."""
         # Startup recovery reads archives and inboxes directly; a turn that
         # starts mid-scan could race those reads (#1645). Transports are
         # already listening, so requests wait here instead of blocking boot.
         await self.wait_for_startup_recovery()
         state = self._get_or_create(conv_id)
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        future = TurnFuture()
 
         # Dispatch decision runs under state.lock so the busy-check /
         # circuit-breaker / wake-limiter reads are atomic with the
@@ -792,7 +813,7 @@ class ConversationManager:
             # reminder must not be dropped.
             if kind is TurnKind.WAKE:
                 if bypass_wake_rate_limit:
-                    setattr(future, "rate_limited", False)
+                    future.rate_limited = False
                 else:
                     now = time.monotonic()
                     cutoff = now - self._wake_window_sec
@@ -804,11 +825,11 @@ class ConversationManager:
                             len(state.wake_times),
                             self._wake_window_sec,
                         )
-                        setattr(future, "rate_limited", True)
+                        future.rate_limited = True
                         future.set_result(None)
                         return future
                     state.wake_times.append(now)
-                    setattr(future, "rate_limited", False)
+                    future.rate_limited = False
 
             # USER-kind only: circuit breaker check + user_message event emission.
             if kind is TurnKind.USER:
@@ -828,28 +849,8 @@ class ConversationManager:
             import uuid
             from datetime import datetime, timezone
 
-            from .inbox import _append_inbox
-
             now_iso = datetime.now(timezone.utc).isoformat()
             turn_id = uuid.uuid4().hex
-            _append_inbox(
-                self.config,
-                conv_id,
-                {
-                    "turn_id": turn_id,
-                    "kind": kind.value if hasattr(kind, "value") else kind,
-                    "text": prompt,
-                    "user_id": user_id,
-                    "archive_text": archive_text,
-                    "wiki_page": wiki_page,
-                    # Wire boundary: the inbox JSONL stores the raw string;
-                    # parse_task_mode turns it back into a member on drain.
-                    "task_mode": task_mode.value if task_mode is not None else None,
-                    "metadata": metadata,
-                    "attachments": attachments,
-                    "timestamp": now_iso,
-                },
-            )
             state.inmemory_turn_data[turn_id] = {
                 "context_setup": context_setup,
                 "command_ctx": command_ctx,
@@ -862,54 +863,76 @@ class ConversationManager:
             if state.busy or restart_pending:
                 if restart_pending and not state.busy:
                     log.info("Restart pending; queued turn %s for conv %s", kind.value, conv_id[:8])
-                    setattr(future, "queued", True)
-                    return future
+                else:
+                    # Cancel-on-new-message: cancel the current turn if configured
+                    # (USER kind only, same as previous send_message behavior)
+                    if (
+                        kind is TurnKind.USER
+                        and self.config.agent.turn_on_new_message == "cancel"
+                        and state.cancel_event
+                        and not state.cancel_event.is_set()
+                    ):
+                        log.info("Conv %s busy, cancelling for new message", conv_id[:8])
+                        state.cancel_event.set()
+                        if state.agent_task and not state.agent_task.done():
+                            state.agent_task.cancel()
 
-                # Cancel-on-new-message: cancel the current turn if configured
-                # (USER kind only, same as previous send_message behavior)
-                if (
-                    kind is TurnKind.USER
-                    and self.config.agent.turn_on_new_message == "cancel"
-                    and state.cancel_event
-                    and not state.cancel_event.is_set()
-                ):
-                    log.info("Conv %s busy, cancelling for new message", conv_id[:8])
-                    state.cancel_event.set()
-                    if state.agent_task and not state.agent_task.done():
-                        state.agent_task.cancel()
+                    # Steering message: flag the current agent loop to exit after the current tool call
+                    if (
+                        kind is TurnKind.USER
+                        and metadata
+                        and metadata.get("steering")
+                        and state.steer_event
+                        and not state.steer_event.is_set()
+                    ):
+                        log.info("Conv %s busy, setting steering event", conv_id[:8])
+                        state.steer_event.set()
 
-                # Steering message: flag the current agent loop to exit after the current tool call
-                if (
-                    kind is TurnKind.USER
-                    and metadata
-                    and metadata.get("steering")
-                    and state.steer_event
-                    and not state.steer_event.is_set()
-                ):
-                    log.info("Conv %s busy, setting steering event", conv_id[:8])
-                    state.steer_event.set()
+                    log.info("Conv %s busy, queued message", conv_id[:8])
 
-                log.info("Conv %s busy, queued message", conv_id[:8])
-                setattr(future, "queued", True)
+                future.queued = True
+
+                # Persist the queued turn for crash recovery: a queued turn
+                # must survive restarts, so it lands in the inbox JSONL.
+                # _drain_pending pops it when the conversation frees up (live)
+                # or startup_scan resumes it after a restart. Immediate turns
+                # skip the inbox entirely — they are not crash-recoverable
+                # either way, so the old append-then-pop was pure O(n) I/O
+                # waste (#1353).
+                from .inbox import _append_inbox
+
+                try:
+                    _append_inbox(
+                        self.config,
+                        conv_id,
+                        {
+                            "turn_id": turn_id,
+                            "kind": kind.value if hasattr(kind, "value") else kind,
+                            "text": prompt,
+                            "user_id": user_id,
+                            "archive_text": archive_text,
+                            "wiki_page": wiki_page,
+                            # Wire boundary: the inbox JSONL stores the raw string;
+                            # parse_task_mode turns it back into a member on drain.
+                            "task_mode": task_mode.value if task_mode is not None else None,
+                            "metadata": metadata,
+                            "attachments": attachments,
+                            "timestamp": now_iso,
+                        },
+                    )
+                except Exception as e:
+                    # Don't leak the in-memory slot if persistence fails;
+                    # propagate so the caller sees the error as before.
+                    state.inmemory_turn_data.pop(turn_id, None)
+                    log.error("Failed to persist queued turn %s for conv %s: %s", turn_id, conv_id[:8], e)
+                    raise
                 return future
 
-            setattr(future, "queued", False)
+            future.queued = False
 
-            # Not busy. Start turn immediately.
-            # But wait, we appended it to inbox.jsonl. We need to pop it!
-            from .inbox import _read_inbox, _write_inbox
-
-            messages = _read_inbox(self.config, state.conv_id)
-            if messages:
-                # Assuming the last message appended is ours, or we just pop it by turn_id
-                q = None
-                for i, m in enumerate(messages):
-                    if m.get("turn_id") == turn_id:
-                        q = messages.pop(i)
-                        break
-                if q:
-                    _write_inbox(self.config, state.conv_id, messages)
-
+            # Not busy: start the turn immediately. No inbox round-trip —
+            # a turn that starts now is not crash-recoverable either way,
+            # so the old append-then-pop was pure O(n) I/O waste (#1353).
             state.inmemory_turn_data.pop(turn_id, {})
             await self._start_turn(
                 state,
