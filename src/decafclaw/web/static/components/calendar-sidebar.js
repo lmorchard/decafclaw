@@ -220,13 +220,16 @@ export class CalendarSidebar extends LitElement {
   render() {
     return html`
       <div class="calendar-sidebar-body">
-        <div class="calendar-view-switch">
-          ${VIEWS.map(view => html`
-            <button class="calendar-view-btn ${this._view === view ? 'active' : ''}"
-              @click=${() => this.#setView(view)}>${view[0].toUpperCase() + view.slice(1)}</button>
-          `)}
-        </div>
         <div class="calendar-range-controls">
+          <select
+            class="calendar-view-select"
+            aria-label="Calendar view"
+            @change=${(e) => this.#setView(/** @type {HTMLSelectElement} */ (e.currentTarget).value)}
+          >
+            ${VIEWS.map(view => html`
+              <option value=${view} ?selected=${this._view === view}>${view[0].toUpperCase() + view.slice(1)}</option>
+            `)}
+          </select>
           <button @click=${() => this.#move(-1)} title="Previous">‹</button>
           <button @click=${() => this.#today()}>Today</button>
           <button @click=${() => this.#move(1)} title="Next">›</button>

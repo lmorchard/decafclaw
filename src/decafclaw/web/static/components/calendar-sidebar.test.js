@@ -52,8 +52,11 @@ describe('calendar-sidebar', () => {
     await sidebar.updateComplete;
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
-    const week = [...sidebar.querySelectorAll('.calendar-view-btn')].find(b => b.textContent === 'Week');
-    week.click();
+    const week = sidebar.querySelector('.calendar-view-select');
+    expect(week).not.toBeNull();
+    expect([...week.options].map(o => o.value)).toEqual(['day', 'week', 'month', 'agenda']);
+    week.value = 'week';
+    week.dispatchEvent(new Event('change', { bubbles: true }));
     await sidebar.updateComplete;
     expect(new URL(window.location.href).searchParams.get('calendar_view')).toBe('week');
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -73,8 +76,9 @@ describe('calendar-sidebar', () => {
     await sidebar.updateComplete;
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
-    const month = [...sidebar.querySelectorAll('.calendar-view-btn')].find(b => b.textContent === 'Month');
-    month.click();
+    const month = sidebar.querySelector('.calendar-view-select');
+    month.value = 'month';
+    month.dispatchEvent(new Event('change', { bubbles: true }));
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     await sidebar.updateComplete;
     await vi.waitFor(() => expect(sidebar.querySelector('.calendar-month-grid')).not.toBeNull());

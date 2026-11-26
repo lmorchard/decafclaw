@@ -106,13 +106,16 @@ conversation-sidebar .conv-search-meta {
   font-size: 0.72rem;
 }
 
-/* vault-sidebar / files-sidebar wrap their content in .conv-list. Make the
-   custom elements layout-transparent so .conv-list is the direct flex child
-   of conversation-sidebar and the existing flex:1 rule above applies. */
+/* vault-sidebar / files-sidebar / calendar-sidebar wrap their content in a
+   scroll container (.conv-list, .calendar-sidebar-body). Make the custom
+   elements layout-transparent so that container is the direct flex child of
+   conversation-sidebar and the existing flex:1 rule above applies — otherwise
+   the panel sizes to its content and .sidebar-footer rides up under it. */
 conversation-sidebar vault-sidebar,
 conversation-sidebar files-sidebar,
 conversation-sidebar schedules-sidebar,
-conversation-sidebar tags-sidebar {
+conversation-sidebar tags-sidebar,
+conversation-sidebar calendar-sidebar {
   display: contents;
 }
 
