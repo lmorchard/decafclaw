@@ -363,6 +363,14 @@ The **Schedules** tab lists all discovered scheduled tasks and lets you manage t
 
 The tab auto-refreshes on activation. Save/reset actions dispatch a `schedule-saved` window event that triggers an immediate silent list refresh.
 
+### Calendar tab
+
+The **Calendar** tab lists the user's pending calendar events across conversations, grouped by date. Each row shows the time, title, and target session. **New event** opens the editor in the shared `#wiki-main` side panel.
+
+The editor has title, reason, date/time, timezone, an optional RRULE, an optional repeat-until, and a target selector. The target defaults to the selected conversation; **Dedicated session** takes a session key and title. Existing events can be saved, snoozed (15 minutes, 1 hour, 1 day), or cancelled.
+
+The tab refreshes when it becomes active and after each mutation. Agent tool changes publish `calendar_changed`; every open tab refreshes without a page reload. See [Calendar](calendar.md#web-ui) for the API.
+
 See [Schedules](schedules.md) for the full model, overlay semantics, and API.
 
 ### Tags tab
@@ -882,6 +890,7 @@ See [Configuration Reference](config.md#http) for the full `http` config group.
 - `src/decafclaw/http_server.py` — HTTP server, WebSocket endpoint; aggregates the per-resource route modules and still hosts routes not yet extracted
 - `src/decafclaw/web/workspace_routes.py` — Workspace (Files tab) route module: models + handlers + router
 - `src/decafclaw/web/schedule_routes.py` — Schedules route module: models + handlers + router
+- `src/decafclaw/web/calendar_routes.py` — Calendar route module: models + handlers + router
 - `src/decafclaw/web/notification_routes.py` — Notifications (inbox) route module: models + handlers + router
 - `src/decafclaw/web/terminal_routes.py` — Terminal route module: the `/ws/terminal/{conv_id}/{tab_id}` WebSocket entry point + router
 - `src/decafclaw/web/widget_routes.py` — Widget/canvas/sticky route module: models + handlers + router

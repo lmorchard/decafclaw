@@ -695,3 +695,102 @@ chat-message .code-lang-label {
   user-select: none;
   line-height: 1.4;
 }
+
+
+/* ---- calendar tab (#1899) ---- */
+
+calendar-sidebar .calendar-sidebar-body {
+  padding: 0.5rem;
+}
+
+calendar-sidebar .calendar-new-btn {
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+calendar-sidebar .calendar-empty {
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+}
+
+calendar-sidebar .calendar-group-date {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pico-muted-color);
+  margin: 0.5rem 0 0.25rem;
+}
+
+calendar-sidebar .calendar-row {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  gap: 0.25rem 0.5rem;
+  padding: 0.35rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+calendar-sidebar .calendar-row:hover {
+  background: var(--pico-secondary-background);
+}
+
+calendar-sidebar .calendar-row-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--pico-muted-color);
+}
+
+calendar-sidebar .calendar-row-title {
+  font-weight: 500;
+}
+
+calendar-sidebar .calendar-row-target {
+  grid-column: 2;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+
+calendar-page .calendar-page {
+  padding: 0.75rem;
+  overflow: auto;
+  height: 100%;
+}
+
+calendar-page .calendar-page-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+calendar-page .calendar-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+calendar-page .calendar-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.85rem;
+}
+
+calendar-page .calendar-form input,
+calendar-page .calendar-form textarea {
+  margin: 0;
+}
+
+calendar-page .calendar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+calendar-page .calendar-error {
+  color: var(--pico-del-color);
+}
+
+calendar-page .calendar-message {
+  color: var(--pico-ins-color);
+}

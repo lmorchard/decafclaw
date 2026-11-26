@@ -102,6 +102,22 @@ A current-mode event whose origin conversation no longer exists is marked `orpha
 
 The startup scan reads every `data/{agent_id}/calendar/*.json` file and resumes pending events. An event that became due while the server was offline fires immediately. The prompt names the original due time.
 
+## Web UI
+
+The **Calendar** tab in the Web UI lists the user's pending events across conversations, grouped by date. It can create, edit, snooze, and cancel events, and target the current conversation or a dedicated session. Agent tool changes publish `calendar_changed`, so an open tab refreshes without a page reload.
+
+The REST API lives under `/api/calendar`:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/calendar/events` | List events; query `from`, `to`, `status`, `conv_id` |
+| `POST` | `/api/calendar/events` | Create an event |
+| `PUT` | `/api/calendar/events/{event_id}` | Update a pending event |
+| `DELETE` | `/api/calendar/events/{event_id}` | Cancel an event or series |
+| `POST` | `/api/calendar/events/{event_id}/snooze` | Move the next occurrence |
+
+The route module is `src/decafclaw/web/calendar_routes.py`. It uses the same session-cookie auth as the rest of the Web UI; unauthenticated requests return 401 and unknown event ids return 404.
+
 ## Limits
 
 Recurring events use RFC 5545 RRULEs; exception dates, attendees, and attachments are not stored. The Calendar Web UI and calendar views are separate issues. External calendar sync, such as CalDAV or Google Calendar, is out of scope.

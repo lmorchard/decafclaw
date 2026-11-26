@@ -1510,6 +1510,24 @@ def _make_vault_change_forwarder(ws_send: WSSendCallable):
     return _forward
 
 
+def _make_calendar_changed_forwarder(ws_send: WSSendCallable):
+    """Forward calendar_changed events to one socket (no conversation filter)."""
+
+    async def _forward(event: dict):
+        if event.get("type") != "calendar_changed":
+            return
+        await ws_send(
+            {
+                "type": WSMessageType.CALENDAR_CHANGED,
+                "conv_id": event.get("conv_id") or "",
+                "event_id": event.get("event_id") or "",
+                "action": event.get("action") or "",
+            }
+        )
+
+    return _forward
+
+
 def _make_models_available_forwarder(ws_send: WSSendCallable, config):
     """Forward `models_changed` events from the global bus to one socket.
 
@@ -1667,6 +1685,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
     models_sub_id = event_bus.subscribe(_make_models_available_forwarder(ws_send, config))
     status_sub_id = event_bus.subscribe(_make_conversation_status_forwarder(ws_send, config, index, username))
     renamed_sub_id = event_bus.subscribe(_make_conv_renamed_forwarder(ws_send, username))
+    calendar_sub_id = event_bus.subscribe(_make_calendar_changed_forwarder(ws_send))
 
     try:
         while True:
@@ -1695,6 +1714,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
         event_bus.unsubscribe(models_sub_id)
         event_bus.unsubscribe(status_sub_id)
         event_bus.unsubscribe(renamed_sub_id)
+        event_bus.unsubscribe(calendar_sub_id)
         _unsubscribe_all(state)
 
 

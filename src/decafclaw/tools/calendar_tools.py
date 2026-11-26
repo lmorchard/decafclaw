@@ -59,6 +59,18 @@ def _parse_optional_time(value: str | None) -> tuple[str, float] | None:
     return parse_fire_at(str(value))
 
 
+async def _publish_changed(ctx: "Context", event: CalendarEvent, action: str) -> None:
+    try:
+        await ctx.publish(
+            "calendar_changed",
+            conv_id=event.conv_id,
+            event_id=event.event_id,
+            action=action,
+        )
+    except Exception as exc:  # noqa: BLE001 - live refresh is best-effort
+        log.debug("calendar_changed publish failed: %s", exc)
+
+
 def _event_line(event: CalendarEvent) -> str:
     target = event.session_title or event.target_conv_id
     line = f"- {event.event_id}: {event.fire_at} — {event.title} (target: {target}, status: {event.status})"
@@ -187,6 +199,7 @@ async def tool_calendar_create(
         log.warning("Unexpected error creating calendar event: %s", exc)
         return ToolResult(text=f"[error: Failed to create calendar event: {exc}]", data={"error": str(exc)})
 
+    await _publish_changed(ctx, event, "created")
     target = event.session_title or event.target_conv_id
     suffix = f" (repeats: {recurrence_summary(event)})" if event.recurrence else ""
     return ToolResult(
@@ -417,6 +430,7 @@ async def tool_calendar_update(
 
     if updated is None:
         return ToolResult(text=f"[error: Calendar event '{event_key}' not found]", data={"error": "not_found"})
+    await _publish_changed(ctx, updated, "updated")
     return ToolResult(
         text=f"Updated calendar event '{updated.event_id}' to fire at {updated.fire_at}: {updated.title}",
         data=asdict(updated),
@@ -449,6 +463,7 @@ async def tool_calendar_cancel(ctx: "Context", event_id: str) -> ToolResult:
             text=f"[error: Calendar event '{event_key}' was not found or is not pending]",
             data={"error": "not_cancelled"},
         )
+    await ctx.publish("calendar_changed", conv_id=ctx.conv_id, event_id=event_key, action="cancelled")
     return ToolResult(
         text=f"Cancelled calendar event '{event_key}'.",
         data={"event_id": event_key, "cancelled": True},
@@ -490,6 +505,7 @@ async def tool_calendar_snooze(
         )
     if updated is None:
         return ToolResult(text=f"[error: Calendar event '{event_key}' not found]", data={"error": "not_found"})
+    await _publish_changed(ctx, updated, "snoozed")
     return ToolResult(
         text=f"Snoozed calendar event '{updated.event_id}' to {updated.fire_at}: {updated.title}",
         data=asdict(updated),
