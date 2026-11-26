@@ -23,7 +23,7 @@ from .conversation_paths import calendar_path
 log = logging.getLogger(__name__)
 
 SESSION_MODES = ("current", "dedicated")
-EVENT_STATUSES = ("pending", "fired", "cancelled", "orphaned")
+EVENT_STATUSES = ("pending", "fired", "cancelled", "orphaned", "completed")
 _SESSION_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 
@@ -55,6 +55,12 @@ class CalendarEvent:
     status: str = "pending"
     last_fired_at: str = ""
     snooze_until: str = ""
+    # Recurrence (#1898). Empty recurrence means a one-shot event.
+    recurrence: str = ""
+    timezone: str = ""
+    recurrence_start: str = ""
+    occurrence_at: str = ""
+    recurrence_until: str = ""
 
 
 def new_event_id() -> str:
@@ -139,6 +145,32 @@ def load_all_calendar_events(config) -> list[CalendarEvent]:
     for file in files:
         events.extend(load_calendar_events(config, file.stem))
     return events
+
+
+def recurrence_summary(event: CalendarEvent) -> str:
+    """Return a short human-readable recurrence description."""
+    if not event.recurrence:
+        return ""
+    parts = dict(part.split("=", 1) for part in event.recurrence.split(";") if "=" in part)
+    freq = parts.get("FREQ", "").lower()
+    interval = parts.get("INTERVAL", "1")
+    try:
+        interval_n = int(interval)
+    except ValueError:
+        interval_n = 1
+    if freq == "daily":
+        text = "daily" if interval_n == 1 else f"every {interval_n} days"
+    elif freq == "weekly":
+        text = "weekly" if interval_n == 1 else f"every {interval_n} weeks"
+    elif freq == "monthly":
+        text = "monthly" if interval_n == 1 else f"every {interval_n} months"
+    else:
+        text = event.recurrence
+    if parts.get("BYDAY"):
+        text += f" on {parts['BYDAY']}"
+    if event.recurrence_until:
+        text += f" until {event.recurrence_until}"
+    return text
 
 
 def event_to_dict(event: CalendarEvent) -> dict[str, Any]:

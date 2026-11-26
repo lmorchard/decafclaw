@@ -1,6 +1,6 @@
 # Calendar Events
 
-Calendar events are one-shot reminders with an absolute time. They are separate from [Scheduled Tasks](schedules.md), which run cron-style tasks in fresh conversations, and from [Background Job Agent Wake](background-wake.md), which covers process completion and file watches.
+Calendar events are reminders with an absolute time. An event can be one-shot or repeat on an RFC 5545 RRULE. They are separate from [Scheduled Tasks](schedules.md), which run cron-style tasks in fresh conversations, and from [Background Job Agent Wake](background-wake.md), which covers process completion and file watches.
 
 A calendar event stores a title, a reason, a fire time, and a target conversation. At the fire time, DecafClaw injects a message into the target conversation and starts a `TurnKind.WAKE` turn with that conversation's history.
 
@@ -28,23 +28,45 @@ An event stores:
 | `reason` | What the agent should do or say when the event fires |
 | `fire_at` | Absolute ISO-8601 time with a timezone |
 | `fire_at_ts` | Unix timestamp used by the timer |
-| `status` | `pending`, `fired`, `cancelled`, or `orphaned` |
+| `status` | `pending`, `fired`, `cancelled`, `orphaned`, or `completed` |
 | `last_fired_at` | Time the event last fired |
 | `snooze_until` | Time set by the last snooze |
+| `recurrence` | RFC 5545 RRULE, or empty for a one-shot event |
+| `timezone` | IANA timezone for a recurring event |
+| `recurrence_start` | Original first occurrence; the RRULE anchor |
+| `occurrence_at` | Original time of the current occurrence |
+| `recurrence_until` | Optional end of the series |
 
 ## Agent tools
 
 | Tool | What it does |
 |------|--------------|
-| `calendar_create` | Create a one-shot event. Target the current conversation or a dedicated session. |
-| `calendar_list` | List events for the origin conversation. Filter by status and time range. |
-| `calendar_update` | Change a pending event. Rescheduling is an update with a new `fire_at`. |
-| `calendar_cancel` | Cancel a pending event. |
-| `calendar_snooze` | Move a pending or fired event forward by a duration or to an absolute time. |
+| `calendar_create` | Create a one-shot or recurring event. Target the current conversation or a dedicated session. |
+| `calendar_list` | List events for the origin conversation. Each row shows the next occurrence and a short recurrence description. |
+| `calendar_update` | Change a pending event. Rescheduling is an update with a new `fire_at`; `recurrence`, `timezone`, and `recurrence_until` change the series. |
+| `calendar_cancel` | Cancel a pending event or the whole recurring series. |
+| `calendar_snooze` | Move the next occurrence forward by a duration or to an absolute time. The series anchor does not move. |
 
 The tools are available only in interactive user conversations. Child agents, heartbeat runs, and scheduled tasks cannot create calendar events.
 
 `fire_at` must be an ISO-8601 timestamp with a timezone. The agent converts natural language, such as "tomorrow at 08:00", into an absolute time. The server does not parse natural language.
+
+## Recurrence
+
+A recurring event stores an RRULE string, an IANA timezone, and an optional end time. The agent converts natural language into the RRULE; the server does not parse recurrence text.
+
+```text
+FREQ=DAILY                      every day
+FREQ=WEEKLY;BYDAY=MO,WE,FR      weekdays
+FREQ=WEEKLY;INTERVAL=2          every other week
+FREQ=MONTHLY;BYMONTHDAY=1       the first of each month
+```
+
+`timezone` is required for a recurring event. Occurrences are computed in the event's local wall-clock time and then localized with `zoneinfo`, so `08:00` stays at `08:00` across daylight-saving transitions. `recurrence_until` is an ISO-8601 timestamp with a timezone; the series becomes `completed` after the last occurrence at or before it.
+
+After each fire, the manager computes the next occurrence after `occurrence_at` and keeps the same `event_id`, `target_conv_id`, and dedicated session. A recurring event that became due while the server was offline fires **once** on startup, then schedules the next future occurrence instead of replaying every missed one.
+
+`calendar_snooze` moves only the current occurrence. `occurrence_at` and `recurrence_start` stay at the original anchor, so the following occurrence is computed from the series, not from the snoozed time. `calendar_cancel` cancels the whole series.
 
 ## Target conversations
 
@@ -69,7 +91,7 @@ The manager starts one asyncio timer per pending event. At the fire time it:
 1. Re-reads the event from the sidecar.
 2. Resolves the target conversation.
 3. Enqueues a `TurnKind.WAKE` turn with the event title, reason, due time, and target session.
-4. Marks the event `fired` after the manager accepts the turn.
+4. For a one-shot event, marks it `fired`. For a recurring event, computes the next occurrence and keeps it `pending` (or marks it `completed` after `recurrence_until`).
 5. Appends a `calendar` notification when no client is connected to the target conversation.
 
 Calendar event turns bypass the wake rate limiter. They are not suppressible with `BACKGROUND_WAKE_OK`. They keep the existing Mattermost `wake_delivery` fallback and write an inbox-only notification for the Web UI.
@@ -82,6 +104,6 @@ The startup scan reads every `data/{agent_id}/calendar/*.json` file and resumes 
 
 ## Limits
 
-This first version supports one-shot events only. Recurring events, the Calendar Web UI, and calendar views are separate issues. External calendar sync, such as CalDAV or Google Calendar, is out of scope.
+Recurring events use RFC 5545 RRULEs; exception dates, attendees, and attachments are not stored. The Calendar Web UI and calendar views are separate issues. External calendar sync, such as CalDAV or Google Calendar, is out of scope.
 
 The server does not store all-day events, attendees, attachments, or exception dates.
