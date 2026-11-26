@@ -74,6 +74,10 @@ class TerminalRegistry:
         # child only chdir + execvpe between fork and exec.
         env = dict(self._os.environ)
         env["TERM"] = "xterm-256color"
+        # Tell shells/themes the true color depth and background so they stop
+        # probing for it during foreground commands (#1476).
+        env["COLORTERM"] = "truecolor"
+        env["COLORFGBG"] = "15;0"
         pid, fd = self._pty.fork()
         if pid == 0:  # child
             try:
