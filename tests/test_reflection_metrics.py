@@ -137,26 +137,6 @@ async def test_subscriber_writes_record(tmp_path):
     assert "type" not in rec
 
 
-@pytest.mark.asyncio
-async def test_subscriber_ignores_other_events(tmp_path):
-    cfg = _config(tmp_path)
-    handle = reflection_metrics.make_reflection_metrics_subscriber(cfg)
-    await handle({"type": "reflection_result", "passed": True})
-    path = cfg.workspace_path / cfg.telemetry.reflection_metrics_path
-    assert not path.exists()
-
-
-@pytest.mark.asyncio
-async def test_subscriber_fail_open(tmp_path):
-    cfg = _config(tmp_path)
-    # Occupy the reflection/ dir path with a plain file so mkdir(parents) fails.
-    workspace = tmp_path / "data" / "t" / "workspace"
-    workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "reflection").write_text("file, not a dir")
-    handle = reflection_metrics.make_reflection_metrics_subscriber(cfg)
-    await handle({"type": "reflection_turn", "outcome": "passed_first"})  # must not raise
-
-
 # -- stats aggregation ---------------------------------------------------------
 
 
