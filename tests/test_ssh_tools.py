@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from decafclaw.media import EndTurnConfirm
-from decafclaw.ssh_rules import decide, load_rules
+from decafclaw.media import EndTurnConfirm, ToolResult
+from decafclaw.ssh_rules import decide, format_rule, load_rules, validate_rule
 from decafclaw.tools import ssh_tools
 
 
@@ -148,3 +148,90 @@ async def test_rule_deny_refuses_exec_and_copy(ctx, monkeypatch):
     assert "denied by the SSH rulebook" in exec_result.text
     copy_result = await ssh_tools.tool_ssh_copy(ctx, "edge-1", "file.txt", "/tmp/file.txt")
     assert "denied by the SSH rulebook" in copy_result.text
+
+
+def test_validate_and_format_rule():
+    rule = validate_rule("ssh_exec", "scavenger-*", "allow")
+    assert rule.tool == "ssh_exec"
+    assert format_rule(rule) == '{"tool": "ssh_exec", "host": "scavenger-*", "action": "allow"}'
+    for args in [
+        ("nope", "h", "allow"),
+        ("ssh_exec", "", "allow"),
+        ("ssh_exec", "a b", "allow"),
+        ("ssh_exec", "h", "nope"),
+    ]:
+        with pytest.raises(ValueError):
+            validate_rule(*args)
+
+
+def _seed_rules(ctx, lines):
+    path = ctx.config.agent_path / "ssh_rules.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+
+
+@pytest.mark.asyncio
+async def test_rule_list_reports_valid_and_malformed(ctx):
+    _seed_rules(
+        ctx,
+        [
+            '{"tool": "ssh_exec", "host": "scavenger-*", "action": "allow"}',
+            "not json",
+            '{"tool": "ssh_copy", "host": "edge-*", "action": "deny"}',
+        ],
+    )
+    result = await ssh_tools.tool_ssh_rule_list(ctx)
+    assert len(result.data["rules"]) == 2
+    assert len(result.data["malformed"]) == 1
+    assert "1 malformed" in result.text
+
+
+@pytest.mark.asyncio
+async def test_rule_add_rejects_invalid_and_duplicate(ctx, monkeypatch):
+    writes = []
+
+    async def fake_write(ctx, lines):
+        writes.append(lines)
+        return ToolResult(text="wrote")
+
+    monkeypatch.setattr(ssh_tools, "_write_rule_lines", fake_write)
+    invalid = await ssh_tools.tool_ssh_rule_add(ctx, "ssh_exec", "h", "nope")
+    assert invalid.data["error"] == "invalid_rule"
+    assert writes == []
+
+    _seed_rules(ctx, ['{"tool": "ssh_exec", "host": "scavenger-*", "action": "allow"}'])
+    duplicate = await ssh_tools.tool_ssh_rule_add(ctx, "ssh_exec", "scavenger-*", "allow")
+    assert duplicate.data["error"] == "duplicate_rule"
+    assert writes == []
+
+    added = await ssh_tools.tool_ssh_rule_add(ctx, "ssh_exec", "scavenger-*", "deny")
+    assert added.text == "wrote"
+    assert writes[-1][-1] == '{"tool": "ssh_exec", "host": "scavenger-*", "action": "deny"}'
+
+
+@pytest.mark.asyncio
+async def test_rule_remove_preserves_unrelated_and_malformed(ctx, monkeypatch):
+    _seed_rules(
+        ctx,
+        [
+            '{"tool": "ssh_exec", "host": "scavenger-*", "action": "allow"}',
+            "not json",
+            '{"tool": "ssh_exec", "host": "edge-*", "action": "deny"}',
+        ],
+    )
+    writes = []
+
+    async def fake_write(ctx, lines):
+        writes.append(lines)
+        return ToolResult(text="wrote")
+
+    monkeypatch.setattr(ssh_tools, "_write_rule_lines", fake_write)
+    result = await ssh_tools.tool_ssh_rule_remove(ctx, "ssh_exec", "scavenger-*", "allow")
+    assert result.text == "wrote"
+    assert writes[-1] == [
+        "not json",
+        '{"tool": "ssh_exec", "host": "edge-*", "action": "deny"}',
+    ]
+
+    missing = await ssh_tools.tool_ssh_rule_remove(ctx, "ssh_exec", "missing")
+    assert missing.data["error"] == "not_found"

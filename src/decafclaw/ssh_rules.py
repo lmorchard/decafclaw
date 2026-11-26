@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 RULES_FILENAME = "ssh_rules.jsonl"
 ACTIONS = ("allow", "ask", "deny")
+TOOLS = ("ssh_exec", "ssh_copy", "*")
 
 
 @dataclass(frozen=True)
@@ -76,3 +77,24 @@ def decide(config, tool: str, host: str) -> str | None:
         if action in actions:
             return action
     return None
+
+
+def validate_rule(tool: str, host: str, action: str, *, allow_empty_action: bool = False) -> SshRule:
+    """Validate one rule and return it, raising ValueError on bad input."""
+    tool = str(tool or "").strip()
+    host = str(host or "").strip()
+    action = str(action or "").strip().lower()
+    if tool not in TOOLS:
+        raise ValueError(f"tool must be one of {', '.join(TOOLS)}")
+    if not host:
+        raise ValueError("host is required")
+    if any(ch.isspace() for ch in host):
+        raise ValueError("host must not contain whitespace")
+    if not allow_empty_action and action not in ACTIONS:
+        raise ValueError(f"action must be one of {', '.join(ACTIONS)}")
+    return SshRule(tool=tool, host=host, action=action)
+
+
+def format_rule(rule: SshRule) -> str:
+    """Serialize one rule as a stable JSON line."""
+    return json.dumps({"tool": rule.tool, "host": rule.host, "action": rule.action})
