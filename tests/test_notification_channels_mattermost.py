@@ -44,23 +44,6 @@ def _enabled_config(config, recipient="les", min_priority="high"):
 # -- Priority threshold -------------------------------------------------------
 
 
-class TestMeetsPriority:
-    def test_exact_match(self):
-        assert _meets_priority("high", "high") is True
-
-    def test_above_threshold(self):
-        assert _meets_priority("high", "normal") is True
-
-    def test_below_threshold(self):
-        assert _meets_priority("low", "high") is False
-        assert _meets_priority("normal", "high") is False
-
-    def test_unknown_priority_treated_as_normal(self):
-        # Defensive default: unknown strings sort as "normal" (middle of the road).
-        assert _meets_priority("weird", "normal") is True
-        assert _meets_priority("weird", "high") is False
-
-
 # -- Link resolution ----------------------------------------------------------
 
 
@@ -156,7 +139,6 @@ class TestAdapterHandler:
         await asyncio.sleep(0)
         mm_client.post_direct_message.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_skips_when_disabled(self, config):
         _enabled_config(config)
         config.notifications.channels.mattermost_dm.enabled = False

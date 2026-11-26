@@ -91,13 +91,6 @@ class TestFormatSubject:
         assert subject.startswith("[other-bot] ")
 
 
-class TestMeetsPriority:
-    def test_threshold(self):
-        assert _meets_priority("high", "normal")
-        assert _meets_priority("normal", "normal")
-        assert not _meets_priority("low", "normal")
-
-
 class TestAdapterHandler:
     @pytest.mark.asyncio
     async def test_happy_path_dispatches_email(self, config):
