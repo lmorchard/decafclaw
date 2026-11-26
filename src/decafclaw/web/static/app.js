@@ -492,19 +492,19 @@ window.addEventListener('popstate', () => {
   }
 });
 
-// Switch back to chat when sidebar switches to Chats tab.
+// Switch back to chat when sidebar switches to the Chats section.
 // On mobile, opening wiki/files auto-closes the canvas overlay (mutual
 // exclusion with the canvas full-screen overlay; reverse direction is
 // handled in canvas-panel._reflectVisibility).
-document.addEventListener('sidebar-tab-change', (e) => {
-  const tab = /** @type {CustomEvent} */ (e).detail?.tab;
-  if (tab === 'conversations') {
+document.addEventListener('sidebar-section-change', (e) => {
+  const section = /** @type {CustomEvent} */ (e).detail?.section;
+  if (section === 'conversations') {
     hideWikiView();
     hideFileView();
     hideSchedulePage();
     hideCalendarPage();
   }
-  if ((tab === 'wiki' || tab === 'files' || tab === 'tags')
+  if ((section === 'wiki' || section === 'files' || section === 'tags')
       && window.matchMedia('(max-width: 639px)').matches) {
     if (canvasSnapshot().visible) {
       canvasDismiss();
