@@ -111,10 +111,13 @@ The REST API lives under `/api/calendar`:
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/api/calendar/events` | List events; query `from`, `to`, `status`, `conv_id` |
+| `GET` | `/api/calendar/occurrences` | Expand events into occurrences; query `from`, `to`, `conv_id`, `include_fired` |
 | `POST` | `/api/calendar/events` | Create an event |
 | `PUT` | `/api/calendar/events/{event_id}` | Update a pending event |
 | `DELETE` | `/api/calendar/events/{event_id}` | Cancel an event or series |
 | `POST` | `/api/calendar/events/{event_id}/snooze` | Move the next occurrence |
+
+`/api/calendar/occurrences` returns one record per occurrence in the range. Recurring events are expanded with the same RRULE logic; one-shot events return one occurrence. Cancelled events are excluded, and fired events appear only with `include_fired=true`.
 
 The route module is `src/decafclaw/web/calendar_routes.py`. It uses the same session-cookie auth as the rest of the Web UI; unauthenticated requests return 401 and unknown event ids return 404.
 

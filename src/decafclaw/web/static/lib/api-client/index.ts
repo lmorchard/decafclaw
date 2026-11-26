@@ -14,6 +14,8 @@ export type { BookmarksResponse } from './models/BookmarksResponse';
 export type { CalendarEventListResponse } from './models/CalendarEventListResponse';
 export type { CalendarEventOut } from './models/CalendarEventOut';
 export type { CalendarEventResponse } from './models/CalendarEventResponse';
+export type { CalendarOccurrenceListResponse } from './models/CalendarOccurrenceListResponse';
+export type { CalendarOccurrenceOut } from './models/CalendarOccurrenceOut';
 export type { CanvasMutationResponse } from './models/CanvasMutationResponse';
 export type { CanvasNewTabResponse } from './models/CanvasNewTabResponse';
 export type { CanvasStateResponse } from './models/CanvasStateResponse';

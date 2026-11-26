@@ -2,11 +2,13 @@
 
 import asyncio
 import time
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from decafclaw.calendar_events import CalendarEvent, save_calendar_events
 from decafclaw.calendar_manager import CalendarManager
 from decafclaw.conversation_paths import conversation_dir
 from decafclaw.events import EventBus
@@ -175,3 +177,87 @@ async def test_cross_user_isolation(client, http_config):
         listed = await other.get("/api/calendar/events?status=all")
         assert listed.status_code == 200
         assert listed.json()["events"] == []
+
+
+# -- occurrences (#1903) ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_occurrences_expand_a_daily_series(client):
+    created = await client.post(
+        "/api/calendar/events",
+        json=_body(fire_at="2027-01-01T09:00:00+00:00", recurrence="FREQ=DAILY", timezone="UTC"),
+    )
+    assert created.status_code == 201, created.text
+    response = await client.get("/api/calendar/occurrences?from=2027-01-01T00:00:00Z&to=2027-01-04T00:00:00Z")
+    assert response.status_code == 200, response.text
+    occurrences = response.json()["occurrences"]
+    assert [o["occurrence_at"][:10] for o in occurrences] == ["2027-01-01", "2027-01-02", "2027-01-03"]
+    assert all(o["recurrence"] is True for o in occurrences)
+
+
+@pytest.mark.asyncio
+async def test_occurrences_one_shot_and_boundaries(client):
+    await client.post("/api/calendar/events", json=_body(fire_at="2027-01-02T09:00:00+00:00"))
+    response = await client.get("/api/calendar/occurrences?from=2027-01-02T09:00:00Z&to=2027-01-02T09:00:00Z")
+    assert response.status_code == 200
+    assert len(response.json()["occurrences"]) == 1
+    outside = await client.get("/api/calendar/occurrences?from=2027-01-03T00:00:00Z&to=2027-01-04T00:00:00Z")
+    assert outside.json()["occurrences"] == []
+
+
+@pytest.mark.asyncio
+async def test_occurrences_until_and_cancelled(client):
+    created = await client.post(
+        "/api/calendar/events",
+        json=_body(
+            fire_at="2027-01-01T09:00:00+00:00",
+            recurrence="FREQ=DAILY",
+            timezone="UTC",
+            recurrence_until="2027-01-02T09:00:00+00:00",
+        ),
+    )
+    assert created.status_code == 201
+    response = await client.get("/api/calendar/occurrences?from=2027-01-01T00:00:00Z&to=2027-01-05T00:00:00Z")
+    assert len(response.json()["occurrences"]) == 2
+
+    event_id = created.json()["event"]["event_id"]
+    await client.delete(f"/api/calendar/events/{event_id}")
+    after = await client.get("/api/calendar/occurrences?from=2027-01-01T00:00:00Z&to=2027-01-05T00:00:00Z")
+    assert after.json()["occurrences"] == []
+
+
+@pytest.mark.asyncio
+async def test_occurrences_conv_filter_and_fired(client, http_config):
+    conversation_dir(http_config, "conv-2").mkdir(parents=True, exist_ok=True)
+    await client.post("/api/calendar/events", json=_body(fire_at="2027-01-02T09:00:00+00:00"))
+    await client.post("/api/calendar/events", json=_body(conv_id="conv-2", fire_at="2027-01-02T10:00:00+00:00"))
+
+    filtered = await client.get(
+        "/api/calendar/occurrences?from=2027-01-02T00:00:00Z&to=2027-01-03T00:00:00Z&conv_id=conv-2"
+    )
+    assert len(filtered.json()["occurrences"]) == 1
+
+    fired = CalendarEvent(
+        event_id="cal_fired",
+        conv_id="conv-1",
+        target_conv_id="conv-1",
+        session_mode="current",
+        title="Fired",
+        reason="Already ran",
+        fire_at="2027-01-02T11:00:00+00:00",
+        fire_at_ts=datetime.fromisoformat("2027-01-02T11:00:00+00:00").timestamp(),
+        created_at="",
+        updated_at="",
+        user_id="testuser",
+        status="fired",
+    )
+    save_calendar_events(http_config, "conv-1", [fired])
+    without = await client.get(
+        "/api/calendar/occurrences?from=2027-01-02T00:00:00Z&to=2027-01-03T00:00:00Z&conv_id=conv-1"
+    )
+    assert all(o["event_id"] != "cal_fired" for o in without.json()["occurrences"])
+    with_fired = await client.get(
+        "/api/calendar/occurrences?from=2027-01-02T00:00:00Z&to=2027-01-03T00:00:00Z&conv_id=conv-1&include_fired=true"
+    )
+    assert any(o["event_id"] == "cal_fired" for o in with_fired.json()["occurrences"])

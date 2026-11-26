@@ -369,6 +369,10 @@ The **Calendar** tab lists the user's pending calendar events across conversatio
 
 The editor has title, reason, date/time, timezone, an optional RRULE, an optional repeat-until, and a target selector. The target defaults to the selected conversation; **Dedicated session** takes a session key and title. Existing events can be saved, snoozed (15 minutes, 1 hour, 1 day), or cancelled.
 
+The tab has four views: **Day**, **Week**, **Month**, and **Agenda**. Previous, next, and today move the range for the selected view. The Month view is a grid; clicking a day opens that day in the Day view. The selected view and date live in the URL (`?calendar_view=week&calendar_date=2026-11-25`), so a reload or deep link restores them.
+
+Occurrences are expanded from recurring events, so every occurrence in the range appears. Clicking an occurrence opens the event editor; the `↗` action opens its target conversation. On narrow screens, Day and Agenda are the practical views; Week and Month may scroll horizontally.
+
 The tab refreshes when it becomes active and after each mutation. Agent tool changes publish `calendar_changed`; every open tab refreshes without a page reload. See [Calendar](calendar.md#web-ui) for the API.
 
 See [Schedules](schedules.md) for the full model, overlay semantics, and API.

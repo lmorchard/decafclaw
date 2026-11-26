@@ -8,6 +8,7 @@ import type { AutocompleteResponse } from '../models/AutocompleteResponse';
 import type { BookmarksResponse } from '../models/BookmarksResponse';
 import type { CalendarEventListResponse } from '../models/CalendarEventListResponse';
 import type { CalendarEventResponse } from '../models/CalendarEventResponse';
+import type { CalendarOccurrenceListResponse } from '../models/CalendarOccurrenceListResponse';
 import type { CanvasMutationResponse } from '../models/CanvasMutationResponse';
 import type { CanvasNewTabResponse } from '../models/CanvasNewTabResponse';
 import type { CanvasStateResponse } from '../models/CanvasStateResponse';
@@ -1334,6 +1335,32 @@ export class DefaultService {
             url: '/api/calendar/events',
             body: requestBody,
             mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param from
+     * @param to
+     * @param convId
+     * @param includeFired
+     * @returns CalendarOccurrenceListResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiCalendarOccurrencesGet(
+        from?: string,
+        to?: string,
+        convId?: string,
+        includeFired?: boolean,
+    ): CancelablePromise<CalendarOccurrenceListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/calendar/occurrences',
+            query: {
+                'from': from,
+                'to': to,
+                'conv_id': convId,
+                'include_fired': includeFired,
+            },
         });
     }
     /**
