@@ -222,6 +222,38 @@ async def test_cancellation_kills_process_and_propagates(ctx):
     mock_kill.assert_awaited_once()
 
 
+async def test_cancellation_during_spawn_kills_the_started_process(ctx):
+    """Cancelling while create_subprocess_exec is still suspended must recover
+    the spawned Process and kill its group, not leak it (#1584)."""
+    _prepare(ctx)
+
+    import decafclaw.tools.shell_tools as shell_tools
+    from decafclaw.tools.shell_tools import _kill_process_group as real_kill
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    real_create = asyncio.create_subprocess_exec
+
+    async def slow_spawn(*args, **kwargs):
+        process = await real_create(*args, **kwargs)
+        started.set()
+        await release.wait()
+        return process
+
+    with (
+        patch.object(shell_tools.asyncio, "create_subprocess_exec", new=slow_spawn),
+        patch("decafclaw.tools.shell_tools._kill_process_group", new=AsyncMock(wraps=real_kill)) as mock_kill,
+    ):
+        task = asyncio.create_task(_execute_command(ctx, "sleep 30"))
+        await asyncio.wait_for(started.wait(), timeout=10)
+        task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    mock_kill.assert_awaited_once()
+
+
 # -- disk cap ---------------------------------------------------------------------
 
 
