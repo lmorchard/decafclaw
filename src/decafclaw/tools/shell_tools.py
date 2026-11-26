@@ -1987,14 +1987,31 @@ async def _execute_command(
     else:
         spawn_args = ["/bin/sh", "-c", command]
 
-    process = await asyncio.create_subprocess_exec(
-        *spawn_args,
-        cwd=cwd or str(ctx.config.workspace_path),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        start_new_session=True,  # own process group — timeout/cancel kills the whole tree
-        env=env,
+    # Spawn in a task and shield the await: a cancellation can arrive while
+    # create_subprocess_exec is still suspended, after the child has already
+    # started. Awaiting the shielded task in the cancellation path recovers the
+    # Process handle so the group is killed instead of leaking (#1584).
+    spawn_task = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            *spawn_args,
+            cwd=cwd or str(ctx.config.workspace_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,  # own process group — timeout/cancel kills the whole tree
+            env=env,
+        )
     )
+    try:
+        process = await asyncio.shield(spawn_task)
+    except asyncio.CancelledError:
+        try:
+            process = await spawn_task
+        except Exception as exc:  # noqa: BLE001 - spawn failed while cancelling
+            log.debug(f"[tool:shell] spawn failed during cancellation: {exc}")
+            process = None
+        if process is not None:
+            await _kill_process_group(process)
+        raise
 
     async def _read(stream: asyncio.StreamReader | None, collector: _StreamCollector) -> None:
         if stream is None:
