@@ -33,6 +33,7 @@ from .types import (  # noqa: F401
     PROVIDER_OPENAI_COMPAT,
     PROVIDER_OPENAI_RESPONSES,
     PROVIDER_VERTEX,
+    ModelInfo,
     Provider,
     StreamCallback,
 )
@@ -260,7 +261,7 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
 
     1. ``model_configs.context_window_size`` — always wins, so a stale table
        entry can be overridden without a release.
-    2. provider ``get_model_info()`` — discovery where the gateway reports it.
+    2. provider ``get_model_info()`` — the normalized window discovery reports.
     3. provider ``default_context_window()`` — Vertex's family table.
     4. ``effective_context_window`` — legacy config window, else the proxy.
 
@@ -282,22 +283,15 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
                 provider = get_provider(mc.provider)
                 if hasattr(provider, "get_model_info"):
                     info = await provider.get_model_info(mc.model)
-                    if info:
-                        limit = (
-                            info.get("inputTokenLimit")
-                            or info.get("input_token_limit")
-                            or info.get("contextWindow")
-                            or info.get("context_window_size")
+                    if info is not None and info.context_window_size:
+                        mc.context_window_size = int(info.context_window_size)
+                        log.info(
+                            "Auto-detected context window size for model %r (%r): %d",
+                            model_name,
+                            mc.model,
+                            mc.context_window_size,
                         )
-                        if limit:
-                            mc.context_window_size = int(limit)
-                            log.info(
-                                "Auto-detected context window size for model %r (%r): %d",
-                                model_name,
-                                mc.model,
-                                mc.context_window_size,
-                            )
-                            return mc.context_window_size
+                        return mc.context_window_size
             except Exception as e:
                 log.debug("Failed to auto-detect context window size for %r: %s", model_name, e)
             # The defaults table is independent of discovery: a raise in

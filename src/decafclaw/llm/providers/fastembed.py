@@ -14,6 +14,8 @@ import logging
 import threading
 from typing import Any, Iterable, Protocol
 
+from ..types import ModelInfo
+
 log = logging.getLogger(__name__)
 
 
@@ -54,7 +56,7 @@ class FastembedProvider:
         *,
         timeout: int = 30,
         **kwargs: Any,
-    ) -> dict[str, Any] | None:
+    ) -> ModelInfo | None:
         """No model metadata to report — local embedding model only."""
         return None
 
