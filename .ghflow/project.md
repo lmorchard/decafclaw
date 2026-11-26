@@ -9,7 +9,7 @@ sources:
   - conftest.py 2b63e029a3b2c4524ade2c71f18f181f3997dff1
   - tests/conftest.py 3e6f545a3c6d2adf28d926ba539fbba8d574b559
   - tests/web/conftest.py 10cc18c08878e55b406bd3c1d6ed80e8baae60b8
-  - pyproject.toml aa087fb9d09cc0b4941afbfa4af643153eb115a5
+  - pyproject.toml a134c95c5be68ff5feeef66b56ed85bfa9353347
   - scripts/gen_message_types.py 06a0ab1456ab2e0655d70eab5e68f24a2eda9be9
   - docs/config.md c2b1dce35052989122e98519f103998a2148e1d1
   - docs/testing.md 162454c9807cfed6ae7fb45399b31cfb891ed600

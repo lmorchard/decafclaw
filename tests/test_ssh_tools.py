@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from decafclaw.media import EndTurnConfirm
+from decafclaw.ssh_rules import decide, load_rules
 from decafclaw.tools import ssh_tools
 
 
@@ -94,3 +95,56 @@ async def test_copy_up_and_down(ctx, monkeypatch):
     down = await ssh_tools.tool_ssh_copy(ctx, "sandbox", "file.txt", "/tmp/file.txt", "down")
     assert down.data["direction"] == "down"
     assert calls[1][-2] == "sandbox:/tmp/file.txt"
+
+
+def _write_rules(config, lines):
+    path = config.agent_path / "ssh_rules.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_rulebook_loads_and_deny_wins(config):
+    _write_rules(
+        config,
+        [
+            '{"tool": "ssh_exec", "host": "scavenger-*", "action": "allow"}',
+            '{"tool": "ssh_exec", "host": "edge-*", "action": "deny"}',
+            '{"tool": "*", "host": "edge-*", "action": "allow"}',
+            '{"tool": "ssh_exec", "host": "sandbox", "action": "ask"}',
+            "not json",
+            '{"tool": "ssh_exec", "host": "bad", "action": "nope"}',
+        ],
+    )
+    rules = load_rules(config)
+    assert len(rules) == 4
+    assert decide(config, "ssh_exec", "scavenger-1") == "allow"
+    assert decide(config, "ssh_exec", "edge-1") == "deny"
+    assert decide(config, "ssh_exec", "sandbox") == "ask"
+    assert decide(config, "ssh_copy", "edge-1") == "allow"
+    assert decide(config, "ssh_exec", "unknown") is None
+
+
+@pytest.mark.asyncio
+async def test_rule_allow_unlisted_host_executes(ctx, monkeypatch):
+    _write_rules(ctx.config, ['{"tool": "ssh_exec", "host": "scavenger-*", "action": "allow"}'])
+    monkeypatch.setattr(ssh_tools, "_ssh_config_hosts", lambda: set())
+    calls = []
+
+    async def fake_run(args, timeout):
+        calls.append(args)
+        return 0, "ok", "", False
+
+    monkeypatch.setattr(ssh_tools, "_run_process", fake_run)
+    result = await ssh_tools.tool_ssh_exec(ctx, "scavenger-1", "uptime")
+    assert not isinstance(result.end_turn, EndTurnConfirm)
+    assert result.data["exit_code"] == 0
+    assert calls
+
+
+@pytest.mark.asyncio
+async def test_rule_deny_refuses_exec_and_copy(ctx, monkeypatch):
+    _write_rules(ctx.config, ['{"tool": "*", "host": "edge-*", "action": "deny"}'])
+    exec_result = await ssh_tools.tool_ssh_exec(ctx, "edge-1", "uptime")
+    assert "denied by the SSH rulebook" in exec_result.text
+    copy_result = await ssh_tools.tool_ssh_copy(ctx, "edge-1", "file.txt", "/tmp/file.txt")
+    assert "denied by the SSH rulebook" in copy_result.text
