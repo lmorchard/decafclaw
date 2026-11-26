@@ -352,7 +352,9 @@ async def test_providers_reload_retries_failed_model_info(ctx, monkeypatch, tmp_
             self.url = url
 
         async def get_model_info(self, model):
-            return {"inputTokenLimit": 131072}
+            from decafclaw.llm.types import ModelInfo
+
+            return ModelInfo(context_window_size=131072)
 
     clear_providers()
     task, shutdown_event = await _run_watcher(ctx)

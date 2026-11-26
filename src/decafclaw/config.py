@@ -60,6 +60,16 @@ from .config_types import (
     WorkflowConfig,
 )
 from .extensions import ensure_builtin_extension_types, get_default_enabled_extension_types
+
+# Shared leaf for the config ↔ llm boundary (#1329): provider constants and
+# model resolution live here so config never imports the llm package or
+# model_catalog at module level (which used to require deferred imports).
+from .model_resolution import (
+    PROVIDER_OPENAI_COMPAT,
+    effective_context_window,
+    effective_default_model,
+    resolve_model,  # noqa: F401  (re-exported for `from decafclaw.config import resolve_model`)
+)
 from .secrets import is_secret_ref, resolve_secret
 from .skills import SkillInfo
 from .skills.vault._grants import normalize_folder
@@ -578,8 +588,6 @@ class Config:
         :func:`effective_context_window` falls back to
         ``compaction.max_tokens`` and the result matches the old proxy.
         """
-        from .model_catalog import effective_context_window  # deferred: config module cycle
-
         return int(effective_context_window(self, model_name) * self.agent.tool_context_budget_pct)
 
     @property
@@ -591,38 +599,8 @@ class Config:
 # Effort level resolution
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Model resolution (new provider-based system)
-# ---------------------------------------------------------------------------
-
-
-def resolve_model(
-    config: Config,
-    name: str = "",
-) -> tuple[ProviderConfig, ModelConfig]:
-    """Resolve a named model config to its provider + model config.
-
-    Falls back to the effective default model if name is empty — the
-    model catalog sidecar's pointer when it names a selectable model,
-    else config.default_model (#1211).
-    Raises KeyError if the model or its provider isn't found.
-    """
-    from .model_catalog import effective_default_model  # deferred: llm pkg import cycle
-
-    model_name = name or effective_default_model(config)
-    if not model_name:
-        raise KeyError("No model name given and no default_model configured")
-
-    if model_name not in config.model_configs:
-        available = ", ".join(sorted(config.model_configs.keys())) or "(none)"
-        raise KeyError(f"Unknown model config '{model_name}'. Available: {available}")
-
-    mc = config.model_configs[model_name]
-    if mc.provider not in config.providers:
-        available = ", ".join(sorted(config.providers.keys())) or "(none)"
-        raise KeyError(f"Model '{model_name}' references unknown provider '{mc.provider}'. Available: {available}")
-
-    return config.providers[mc.provider], mc
+# ``resolve_model`` now lives in the shared leaf (decafclaw.model_resolution)
+# and is re-exported above; it no longer needs a deferred model_catalog import.
 
 
 def resolve_streaming(config: "Config", active_model: str = "") -> bool:
@@ -631,8 +609,6 @@ def resolve_streaming(config: "Config", active_model: str = "") -> bool:
     Checks the active model config first, then the effective default
     model (catalog pointer → default_model, #1211), then config.llm.
     """
-    from .model_catalog import effective_default_model  # deferred: llm pkg import cycle
-
     name = active_model or effective_default_model(config)
     if name and name in config.model_configs:
         return config.model_configs[name].streaming
@@ -928,8 +904,6 @@ def load_config() -> Config:
 
     # Migration: if no providers/model_configs but old-style llm config exists,
     # auto-generate a "default" openai-compat provider + model config
-    from .llm.types import PROVIDER_OPENAI_COMPAT
-
     if not providers and llm.url:
         providers["default"] = ProviderConfig(
             type=PROVIDER_OPENAI_COMPAT,

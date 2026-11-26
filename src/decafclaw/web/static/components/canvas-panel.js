@@ -13,7 +13,7 @@ import './widgets/widget-host.js';
  * snapshot's `visible` flag is set (state exists AND not dismissed).
  *
  * On mobile (≤639px), opening the canvas auto-closes #wiki-main —
- * see canvas.css and the sidebar-tab-change handler in app.js.
+ * see canvas.css and the sidebar-section-change handler in app.js.
  *
  * Phase 4: renders a horizontal tab strip above the header with
  * ARIA tab pattern (tablist/tab/tabpanel/region) and keyboard nav

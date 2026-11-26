@@ -66,6 +66,7 @@ from ..llm.types import (
     FINISH_REASON_STOP,
     FINISH_REASON_TOOL_CALLS,
     PROVIDER_SCRIPTED,
+    ModelInfo,
     StreamCallback,
 )
 
@@ -529,7 +530,7 @@ class ScriptedProvider:
         *,
         timeout: int = 30,
         **kwargs: Any,
-    ) -> dict[str, Any] | None:
+    ) -> ModelInfo | None:
         return None
 
     def default_context_window(self, model: str) -> int | None:
