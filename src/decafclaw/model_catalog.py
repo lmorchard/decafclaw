@@ -44,6 +44,13 @@ from typing import TYPE_CHECKING, Any
 from .config_types import ModelConfig
 from .llm.types import DiscoveredModel
 
+# Model resolution now lives in the shared leaf (decafclaw.model_resolution) so
+# config and llm can import it without a cycle (#1329). Re-exported here for the
+# many `from decafclaw.model_catalog import effective_*` call sites. The leaf's
+# only back-reference (a deferred load_catalog) runs at call time, so this
+# module-level import cannot create a cycle.
+from .model_resolution import effective_context_window, effective_default_model  # noqa: F401
+
 if TYPE_CHECKING:
     from .config import Config
 
@@ -273,6 +280,11 @@ async def refresh_catalog(
     made during a slow discovery survive. When ``event_bus`` is given,
     publishes ``models_changed`` so connected UIs refresh their picker.
     """
+    # Function-level: resolved at call time so tests can monkeypatch the
+    # registry (get_provider/list_providers) and have discovery see it. This is
+    # not a cycle guard — the config↔llm↔model_catalog cycle is broken by the
+    # shared leaf (decafclaw.model_resolution) — but a module-level binding
+    # would capture the originals before any patch lands (#1329).
     from .llm.registry import get_provider, list_providers
 
     names = list(provider_names) if provider_names else list_providers()
@@ -475,22 +487,9 @@ def picker_model_groups(config: "Config") -> list[dict[str, object]]:
     return groups
 
 
-def effective_default_model(config: "Config") -> str:
-    """Global default model, resolution order (#1211):
-
-    1. The sidecar's ``default_model`` pointer, when it names a
-       selectable model (enabled discovered or hand-configured).
-    2. ``config.json``'s ``default_model`` (the ``Config`` field, kept
-       pristine — the sidecar never overwrites it).
-    3. Empty string; callers fall through to ``config.llm.model`` exactly
-       as they did before this feature existed.
-
-    A pointer at a disabled or vanished model falls back cleanly.
-    """
-    pointer = load_catalog(config).default_model
-    if pointer and pointer in config.model_configs:
-        return pointer
-    return config.default_model
+# ``effective_default_model`` and ``effective_context_window`` now live in the
+# shared leaf (decafclaw.model_resolution) and are re-exported at the top of
+# this module (#1329); the remaining ladders below build on them.
 
 
 def effective_active_model(config: "Config", active_model: str = "") -> str:
@@ -536,29 +535,6 @@ def effective_aux_model(config: "Config", active_model: str = "") -> str:
     because the legacy LLM path tolerates raw names.
     """
     return config.auxiliary_model or effective_active_model(config, active_model)
-
-
-def effective_context_window(config: "Config", model_name: str = "") -> int:
-    """Context-window ladder (#1360), highest first:
-
-    1. The named model's configured ``context_window_size``, when positive
-       (``model_name`` empty means ``config.default_model``).
-    2. ``config.llm.context_window_size``, when positive.
-    3. ``config.compaction.max_tokens`` — the conservative proxy.
-
-    Configured values only: discovery of a provider-reported window is an
-    async enrichment (``llm.ensure_model_context_window``) that writes the
-    model config and then reads this ladder.
-    """
-    name = model_name or config.default_model
-    if name and name in config.model_configs:
-        window = config.model_configs[name].context_window_size
-        if window and window > 0:
-            return window
-    window = config.llm.context_window_size
-    if window and window > 0:
-        return window
-    return config.compaction.max_tokens
 
 
 def effective_aux_approval_model(config: "Config", active_model: str = "") -> str:

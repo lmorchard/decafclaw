@@ -12,6 +12,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from ..model_resolution import (  # noqa: F401  shared leaf for the config ↔ llm boundary (#1329)
+    effective_context_window,
+    effective_default_model,
+    resolve_model,
+)
 from ..telemetry import get_tracer
 from .registry import (  # noqa: F401
     _failed_model_info,
@@ -180,8 +185,6 @@ def _resolve(
 
     # Path 1: Named model config
     if model_name:
-        from ..config import resolve_model
-
         try:
             pc, mc = resolve_model(config, model_name)
             provider = get_provider(mc.provider)
@@ -200,8 +203,6 @@ def _resolve(
         return ResolvedModel(OpenAICompatProvider(url=url, api_key=api_key), model, timeout)
 
     # Path 3: Default from registry (model from config.llm or default_model)
-    from ..model_catalog import effective_default_model  # deferred: llm pkg import cycle
-
     model = llm_model or config.llm.model
     timeout = getattr(config.llm, "timeout", 300)
 
@@ -323,6 +324,4 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
 
     # Shared ladder (#1360): configured model window → legacy llm window →
     # compaction cap. Detection above only populates the first rung.
-    from ..model_catalog import effective_context_window  # deferred: llm pkg import cycle
-
     return effective_context_window(config, model_name or "")

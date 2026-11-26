@@ -293,9 +293,12 @@ At the start of each agent turn, the active model is resolved through the provid
 
 ## Model-resolution ladders (#1360)
 
-Each model pointer resolves through one named function in
-`src/decafclaw/model_catalog.py`, so every chain has a single definition and
-a single set of tests:
+Each model pointer resolves through one named function, so every chain has a
+single definition and a single set of tests. `effective_default_model` and
+`effective_context_window` live in the shared leaf
+`src/decafclaw/model_resolution.py` (imported by both the config and llm layers
+without a cycle, #1329); the remaining resolvers live in
+`src/decafclaw/model_catalog.py`:
 
 | Resolver | Ladder (highest first) |
 |---|---|
