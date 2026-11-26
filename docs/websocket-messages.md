@@ -311,6 +311,7 @@ Final result of a tool call. Replaces the in-flight tool_status with terminal st
 - `timed_out` — boolean?
 - `timeout_sec` — number?
 - `details` — object?
+- `links` — array of object?
 
 ### `tool_start`
 

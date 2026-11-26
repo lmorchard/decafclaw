@@ -425,6 +425,8 @@ export class MessageStore {
           let resultShortText = '';
           /** @type {object|null} */
           let resultDetails = null;
+          /** @type {object[]|null} */
+          let resultLinks = null;
           /** @type {object|null} */
           let resultWidget = null;
           let resultSubmitted = false;
@@ -439,6 +441,7 @@ export class MessageStore {
               resultContent = messages[j].content || '';
               resultShortText = messages[j].display_short_text || '';
               resultDetails = messages[j].details || null;
+              resultLinks = messages[j].links || null;
               resultWidget = messages[j].widget || null;
               resultSubmitted = !!messages[j].submitted;
               resultResponse = messages[j].response || null;
@@ -457,6 +460,7 @@ export class MessageStore {
             content: resultContent,
             display_short_text: resultShortText,
             details: resultDetails,
+            links: resultLinks,
             widget: resultWidget,
             submitted: resultSubmitted,
             response: resultResponse,

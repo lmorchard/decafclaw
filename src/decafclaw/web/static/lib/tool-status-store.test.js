@@ -221,9 +221,11 @@ describe('ToolStatusStore outcome tags (#1569)', () => {
             is_error: true,
             timed_out: true,
             timeout_sec: 180,
+            links: [{ kind: 'workspace', path: 'notes.md', label: 'notes.md' }],
         }, '1');
 
         const msg = msgStore.replaceToolCall.mock.calls[0][1];
+        expect(msg.links).toEqual([{ kind: 'workspace', path: 'notes.md', label: 'notes.md' }]);
         expect(msg.is_error).toBe(true);
         expect(msg.timed_out).toBe(true);
         expect(msg.timeout_sec).toBe(180);
