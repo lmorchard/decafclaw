@@ -334,6 +334,7 @@ async def _execute_single_tool_impl(call_ctx, tc, semaphore):
                 "display_text": getattr(result, "display_text", None),
                 "display_short_text": getattr(result, "display_short_text", None),
                 "details": getattr(result, "details", None),
+                "links": result.links or [],
                 "media": result.media or [],
                 "tool_call_id": tool_call_id,
                 "conv_id": call_ctx.conv_id,
@@ -401,6 +402,8 @@ async def _execute_single_tool_impl(call_ctx, tc, semaphore):
         tool_msg["display_short_text"] = result.display_short_text
     if result.details:
         tool_msg["details"] = result.details
+    if result.links:
+        tool_msg["links"] = result.links
     # Persist the same outcome tags so reloaded history keeps the loud
     # affordance (#1569).
     if is_error:

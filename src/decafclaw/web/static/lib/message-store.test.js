@@ -70,7 +70,7 @@ describe('MessageStore', () => {
                 has_more: true,
                 messages: [
                     { role: 'assistant', content: 'msg', tool_calls: [{ id: 'tc1', function: { name: 'tool_1' } }], timestamp: 't1' },
-                    { role: 'tool', tool_call_id: 'tc1', content: 'result', timestamp: 't2' }
+                    { role: 'tool', tool_call_id: 'tc1', content: 'result', links: [{ kind: 'workspace', path: 'a.txt', label: 'a.txt' }], timestamp: 't2' }
                 ]
             }, '1');
             
@@ -78,6 +78,7 @@ describe('MessageStore', () => {
             expect(store.currentMessages[0].role).toBe('assistant');
             expect(store.currentMessages[1].role).toBe('tool');
             expect(store.currentMessages[1].content).toBe('result');
+            expect(store.currentMessages[1].links).toEqual([{ kind: 'workspace', path: 'a.txt', label: 'a.txt' }]);
             expect(store.hasMore).toBe(true);
         });
 

@@ -224,6 +224,7 @@ export interface SrvToolEnd {
   timed_out?: boolean;
   timeout_sec?: number;
   details?: Record<string, unknown>;
+  links?: Array<Record<string, unknown>>;
 }
 
 export interface SrvToolStart {

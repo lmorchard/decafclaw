@@ -203,6 +203,7 @@ export class ChatView extends LitElement {
           .tool=${m.tool || ''}
           .command=${m.command || ''}
           .display_short_text=${m.display_short_text || ''}
+          .links=${m.links || null}
           .toolCalls=${m.tool_calls || null}
           .toolCallId=${m.tool_call_id || ''}
           .statusHistory=${m.statusHistory || null}

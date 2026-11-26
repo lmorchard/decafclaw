@@ -97,6 +97,9 @@ def _project_tool_end(event: dict, conv_id: str) -> SrvToolEnd:
     details = event.get("details")
     if details:
         payload["details"] = details
+    links = event.get("links")
+    if links:
+        payload["links"] = links
     widget = event.get("widget")
     if widget:
         payload["widget"] = widget
