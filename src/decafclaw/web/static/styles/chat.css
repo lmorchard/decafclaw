@@ -700,6 +700,13 @@ chat-message .code-lang-label {
 /* ---- calendar tab (#1899) ---- */
 
 calendar-sidebar .calendar-sidebar-body {
+  /* Same flex role as .conv-list on the other sidebar tabs: fill the space
+     above .sidebar-footer and scroll internally. The host is
+     display:contents, so this is a direct flex child of conversation-sidebar
+     (#1956). */
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
   padding: 0.5rem;
 }
 
@@ -796,15 +803,22 @@ calendar-page .calendar-message {
 }
 
 
-calendar-sidebar .calendar-view-switch,
 calendar-sidebar .calendar-range-controls {
   display: flex;
   gap: 0.25rem;
   margin-bottom: 0.4rem;
 }
 
-calendar-sidebar .calendar-view-btn.active {
-  font-weight: 700;
+/* The view mode is a single select (#1955), sized to shrink before the
+   range buttons so the row stays on one line. */
+calendar-sidebar .calendar-view-select {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1.2;
 }
 
 calendar-sidebar .calendar-range-label {

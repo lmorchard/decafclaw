@@ -367,16 +367,24 @@ class CalendarManager:
     async def _reschedule_or_complete(self, event: CalendarEvent) -> bool:
         """Advance a recurring event to its next occurrence, or mark it completed.
 
-        A normal fire advances from ``occurrence_at``. A snoozed occurrence
-        keeps the original anchor, so the next occurrence is not shifted. A
-        missed occurrence (late by more than a minute) advances from now, so a
-        restart fires once instead of replaying every missed occurrence.
+        The advance point is the moment this occurrence actually fired
+        (``fire_at_ts``), not ``occurrence_at``: ``occurrence_at`` is the series
+        anchor, and a snooze deliberately leaves it untouched. Advancing from the
+        anchor after a snooze that overshoots a whole interval would recompute an
+        occurrence at or before the instant that just fired, firing it twice
+        (#1950). Using the later of the two keeps the anchor's wall-clock time
+        for every following occurrence while never replaying a snoozed one.
+
+        An occurrence more than a minute late advances from now, so a restart
+        fires once instead of replaying every missed occurrence.
         """
         occurrence_ts = datetime.fromisoformat(event.occurrence_at or event.fire_at).timestamp()
+        fired_ts = event.fire_at_ts or occurrence_ts
         now = time.time()
-        base_ts = occurrence_ts
-        if not event.snooze_until and now - occurrence_ts > 60:
+        if now - fired_ts > 60:
             base_ts = now
+        else:
+            base_ts = max(occurrence_ts, fired_ts)
         try:
             following = next_occurrence(event, base_ts)
         except ValueError as exc:

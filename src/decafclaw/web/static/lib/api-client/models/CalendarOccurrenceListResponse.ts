@@ -5,5 +5,6 @@
 import type { CalendarOccurrenceOut } from './CalendarOccurrenceOut';
 export type CalendarOccurrenceListResponse = {
     occurrences: Array<CalendarOccurrenceOut>;
+    truncated?: boolean;
 };
 
