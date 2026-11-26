@@ -530,7 +530,7 @@ class ScriptedProvider:
         *,
         timeout: int = 30,
         **kwargs: Any,
-    ) -> dict[str, Any] | None:
+    ) -> ModelInfo | None:
         return None
 
     def default_context_window(self, model: str) -> int | None:
