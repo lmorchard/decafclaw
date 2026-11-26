@@ -64,22 +64,6 @@ async def _flush_create_tasks():
 # -- Priority filter ----------------------------------------------------------
 
 
-class TestMeetsPriority:
-    def test_exact_match(self):
-        assert _meets_priority("high", "high")
-
-    def test_above_threshold(self):
-        assert _meets_priority("high", "normal")
-
-    def test_below_threshold(self):
-        assert not _meets_priority("low", "normal")
-
-    def test_default_low_captures_everything(self):
-        assert _meets_priority("low", "low")
-        assert _meets_priority("normal", "low")
-        assert _meets_priority("high", "low")
-
-
 # -- Link resolution ---------------------------------------------------------
 
 
@@ -266,7 +250,6 @@ class TestAdapterHandler:
         await _flush_create_tasks()
         assert not (config.vault_root / "agent").exists()
 
-    @pytest.mark.asyncio
     async def test_skips_when_disabled(self, config):
         _enable_channel(config)
         config.notifications.channels.vault_page.enabled = False

@@ -260,7 +260,6 @@ class TestAdapterHandler:
         assert cfg.topic == "agent-alerts"
         assert payload["title"] == "Heartbeat completed"
 
-    @pytest.mark.asyncio
     async def test_skips_when_disabled(self, config):
         _enable_ntfy(config)
         config.notifications.channels.ntfy.enabled = False
