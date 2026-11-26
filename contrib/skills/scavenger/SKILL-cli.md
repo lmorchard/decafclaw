@@ -36,6 +36,7 @@ python3 path/to/scavenger.py [--config FLEET_JSON] <command> [--json] ...
 | `env-list` | List active leases. |
 | `env-destroy ID` | Remove the environment and its lease. |
 | `reap` | Destroy every expired lease. |
+| `runner [--env-id ID] [ARGS...]` | Transparent OpenCode CLI runner proxy inside a remote container (for `ghflow --worker-cmd`). |
 
 ## Recipes
 

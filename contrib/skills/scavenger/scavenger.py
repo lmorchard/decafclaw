@@ -1820,6 +1820,23 @@ def cmd_selfcheck(args: argparse.Namespace) -> None:
     sys.exit(0 if ok else 1)
 
 
+def cmd_runner(args: argparse.Namespace) -> int:
+    try:
+        from .runners.opencode_scavenger_runner import run_remote_opencode
+    except ImportError:
+        try:
+            from contrib.skills.scavenger.runners.opencode_scavenger_runner import run_remote_opencode
+        except ImportError:
+            runners_dir = os.path.join(os.path.dirname(__file__), "runners")
+            sys.path.insert(0, os.path.dirname(runners_dir))
+            from runners.opencode_scavenger_runner import run_remote_opencode
+
+    runner_args = list(args.runner_args or [])
+    if runner_args and runner_args[0] == "--":
+        runner_args = runner_args[1:]
+    return run_remote_opencode(runner_args, env_id=args.env_id)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="LAN Scavenger Compute Fleet Controller")
     parser.add_argument("--config", help="Path to custom fleet JSON config (default: ~/.config/scavenger/fleet.json)")
@@ -1910,6 +1927,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_sc.add_argument("host", help="Host name from the fleet config")
     p_sc.add_argument("--image", default="alpine:latest", help="Container image (default: alpine:latest)")
     p_sc.add_argument("--no-wake", dest="wake", action="store_false", help="Do not fire Wake-on-LAN packets")
+
+    # Runner (OpenCode proxy adapter)
+    p_rn = add("runner", "Run opencode transparently inside a reserved scavenger container", cmd_runner)
+    p_rn.add_argument("--env-id", help="Target scavenger environment ID (default: SCAVENGER_ENV_ID or ghflow-worker)")
+    p_rn.add_argument("runner_args", nargs=argparse.REMAINDER, help="Arguments passed through to opencode")
 
     return parser
 

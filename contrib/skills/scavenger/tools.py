@@ -617,6 +617,12 @@ def scavenger_reap(ctx: Any) -> str:
     return "No expired environments to reap."
 
 
+def scavenger_runner_path(ctx: Any) -> str:
+    """Return the absolute path to the opencode scavenger runner executable."""
+    runner_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "runners", "opencode_scavenger_runner.py"))
+    return runner_script
+
+
 TOOLS = {
     "scavenger_probe": scavenger_probe,
     "scavenger_wake": scavenger_wake,
@@ -631,6 +637,7 @@ TOOLS = {
     "scavenger_env_destroy": scavenger_env_destroy,
     "scavenger_env_list": scavenger_env_list,
     "scavenger_reap": scavenger_reap,
+    "scavenger_runner_path": scavenger_runner_path,
 }
 
 TOOL_DEFINITIONS = [
@@ -969,6 +976,18 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "scavenger_reap",
             "description": "Sweep and reap any expired environment reservations across the fleet.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scavenger_runner_path",
+            "description": "Return the absolute path to the opencode scavenger runner executable.",
             "parameters": {
                 "type": "object",
                 "properties": {},
