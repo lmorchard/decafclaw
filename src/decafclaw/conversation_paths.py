@@ -271,6 +271,12 @@ def delete_conversation_files(config, conv_id: str) -> None:
                 wake_file.unlink()
             except OSError as exc:
                 log.warning("Failed to remove scheduled wakes file %s: %s", wake_file, exc)
+        calendar_file = calendar_path(config, conv_id)
+        if calendar_file.exists():
+            try:
+                calendar_file.unlink()
+            except OSError as exc:
+                log.warning("Failed to remove calendar file %s: %s", calendar_file, exc)
         watch_file = file_watches_path(config, conv_id)
         if watch_file.exists():
             try:
@@ -296,6 +302,18 @@ def scheduled_wakes_path(config, conv_id: str) -> Path:
     Stored outside the agent-writable workspace to prevent unauthorized wake scheduling or forgery (#1119).
     """
     base = (config.agent_path / "scheduled_wakes").resolve()
+    safe = _safe_conv_id(conv_id)
+    return base / f"{safe}.json"
+
+
+def calendar_path(config, conv_id: str) -> Path:
+    """Resolve the per-conversation calendar sidecar under the admin data dir:
+    data/{agent_id}/calendar/{conv_id}.json.
+
+    Stored outside the agent-writable workspace so workspace tools cannot
+    forge calendar events or overwrite pending state (#1896).
+    """
+    base = (config.agent_path / "calendar").resolve()
     safe = _safe_conv_id(conv_id)
     return base / f"{safe}.json"
 

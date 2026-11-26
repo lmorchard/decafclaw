@@ -1098,6 +1098,131 @@ async def test_transport_subscriber_skips_on_suppress(manager, config, monkeypat
     assert posted_messages == []  # suppressed — transport didn't post.
 
 
+@pytest.mark.asyncio
+async def test_wake_rate_limit_bypass_for_calendar(manager, config, monkeypatch):
+    """Calendar event wakes must not be dropped by the wake rate limiter."""
+    manager._wake_max_per_window = 0
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        from decafclaw.media import ToolResult
+
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    dropped = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
+    assert getattr(dropped, "rate_limited", None) is True
+
+    allowed = await manager.enqueue_turn(
+        conv_id="c1",
+        kind=TurnKind.WAKE,
+        prompt="calendar",
+        history=[],
+        bypass_wake_rate_limit=True,
+    )
+    assert getattr(allowed, "rate_limited", None) is False
+    await asyncio.wait_for(allowed, timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_calendar_wake_ignores_background_wake_ok(manager, config, monkeypatch):
+    """A non-suppressible wake must deliver even when the agent replies with the sentinel."""
+    posted = []
+
+    def subscriber(event):
+        if event.get("type") == "message_complete":
+            posted.append(event.get("suppress_user_message"))
+
+    manager.subscribe("c1", subscriber)
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        from decafclaw.media import ToolResult
+
+        return ToolResult(text="BACKGROUND_WAKE_OK")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    fut = await manager.enqueue_turn(
+        conv_id="c1",
+        kind=TurnKind.WAKE,
+        prompt="calendar",
+        history=[],
+        metadata={"suppressible": False},
+    )
+    await asyncio.wait_for(fut, timeout=2.0)
+
+    assert posted == [False]
+
+
+@pytest.mark.asyncio
+async def test_calendar_wake_keeps_mattermost_delivery(manager, config, monkeypatch):
+    """Calendar wakes keep the existing Mattermost delivery path."""
+    published = []
+
+    async def fake_publish(event):
+        published.append(event)
+
+    monkeypatch.setattr(manager.event_bus, "publish", fake_publish)
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        from decafclaw.media import ToolResult
+
+        return ToolResult(text="reminder")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    def setup(ctx):
+        ctx.transport = "mattermost"
+        ctx.channel_id = "channel-1"
+        ctx.thread_id = "thread-1"
+
+    fut = await manager.enqueue_turn(
+        conv_id="c1",
+        kind=TurnKind.WAKE,
+        prompt="calendar",
+        history=[],
+        metadata={"calendar_event_id": "cal_1234", "suppressible": False},
+        context_setup=setup,
+    )
+    await asyncio.wait_for(fut, timeout=2.0)
+
+    assert sum(1 for event in published if event.get("type") == "wake_delivery") == 1
+
+
+@pytest.mark.asyncio
+async def test_regular_wake_still_publishes_delivery(manager, config, monkeypatch):
+    """The delivery path still works for wakes without the calendar flag."""
+    published = []
+
+    async def fake_publish(event):
+        published.append(event)
+
+    monkeypatch.setattr(manager.event_bus, "publish", fake_publish)
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        from decafclaw.media import ToolResult
+
+        return ToolResult(text="reminder")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    def setup(ctx):
+        ctx.transport = "mattermost"
+        ctx.channel_id = "channel-1"
+        ctx.thread_id = "thread-1"
+
+    fut = await manager.enqueue_turn(
+        conv_id="c1",
+        kind=TurnKind.WAKE,
+        prompt="wake",
+        history=[],
+        context_setup=setup,
+    )
+    await asyncio.wait_for(fut, timeout=2.0)
+
+    assert any(event.get("type") == "wake_delivery" for event in published)
+
+
 # ---------------------------------------------------------------------------
 # Item 3: WAKE turns disable the streaming callback
 # ---------------------------------------------------------------------------
