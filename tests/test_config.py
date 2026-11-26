@@ -200,9 +200,11 @@ class TestFieldIntrospection:
     def test_load_materializes_all_fields(self, tmp_path, monkeypatch):
         """A fresh load materializes every declared Config field (#1326).
 
-        The construction step iterates dataclasses.fields(Config), so a
-        newly declared field must appear on the loaded instance even when
-        config.json is absent.
+        Completeness check only: every field has a dataclass default, so any
+        Config instance carries all names and this cannot fail on its own —
+        it would pass against the pre-PR explicit kwarg list too. The
+        introspection mechanism itself is pinned by
+        test_construction_driven_by_field_introspection.
         """
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()  # no config.json — pure defaults path
@@ -210,6 +212,42 @@ class TestFieldIntrospection:
         loaded = load_config()
         for f in dataclasses.fields(Config):
             assert f.name in vars(loaded), f"field {f.name!r} missing from loaded config"
+
+    def test_construction_driven_by_field_introspection(self, tmp_path, monkeypatch):
+        """load_config builds Config by iterating dataclasses.fields(Config) (#1326).
+
+        The materialization test above cannot detect a regression to a
+        hand-maintained kwarg list: every field has a default, so both the
+        introspection step and the pre-PR explicit list materialize identical
+        values for every existing field. This test pins the mechanism instead:
+        patch the field iterator to drop one field whose resolved value differs
+        from its default, and assert that field falls back to the dataclass
+        default on the loaded instance. An explicit kwarg list would ignore the
+        patch and keep the resolved value, so this fails if construction stops
+        being introspection-driven.
+        """
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()  # no config.json — pure defaults path
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        # Give the llm field a resolved value that differs from its default.
+        monkeypatch.setenv("LLM_MODEL", "probe-model")
+
+        # Control: the unpatched load picks up the resolved value.
+        assert load_config().llm.model == "probe-model"
+
+        # Drop llm from the introspected field set; every other class passes
+        # through untouched (load_sub_config also iterates dc_fields).
+        real_fields = dataclasses.fields
+
+        def fields_without_llm(cls):
+            result = real_fields(cls)
+            if cls is Config:
+                return [f for f in result if f.name != "llm"]
+            return result
+
+        monkeypatch.setattr("decafclaw.config.dc_fields", fields_without_llm)
+        loaded = load_config()
+        assert loaded.llm.model == "", "dropped field must fall back to its dataclass default"
 
 
 class TestJsonFileLoading:
