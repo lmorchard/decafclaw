@@ -34,4 +34,16 @@ Uses `scp` with the same `BatchMode`/`ConnectTimeout` options. `local_path` must
 
 ## Rulebook integration
 
-Approval rules can key on `(tool="ssh_exec", host="<alias>")` and `(tool="ssh_copy", host="<alias>")`, so a `scavenger-*` worker can be pre-approved while infrastructure hosts stay gated. The tool-level confirmation above is the fallback when no rule matches.
+Admin rules live at `data/{agent_id}/ssh_rules.jsonl`, outside the agent-writable workspace. One JSON object per line:
+
+```json
+{"tool": "ssh_exec", "host": "scavenger-*", "action": "allow"}
+{"tool": "ssh_copy", "host": "edge-*", "action": "deny"}
+{"tool": "*", "host": "sandbox", "action": "ask"}
+```
+
+`tool` is `ssh_exec`, `ssh_copy`, or `*`. `host` is an `fnmatch` pattern over the alias. `action` is `allow`, `ask`, or `deny`.
+
+Precedence is **deny > allow > ask** across all matching rules. `allow` runs the host without the unlisted-host confirmation; `deny` refuses; `ask` or no match keeps the normal behavior (known aliases run, unlisted aliases ask). A missing or malformed rulebook fails open to that normal behavior, and malformed lines are skipped — never treated as `allow`.
+
+The tool-level confirmation above is the fallback when no rule matches.

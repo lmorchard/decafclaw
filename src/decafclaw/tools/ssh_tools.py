@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..media import EndTurnConfirm, ToolResult
+from ..ssh_rules import decide as ssh_rule_decision
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -102,7 +103,13 @@ async def tool_ssh_exec(
         return ToolResult(text="[error: host is required]")
     if not command:
         return ToolResult(text="[error: command is required]")
-    if not allow_unlisted_host and not _host_allowed(host):
+    rule = ssh_rule_decision(ctx.config, "ssh_exec", host)
+    if rule == "deny":
+        return ToolResult(
+            text=f"[error: host '{host}' is denied by the SSH rulebook]",
+            data={"error": "ssh_rule_denied", "host": host},
+        )
+    if rule != "allow" and not allow_unlisted_host and not _host_allowed(host):
         return ToolResult(
             text=(
                 f"[error: host '{host}' is not a concrete alias in ~/.ssh/config. "
@@ -152,7 +159,13 @@ async def tool_ssh_copy(
         return ToolResult(text="[error: direction must be 'up' or 'down']")
     if not host or not local_path or not remote_path:
         return ToolResult(text="[error: host, local_path, and remote_path are required]")
-    if not allow_unlisted_host and not _host_allowed(host):
+    rule = ssh_rule_decision(ctx.config, "ssh_copy", host)
+    if rule == "deny":
+        return ToolResult(
+            text=f"[error: host '{host}' is denied by the SSH rulebook]",
+            data={"error": "ssh_rule_denied", "host": host},
+        )
+    if rule != "allow" and not allow_unlisted_host and not _host_allowed(host):
         return ToolResult(
             text=(
                 f"[error: host '{host}' is not a concrete alias in ~/.ssh/config. "
