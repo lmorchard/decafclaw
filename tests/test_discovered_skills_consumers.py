@@ -97,6 +97,15 @@ REVIEWED_CONSUMERS: dict[tuple[str, str], str] = {
     ): "PERMITS workspace tier deliberately — a workflow author named the "
     "skill explicitly in code, which is a human decision at authoring "
     "time. Documented in the function's own docstring.",
+    (
+        "calendar_policy.py",
+        "activate_required_skills",
+    ): "GATE (#1971): grants_capability filter before activate_skill_internal, "
+    "which execs the skill's tools.py. An event's required_skills is a "
+    "code-execution request on an unattended wake, so it gets the same gate as "
+    "schedules.py setup_schedule_ctx (#731 vector 5). Note the preapproval "
+    "grant in apply_event_policy is a separate decision, keyed on event "
+    "provenance (policy_granted) rather than skill tier.",
     ("tools/skill_tools.py", "tool_activate_skill"): "GATE (#649): the confirmation gate itself lives here — "
     "is_trusted_tier = trust_tier != 'workspace', denied outright on an "
     "unattended turn. NOTE the gate is in this wrapper, not in "

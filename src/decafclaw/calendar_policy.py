@@ -77,23 +77,24 @@ def validate_tool_names(entries: list[str], *, field_name: str) -> list[str]:
 
 
 async def activate_required_skills(ctx: "Context", event: "CalendarEvent") -> None:
-    """Pre-activate an event's ``required_skills`` with the workspace-tier guard.
+    """Pre-activate an event's ``required_skills`` behind the capability gate.
 
     Activation imports and execs a skill's ``tools.py``, so ``required_skills``
     is a code-execution grant (#731). ``workspace/skills/`` is agent-writable
     *and* the highest-precedence scan entry, so an agent-authored skill can
     shadow a bundled one of the same name. ``activate_skill`` already refuses
     workspace tier on an unattended turn (#649); this is the same rule for the
-    path that never goes through it, mirroring ``schedules.py``.
+    path that never goes through it.
 
-    ``policy_granted`` additionally gates workspace-tier activation: an event
-    can name a bundled skill, but only a human-authorized event may pull in
-    agent-writable code.
+    Routes through ``skills.grants_capability`` rather than comparing tiers by
+    hand: that allowlist fails closed on an unrecognized tier, where a
+    ``!= "workspace"`` check would fail open (#741).
     """
     names = [str(n or "").strip() for n in (event.required_skills or []) if str(n or "").strip()]
     if not names:
         return
 
+    from .skills import grants_capability
     from .tools.skill_tools import activate_skill_internal
 
     skill_map = {s.name: s for s in ctx.config.discovered_skills}
@@ -107,10 +108,11 @@ async def activate_required_skills(ctx: "Context", event: "CalendarEvent") -> No
             )
             ctx.skills.activation_denials.append(skill_name)
             continue
-        if skill_info.trust_tier == "workspace":
+        if not grants_capability(skill_info):
             log.warning(
-                "Skipping workspace-tier skill '%s' required by calendar event %s: "
-                "workspace skills are not activated on unattended turns",
+                "Skipping %r-tier skill '%s' required by calendar event %s: "
+                "only trusted placements are activated on unattended turns",
+                getattr(skill_info, "trust_tier", "?"),
                 skill_name,
                 event.event_id,
             )
