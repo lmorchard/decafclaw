@@ -199,6 +199,83 @@ class TestToolDelegateTask:
         assert "error" in _text(result)
 
 
+class TestChildIterationBudget:
+    """Caller-sized child iteration budgets (#1827).
+
+    `delegate_task` exposes `max_iterations`, threaded to
+    `run_child_turn`. Omitted keeps the historical child default;
+    an explicit value is honored; an oversized value is clamped to the
+    parent's `agent.max_tool_iterations`.
+    """
+
+    @pytest.mark.asyncio
+    async def test_omitted_uses_child_default(self, ctx):
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await run_child_turn(ctx, "task")
+
+        child_ctx = mock_run.call_args[0][0]
+        assert ctx.config.agent.child_max_tool_iterations == 10
+        assert child_ctx.config.agent.max_tool_iterations == 10
+
+    @pytest.mark.asyncio
+    async def test_explicit_budget_honored(self, ctx):
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await run_child_turn(ctx, "task", max_iterations=25)
+
+        child_ctx = mock_run.call_args[0][0]
+        assert child_ctx.config.agent.max_tool_iterations == 25
+
+    @pytest.mark.asyncio
+    async def test_oversized_budget_clamped_to_parent(self, ctx):
+        ctx.config.agent.max_tool_iterations = 20
+
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await run_child_turn(ctx, "task", max_iterations=500)
+
+        child_ctx = mock_run.call_args[0][0]
+        assert child_ctx.config.agent.max_tool_iterations == 20
+
+    @pytest.mark.asyncio
+    async def test_tool_wrapper_threads_budget_single_and_batch(self, ctx):
+        seen = []
+
+        async def fake_run(parent_ctx, task, model="", max_iterations=0, **kwargs):
+            seen.append(max_iterations)
+            return ("ok", None)
+
+        with patch("decafclaw.tools.delegate.run_child_turn", side_effect=fake_run):
+            await tool_delegate_task(ctx, "task", max_iterations=30)
+            await tool_delegate_tasks(ctx, ["a", "b"], max_iterations=40)
+
+        assert seen[0] == 30
+        assert seen[1:] == [40, 40]
+
+    @pytest.mark.asyncio
+    async def test_tool_wrapper_omitted_threads_zero(self, ctx):
+        """Omitted budget reaches `run_child_turn` as 0 (child default)."""
+        seen = []
+
+        async def fake_run(parent_ctx, task, model="", max_iterations=0, **kwargs):
+            seen.append(max_iterations)
+            return ("ok", None)
+
+        with patch("decafclaw.tools.delegate.run_child_turn", side_effect=fake_run):
+            await tool_delegate_task(ctx, "task")
+
+        assert seen == [0]
+
+    def test_definition_documents_max_iterations(self):
+        from decafclaw.tools.delegate import DELEGATE_TOOL_DEFINITIONS
+
+        params = DELEGATE_TOOL_DEFINITIONS[0]["function"]["parameters"]["properties"]
+        assert params["max_iterations"]["type"] == "integer"
+        assert "default" in params["max_iterations"]["description"].lower()
+        assert "research" in params["max_iterations"]["description"].lower()
+
+
 # -- Structured return schema (#395) ------------------------------------------
 
 
