@@ -15,7 +15,7 @@ async def test_pre_compose_hook_injection(ctx, config, monkeypatch):
     ContextComposer SHALL await registered hooks concurrently with a configurable timeout
     and inject returned text into a bounded tail envelope without mutating static prompt cache prefixes.
     """
-    config.system_prompt = "<soul>Static prefix</soul>"
+    config.system_prompt = "<agent_role>Static prefix</agent_role>"
     system_prompt_before = str(config.system_prompt)
 
     async def mock_call_llm(ctx, config, messages, tools, **kwargs):

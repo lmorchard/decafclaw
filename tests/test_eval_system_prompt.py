@@ -3,7 +3,7 @@
 Before this guard, ``config.system_prompt`` was only ever set by
 ``decafclaw/__init__.py`` (the app entry point). The eval CLI calls
 ``load_config()`` + ``run_eval()`` directly, so every eval turn ran with a
-zero-length system message: no SOUL.md, no AGENT.md, no <skill_catalog>, and
+zero-length system message: no AGENT.md, no <skill_catalog>, and
 no always-loaded skill bodies. Measured effect on tool routing was 1/15 vs
 10/10 — see docs/dev-sessions/2026-07-24-1728-670-notes-vs-vault-harness-fidelity/research.md.
 

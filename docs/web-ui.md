@@ -497,7 +497,7 @@ confirmation prompts/responses, cancel/wake markers) are skipped.
 
 ### Config editor
 
-Edit admin config files (`SOUL.md`, `AGENT.md`, `HEARTBEAT.md`, etc.) directly in the browser. Changes are written to `data/{agent_id}/`.
+Edit admin config files (`AGENT.md`, `HEARTBEAT.md`, etc.) directly in the browser. Changes are written to `data/{agent_id}/`.
 The panel's file list and reads, plus the shared editor's config read/write
 operations, use the generated API client. Config paths are encoded one segment
 at a time so allowed nested schedule paths retain their `/` separators. Missing

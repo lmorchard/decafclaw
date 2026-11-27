@@ -34,16 +34,27 @@ class TestWrapXml:
 
 
 class TestDefaultLoad:
-    """A clean config with bundled SOUL/AGENT and the real skill discovery
+    """A clean config with the bundled AGENT.md and the real skill discovery
     produces all the expected tags in order."""
 
     def test_expected_tags_present_in_order(self, config):
         prompt, _ = load_system_prompt(config)
-        # Order the loader builds: SOUL → AGENT → (USER?) → skill_catalog → loaded_skills.
+        # Order the loader builds: AGENT → (USER?) → skill_catalog → loaded_skills.
         # USER.md doesn't exist in the tmp fixture, so it's skipped.
-        tag_order = ["<soul>", "<agent_role>", "<skill_catalog>", "<loaded_skills>"]
+        tag_order = ["<agent_role>", "<skill_catalog>", "<loaded_skills>"]
         positions = [prompt.index(t) for t in tag_order]
         assert positions == sorted(positions), f"tags out of expected order: {list(zip(tag_order, positions))}"
+
+    def test_soul_section_retired(self, config):
+        """SOUL.md is gone: no bundled file, no <soul> wrapper, and its one
+        load-bearing identity line now lives at the top of AGENT.md."""
+        assert not (Path(__file__).parent.parent / "src/decafclaw/prompts/SOUL.md").exists()
+
+        prompt, _ = load_system_prompt(config)
+        assert "<soul>" not in prompt
+        assert "describe yourself as DecafClaw, not as the underlying model" in prompt
+        assert prompt.index("describe yourself as DecafClaw") > prompt.index("<agent_role>")
+        assert prompt.index("describe yourself as DecafClaw") < prompt.index("## Core Behavior")
 
     def test_user_context_absent_by_default(self, config):
         """No USER.md in the fixture's agent_path → no <user_context>."""
@@ -52,7 +63,7 @@ class TestDefaultLoad:
 
     def test_tags_are_closed(self, config):
         prompt, _ = load_system_prompt(config)
-        for tag in ("soul", "agent_role", "skill_catalog", "loaded_skills"):
+        for tag in ("agent_role", "skill_catalog", "loaded_skills"):
             assert f"<{tag}>" in prompt
             assert f"</{tag}>" in prompt
 
@@ -161,17 +172,17 @@ class TestCustomContext:
 
 
 class TestInnerContent:
-    def test_soul_body_preserved(self, config):
-        """A known marker from the bundled SOUL.md appears inside
-        <soul>…</soul> intact — not rewritten, not escaped."""
+    def test_agent_body_preserved(self, config):
+        """A known marker from the bundled AGENT.md appears inside
+        <agent_role>…</agent_role> intact — not rewritten, not escaped."""
         prompt, _ = load_system_prompt(config)
-        soul_start = prompt.index("<soul>")
-        soul_end = prompt.index("</soul>")
-        soul_block = prompt[soul_start:soul_end]
-        # Pull a stable phrase from the actual bundled SOUL.md
-        bundled_soul = (Path(__file__).parent.parent / "src/decafclaw/prompts/SOUL.md").read_text()
-        first_line = bundled_soul.strip().splitlines()[0]
-        assert first_line in soul_block
+        agent_start = prompt.index("<agent_role>")
+        agent_end = prompt.index("</agent_role>")
+        agent_block = prompt[agent_start:agent_end]
+        # Pull a stable phrase from the actual bundled AGENT.md
+        bundled_agent = (Path(__file__).parent.parent / "src/decafclaw/prompts/AGENT.md").read_text()
+        first_line = bundled_agent.strip().splitlines()[0]
+        assert first_line in agent_block
 
     def test_catalog_markdown_preserved(self, config):
         """The `## Available Skills` heading produced by build_catalog_text
@@ -332,8 +343,8 @@ def _ensure_agent_path_exists(config):
 
 class TestUpdateSystemPrompt:
     """update_system_prompt(section, content) rewrites USER.md / CUSTOM.md
-    in data/{agent_id}/, guards SOUL.md, rejects unknown sections, and
-    requires interactive confirmation before writing."""
+    in data/{agent_id}/, rejects unknown sections, and requires interactive
+    confirmation before writing."""
 
     @pytest.mark.asyncio
     async def test_update_user_md_writes_content(self, ctx):
@@ -391,34 +402,20 @@ class TestUpdateSystemPrompt:
         assert "Updated 'CUSTOM.md'" in _text(result)
 
     @pytest.mark.asyncio
-    async def test_update_soul_md_is_guarded(self, ctx):
+    async def test_update_soul_md_rejected_as_unknown_section(self, ctx):
+        """SOUL.md retired with its dedicated guard: the name is no longer an
+        allowed section, so it is refused like any other unknown file (the
+        generic message does not single it out)."""
         soul = ctx.config.agent_path / "SOUL.md"
-        soul.write_text("core identity\n")
+        soul.write_text("legacy identity\n")
         ctx.request_confirmation = _mock_confirm(approved=True)
 
         result = await tool_update_system_prompt(ctx, "SOUL.md", "hijacked identity\n")
 
         text = _text(result)
         assert "[error:" in text
-        # "core identity file" only appears in the guarded-section message —
-        # the generic invalid-section error also mentions the SOUL.md guard,
-        # so assert the specific phrasing.
-        assert "core identity file" in text
-        assert soul.read_text() == "core identity\n"
-        # Guarded sections fail before any confirmation is requested.
-        assert ctx.request_confirmation.call_count == 0
-
-    @pytest.mark.asyncio
-    async def test_update_soul_md_guarded_even_when_absent(self, ctx):
-        """The guard is on the *name*, not the on-disk state — a missing
-        SOUL.md must not be creatable through this tool either."""
-        assert not (ctx.config.agent_path / "SOUL.md").exists()
-        ctx.request_confirmation = _mock_confirm(approved=True)
-
-        result = await tool_update_system_prompt(ctx, "SOUL.md", "brand new identity\n")
-
-        assert "core identity file" in _text(result)
-        assert not (ctx.config.agent_path / "SOUL.md").exists()
+        assert "not an updatable prompt section" in text
+        assert soul.read_text() == "legacy identity\n"
         assert ctx.request_confirmation.call_count == 0
 
     @pytest.mark.asyncio
@@ -536,24 +533,6 @@ class TestUpdateSystemPrompt:
         assert target.read_text() == "tweaked on disk while pending\n"
 
     @pytest.mark.asyncio
-    async def test_update_symlink_to_soul_md_refused(self, ctx):
-        """A USER.md symlink pointing to SOUL.md must be refused before reading
-        it — preventing overwriting guarded identity files via redirection."""
-        ctx.request_confirmation = _mock_confirm(approved=True)
-        soul = ctx.config.agent_path / "SOUL.md"
-        soul.write_text("protected identity\n")
-
-        user_md = ctx.config.agent_path / "USER.md"
-        user_md.symlink_to(soul)
-
-        result = await tool_update_system_prompt(ctx, "USER.md", "hijacked\n")
-
-        text = _text(result)
-        assert "core identity file" in text or "symlink" in text
-        assert soul.read_text() == "protected identity\n"
-        assert ctx.request_confirmation.call_count == 0
-
-    @pytest.mark.asyncio
     async def test_update_symlink_to_secret_file_refused(self, ctx):
         """A USER.md symlink pointing to a secret file (e.g. web_tokens.json)
         must be refused before reading it — secret contents must not be copied
@@ -637,21 +616,21 @@ class TestUpdateSystemPromptRecovery:
     @pytest.mark.asyncio
     async def test_recovery_approve_revalidates_section(self, ctx):
         """Stored action_data is not trusted: a tampered archive entry
-        naming SOUL.md must still be refused on the recovery path (the
-        guard is inherited, #1013). The interactive flow can never emit
-        this shape — SOUL.md is refused before confirmation — so the
-        request is hand-built, in the real persisted shape."""
+        naming a non-updatable file must still be refused on the recovery
+        path (the allowlist is inherited, #1013). The interactive flow can
+        never emit this shape — AGENT.md is refused before confirmation — so
+        the request is hand-built, in the real persisted shape."""
         from decafclaw.tools.prompt_tools import UpdateSystemPromptHandler
 
         handler = UpdateSystemPromptHandler()
-        soul = ctx.config.agent_path / "SOUL.md"
-        soul.write_text("identity\n")
+        agent_md = ctx.config.agent_path / "AGENT.md"
+        agent_md.write_text("behavior\n")
 
         req = ConfirmationRequest(
             action_type=ConfirmationAction.UPDATE_SYSTEM_PROMPT,
             action_data={
                 "tool_name": "update_system_prompt",
-                "path": "SOUL.md",
+                "path": "AGENT.md",
                 "payload": {"content": "hijacked\n"},
             },
         )
@@ -659,8 +638,8 @@ class TestUpdateSystemPromptRecovery:
 
         result = await handler.on_approve(ctx, req, resp)
         assert "error" in result
-        assert "core identity file" in result["error"]
-        assert soul.read_text() == "identity\n"
+        assert "not an updatable prompt section" in result["error"]
+        assert agent_md.read_text() == "behavior\n"
 
     @pytest.mark.asyncio
     async def test_recovery_approve_refuses_marker(self, ctx):
@@ -725,40 +704,6 @@ class TestUpdateSystemPromptRecovery:
         assert result["inject_message"] == "[update_system_prompt for 'USER.md' was denied by user]"
         assert result["continue_loop"] is False
         assert not (ctx.config.agent_path / "USER.md").exists()
-
-    @pytest.mark.asyncio
-    async def test_recovery_approve_refuses_symlink_destination_to_soul(self, ctx):
-        """Recovery handler rejects a persisted request targeting SOUL.md via
-        symlink or snapshot redirection, protecting core identity files."""
-        from decafclaw.tools.prompt_tools import UpdateSystemPromptHandler
-
-        handler = UpdateSystemPromptHandler()
-        soul = ctx.config.agent_path / "SOUL.md"
-        soul.write_text("protected soul\n")
-
-        # Hand-built persisted request whose snapshot targets SOUL.md
-        req = ConfirmationRequest(
-            action_type=ConfirmationAction.UPDATE_SYSTEM_PROMPT,
-            action_data={
-                "tool_name": "update_system_prompt",
-                "path": "USER.md",
-                "payload": {"content": "tampered\n"},
-                "snapshot": {
-                    "resolved": str(soul),
-                    "exists": True,
-                    "content": "protected soul\n",
-                    "mtime_ns": 12345,
-                    "size": len("protected soul\n"),
-                    "is_dir": False,
-                },
-            },
-        )
-        resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=True)
-        result = await handler.on_approve(ctx, req, resp)
-
-        assert "error" in result
-        assert "core identity file" in result["error"]
-        assert soul.read_text() == "protected soul\n"
 
     @pytest.mark.asyncio
     async def test_recovery_approve_refuses_symlink_destination_to_secret(self, ctx):

@@ -56,7 +56,6 @@ from .web.workspace_routes import workspace_router
 log = logging.getLogger(__name__)
 
 _CONFIG_FILES = [
-    {"name": "SOUL.md", "path": "SOUL.md", "description": "Core identity prompt", "scope": "admin"},
     {"name": "AGENT.md", "path": "AGENT.md", "description": "Behavioral instructions", "scope": "admin"},
     {"name": "USER.md", "path": "USER.md", "description": "User-specific context", "scope": "admin"},
     {"name": "HEARTBEAT.md", "path": "HEARTBEAT.md", "description": "Heartbeat check sections", "scope": "admin"},

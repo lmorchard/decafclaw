@@ -24,7 +24,7 @@ startup.
 
 Assembly happens **after** the per-case sandbox is applied, and the sandbox
 clears two separate sources of machine-local state so the result is the
-**bundled tier only** — bundled `SOUL.md` + `AGENT.md`, the `<skill_catalog>`,
+**bundled tier only** — bundled `AGENT.md`, the `<skill_catalog>`,
 and the bodies of always-loaded bundled skills:
 
 | sandbox field | what it excludes |
@@ -50,7 +50,7 @@ The tool-choice eval assembles the same prompt (see
 
 > **History discontinuity.** Runs before 2026-07-24 were measured with an
 > **empty** system prompt — the eval CLI never went through the startup path
-> that assembles it, so every case ran without SOUL.md, AGENT.md, the skill
+> that assembles it, so every case ran without AGENT.md, the skill
 > catalog, or any always-loaded skill body ([#670](https://github.com/lmorchard/decafclaw/issues/670)).
 > Pass rates from before that date are not comparable to later ones, and cost
 > per case roughly doubled once the prompt was actually being sent.
