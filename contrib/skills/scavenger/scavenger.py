@@ -974,8 +974,7 @@ def recipe_image_tag(recipe_path: str) -> str:
     """
     with open(recipe_path, "rb") as handle:
         digest = hashlib.sha256(handle.read()).hexdigest()[:12]
-    clean_name = re.sub(r"[^a-zA-Z0-9_-]", "-",
-                        os.path.basename(recipe_path).replace(".Dockerfile", ""))
+    clean_name = re.sub(r"[^a-zA-Z0-9_-]", "-", os.path.basename(recipe_path).replace(".Dockerfile", ""))
     return f"scavenger-recipe-{clean_name}:{digest}"
 
 
