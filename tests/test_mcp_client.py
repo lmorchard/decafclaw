@@ -784,3 +784,117 @@ async def test_call_tool_exception_returns_tool_result():
     assert "failed" in result.text
     assert "boom" in result.text
     assert registry.servers["srv"].status == ConnState.FAILED
+
+
+# -- Retry budget recovery (#2023) ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_successful_call_resets_retry_count():
+    """A successful call clears the failure count so the budget is consecutive, not lifetime.
+
+    ``retry_count`` used to reset only on a successful *connect*, making it a
+    process-lifetime quota: three transient failures spread over hours would
+    permanently retire a server that had been healthy for the rest of the day.
+    """
+    session = MagicMock()
+    session.call_tool = AsyncMock(return_value=MagicMock())
+    registry, caller = _make_caller(status=ConnState.CONNECTED, session=session)
+    registry.servers["srv"].retry_count = 2
+
+    await caller({})
+
+    assert registry.servers["srv"].retry_count == 0
+
+
+@pytest.mark.asyncio
+async def test_exhausted_budget_still_attempts_after_cooldown(monkeypatch):
+    """An exhausted retry budget must not be permanent. After a cooldown, retry again.
+
+    Filing this as a lifetime quota meant a server that failed three times over
+    a morning stayed dead all afternoon while being perfectly healthy since.
+    """
+    registry, caller = _make_caller(status=ConnState.FAILED, retry_count=99)
+    state = registry.servers["srv"]
+
+    # Pretend the last retry happened long ago.
+    state.last_retry_time = 0.0
+
+    attempts = []
+
+    async def fake_connect_server(config, generation=None):
+        attempts.append(config)
+        new = registry.servers["srv"]
+        new.status = ConnState.CONNECTED
+        new.retry_count = 0
+        new.session = MagicMock()
+
+    async def fake_disconnect(name):
+        return None
+
+    monkeypatch.setattr(registry, "connect_server", fake_connect_server)
+    monkeypatch.setattr(registry, "disconnect_server", fake_disconnect)
+
+    ok = await registry._maybe_reconnect("srv")
+
+    assert attempts, "expected a reconnect attempt despite the exhausted count"
+    assert ok is True
+    assert registry.servers["srv"].retry_count == 0
+
+
+@pytest.mark.asyncio
+async def test_reprobe_failed_recovers_server_without_a_tool_call():
+    """A FAILED server recovers on a re-probe, with no tool call to trigger it.
+
+    This is the second half of #2023: `_maybe_reconnect` used to be reachable
+    only from the tool caller. A failed server exposes no tools, so no caller
+    path existed -- the connection could come back and nothing would ever look.
+    """
+    registry, _caller = _make_caller(status=ConnState.FAILED, retry_count=1)
+    registry.servers["srv"].last_retry_time = 0.0
+
+    async def fake_connect_server(config, generation=None):
+        state = registry.servers["srv"]
+        state.status = ConnState.CONNECTED
+        state.retry_count = 0
+        state.session = MagicMock()
+
+    registry.connect_server = fake_connect_server
+    registry.disconnect_server = AsyncMock()
+
+    recovered = await registry.reprobe_failed()
+
+    assert recovered == ["srv"]
+    assert registry.servers["srv"].status == ConnState.CONNECTED
+
+
+@pytest.mark.asyncio
+async def test_reprobe_failed_ignores_connected_servers():
+    """Re-probing must not disturb servers that are already healthy."""
+    registry, _caller = _make_caller(status=ConnState.CONNECTED, session=MagicMock())
+    registry.connect_server = AsyncMock()
+
+    recovered = await registry.reprobe_failed()
+
+    assert recovered == []
+    registry.connect_server.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reprobe_failed_survives_a_raising_connect():
+    """One bad server must not abort the re-probe of the others."""
+    registry, _caller = _make_caller(status=ConnState.FAILED, retry_count=0)
+    registry.servers["srv"].last_retry_time = 0.0
+    registry.disconnect_server = AsyncMock()
+    registry.connect_server = AsyncMock(side_effect=RuntimeError("boom"))
+
+    recovered = await registry.reprobe_failed()
+
+    assert recovered == []
+
+
+def test_start_reprobe_failed_skips_when_nothing_is_failed():
+    """The per-turn hook must be free when every server is healthy."""
+    registry, _caller = _make_caller(status=ConnState.CONNECTED, session=MagicMock())
+
+    assert registry.start_reprobe_failed() is None

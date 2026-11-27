@@ -16,6 +16,13 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+# Reconnection budget (#2023). A failed server may spend _MAX_RETRIES_PER_WINDOW
+# attempts, but only within _RETRY_WINDOW_S of the first one. Once the window
+# elapses the count is forgiven and the server is tried again, so a transient
+# outage early in a long-lived process cannot retire a server permanently.
+_MAX_RETRIES_PER_WINDOW = 3
+_RETRY_WINDOW_S = 600.0
+
 
 _MISSING = object()
 
@@ -553,6 +560,59 @@ class MCPRegistry:
         self._closed: bool = False
         self._connection_tasks: dict[str, asyncio.Task] = {}
 
+    async def reprobe_failed(self) -> list[str]:
+        """Re-attempt every FAILED server. Returns the names that recovered.
+
+        `_maybe_reconnect` was previously reachable only from `_make_tool_caller`
+        (#2023). A server that failed has no registered tools, so nothing ever
+        called into it again -- a dead end with no code path that would notice
+        the upstream came back. This makes recovery independent of someone
+        calling a tool that no longer exists.
+
+        Failures here are swallowed: a re-probe is opportunistic, and one bad
+        server must not break the caller's turn.
+        """
+        if self._closed:
+            return []
+        recovered = []
+        for name, state in list(self.servers.items()):
+            if state.status != ConnState.FAILED:
+                continue
+            try:
+                if await self._maybe_reconnect(name):
+                    recovered.append(name)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.debug("MCP re-probe of %r raised: %s", name, exc)
+        return recovered
+
+    def start_reprobe_failed(self) -> asyncio.Task | None:
+        """Schedule `reprobe_failed` in the background for a sync caller.
+
+        The per-turn tool reconcile is synchronous, so it schedules rather than
+        awaiting. Returns the task, or None when there is nothing to probe.
+        """
+        if self._closed:
+            return None
+        if not any(s.status == ConnState.FAILED for s in self.servers.values()):
+            return None
+        task = asyncio.create_task(self.reprobe_failed(), name="mcp-reprobe-failed")
+
+        def _log(t):
+            try:
+                done = t.result()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                log.debug("MCP re-probe task raised: %s", exc)
+                return
+            if done:
+                log.info("MCP servers recovered by re-probe: %s", ", ".join(done))
+
+        task.add_done_callback(_log)
+        return task
+
     def get_tools(self) -> dict:
         """Return all MCP tools as {namespaced_name: async_callable}."""
         tools = {}
@@ -970,6 +1030,11 @@ class MCPRegistry:
                     state.session.call_tool(tool_name, arguments),
                     timeout=timeout_s,
                 )
+                # A successful call proves the connection is healthy, so the
+                # failure budget is consecutive, not a lifetime quota (#2023).
+                # Without this, three transient failures spread across a day
+                # would permanently retire a server that has been fine since.
+                state.retry_count = 0
                 return _convert_mcp_response(result)
             except asyncio.TimeoutError:
                 return ToolResult(text=f"[error: MCP tool {tool_name} on {server_name} timed out after {timeout_s}s]")
@@ -985,6 +1050,13 @@ class MCPRegistry:
         """Check if a server needs reconnection and attempt it.
 
         Returns True if the server is connected (or was reconnected).
+
+        The failure budget is a *cooldown*, not a lifetime verdict (#2023).
+        ``max_retries`` bounds how many attempts may be spent inside one
+        ``_RETRY_WINDOW_S`` window; once the window passes, the counter is
+        forgiven and reconnection is attempted again. A server that fails three
+        times over a morning must not stay retired all afternoon while being
+        healthy since -- which is exactly what happened to autofile.
         """
         state = self.servers.get(server_name)
         if not state:
@@ -993,20 +1065,32 @@ class MCPRegistry:
         if state.status == ConnState.CONNECTED:
             return True
 
-        # Give up after max retries
-        max_retries = 3
-        if state.retry_count >= max_retries:
+        now = time.monotonic()
+
+        # Forgive failures that have aged out of the retry window. This is what
+        # keeps the budget consecutive rather than cumulative.
+        if state.retry_count and now - state.last_retry_time >= _RETRY_WINDOW_S:
+            log.info(
+                "MCP server %r: retry window elapsed, forgiving %d prior failure(s)",
+                server_name,
+                state.retry_count,
+            )
+            state.retry_count = 0
+
+        if state.retry_count >= _MAX_RETRIES_PER_WINDOW:
             return False
 
         # Check backoff timing
         backoff = min(2**state.retry_count, 8)
-        now = time.monotonic()
-        if now - state.last_retry_time < backoff:
+        if state.retry_count and now - state.last_retry_time < backoff:
             return False
 
         # Attempt reconnection
         log.info(
-            f"Attempting reconnection for MCP server {server_name!r} (attempt {state.retry_count + 1}/{max_retries})"
+            "Attempting reconnection for MCP server %r (attempt %d/%d in this window)",
+            server_name,
+            state.retry_count + 1,
+            _MAX_RETRIES_PER_WINDOW,
         )
         state.last_retry_time = now
 

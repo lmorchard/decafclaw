@@ -51,6 +51,12 @@ def reconcile_mcp_tools(ctx: "Context") -> None:
         from .mcp_client import get_registry
 
         mcp_registry = get_registry()
+        if mcp_registry is not None:
+            # Opportunistically re-probe servers that are stuck in FAILED (#2023).
+            # A failed server exposes no tools, so nothing else would ever call
+            # into it and notice the upstream came back. Scheduled, not awaited:
+            # this runs on the turn path and must not block on a connect attempt.
+            mcp_registry.start_reprobe_failed()
         ctx.tools.mcp_definitions = list(mcp_registry.get_tool_definitions()) if mcp_registry else []
 
 
