@@ -157,17 +157,20 @@ describe('conversation-sidebar model selector', () => {
     return { sidebar, store };
   }
 
-  /** Wait for the nested picker to render its children, then return it. */
+  /** Wait for the nested picker and its popup to render, then return the picker. */
   async function pickerOf(el) {
     const picker = /** @type {any} */ (el.querySelector('model-picker'));
     await picker.updateComplete;
+    // #2011: the trigger and rows live in the nested <picker-popup>, which is
+    // a separate element with its own update cycle.
+    await picker.querySelector('picker-popup')?.updateComplete;
     return picker;
   }
 
   it('renders the model picker and selects the active model', async () => {
     const { sidebar } = await mount({ activeModel: 'vertex-gemini-flash-3.8' });
     const picker = await pickerOf(sidebar);
-    const trigger = picker.querySelector('.model-picker-trigger');
+    const trigger = picker.querySelector('.picker-popup-trigger');
     expect(trigger).toBeTruthy();
     expect(trigger.textContent).toContain('vertex-gemini-flash-3.8');
     expect(sidebar.querySelector('#model-select')).toBeNull();
@@ -179,7 +182,7 @@ describe('conversation-sidebar model selector', () => {
       defaultModel: 'openai-gpt-4o',
     });
     const picker = await pickerOf(sidebar);
-    const trigger = picker.querySelector('.model-picker-trigger');
+    const trigger = picker.querySelector('.picker-popup-trigger');
     expect(trigger).toBeTruthy();
     expect(trigger.textContent).toContain('openai-gpt-4o');
   });
@@ -187,7 +190,7 @@ describe('conversation-sidebar model selector', () => {
   it('updates the picker when switching conversations to a different model', async () => {
     const { sidebar, store } = await mount({ activeModel: 'vertex-gemini-flash-3.8' });
     const picker = await pickerOf(sidebar);
-    const trigger = picker.querySelector('.model-picker-trigger');
+    const trigger = picker.querySelector('.picker-popup-trigger');
     expect(trigger.textContent).toContain('vertex-gemini-flash-3.8');
 
     // Simulate switching conversation: activeModel changes to another model
@@ -202,7 +205,7 @@ describe('conversation-sidebar model selector', () => {
   it('retains correct model even when temporary reset to empty string happens during switch', async () => {
     const { sidebar, store } = await mount({ activeModel: 'vertex-gemini-flash-3.8' });
     const picker = await pickerOf(sidebar);
-    const trigger = picker.querySelector('.model-picker-trigger');
+    const trigger = picker.querySelector('.picker-popup-trigger');
     expect(trigger.textContent).toContain('vertex-gemini-flash-3.8');
 
     // Simulating selectConversation: activeModel is cleared
@@ -228,7 +231,7 @@ describe('conversation-sidebar model selector', () => {
       availableModels: ['anthropic-claude-3.5-sonnet', 'openai-gpt-4o'],
     });
     const picker = await pickerOf(sidebar);
-    const trigger = picker.querySelector('.model-picker-trigger');
+    const trigger = picker.querySelector('.picker-popup-trigger');
     expect(trigger.textContent).toContain('legacy-model-v1');
     expect(trigger.textContent).toContain('not configured');
   });
@@ -238,10 +241,10 @@ describe('conversation-sidebar model selector', () => {
     const picker = await pickerOf(sidebar);
     const handler = vi.fn();
     document.addEventListener('set-model', handler);
-    picker.querySelector('.model-picker-trigger').click();
+    picker.querySelector('.picker-popup-trigger').click();
     await picker.updateComplete;
-    const option = [...picker.querySelectorAll('.model-picker-option')]
-      .find((row) => row.dataset.model === 'openai-gpt-4o');
+    const option = [...picker.querySelectorAll('.picker-popup-option')]
+      .find((row) => row.dataset.value === 'openai-gpt-4o');
     option.click();
 
     expect(handler).toHaveBeenCalledTimes(1);
@@ -1390,14 +1393,25 @@ describe('conversation-sidebar store reads (#1408)', () => {
   });
 
   it('re-renders the model picker from store values on change', async () => {
+    // #2011: the rows live in the nested <picker-popup>, which has its own
+    // update cycle, so flush both elements before asserting.
+    /** @param {any} el */
+    async function flushPicker(el) {
+      const picker = /** @type {any} */ (el.querySelector('model-picker'));
+      await picker.updateComplete;
+      await picker.querySelector('picker-popup')?.updateComplete;
+    }
+
     const { sidebar, store } = await mount();
-    expect(sidebar.querySelector('.model-picker-trigger')?.textContent).toContain('vertex-gemini-flash-3.8');
+    await flushPicker(sidebar);
+    expect(sidebar.querySelector('.picker-popup-trigger')?.textContent).toContain('vertex-gemini-flash-3.8');
 
     store.activeModel = 'openai-gpt-4o';
     store.availableModels = ['vertex-gemini-flash-3.8', 'openai-gpt-4o'];
     store.dispatchEvent(new Event('change'));
     await sidebar.updateComplete;
+    await flushPicker(sidebar);
 
-    expect(sidebar.querySelector('.model-picker-trigger')?.textContent).toContain('openai-gpt-4o');
+    expect(sidebar.querySelector('.picker-popup-trigger')?.textContent).toContain('openai-gpt-4o');
   });
 });

@@ -89,15 +89,17 @@ function pickerFor(el, id) {
 
 /** @param {any} picker */
 async function openPicker(picker) {
-  picker.querySelector('.model-picker-trigger').click();
+  picker.querySelector('.picker-popup-trigger').click();
   await picker.updateComplete;
+  // The popup is a nested element; wait for its rows to land.
+  await picker.querySelector('picker-popup')?.updateComplete;
 }
 
 /** @param {any} picker @param {string} model */
 async function chooseModel(picker, model) {
   await openPicker(picker);
-  const row = [...picker.querySelectorAll('.model-picker-option')]
-    .find((option) => option.dataset.model === model);
+  const row = [...picker.querySelectorAll('.picker-popup-option')]
+    .find((option) => option.dataset.value === model);
   expect(row).toBeTruthy();
   row.click();
   await picker.updateComplete;
@@ -205,7 +207,7 @@ describe('model-catalog component', () => {
     expect(JSON.parse(post[1].body)).toEqual({ key: 'local/qwen2.5', enabled: true });
   });
 
-  it('renders a model-picker for every settings selection and no model select', async () => {
+  it('renders a model-select for every settings pointer and no model select', async () => {
     const { el } = await mountCatalog();
 
     expect(el.querySelectorAll('select').length).toBe(0);
@@ -215,28 +217,31 @@ describe('model-catalog component', () => {
       'catalog-reflection-picker',
       'catalog-verifier-picker',
     ]) {
-      const picker = pickerFor(el, id);
-      expect(picker).toBeTruthy();
-      expect(picker.mode).toBe('selection');
-      expect(picker.querySelector('.model-picker-trigger')).toBeTruthy();
+      const select = pickerFor(el, id);
+      expect(select).toBeTruthy();
+      expect(select.tagName.toLowerCase()).toBe('model-select');
+      expect(select.querySelector('.picker-popup-trigger')).toBeTruthy();
     }
+    // #2011: the settings page must not reach the conversation picker at all —
+    // that element is the only path to `store.setModel`.
+    expect(el.querySelectorAll('model-picker').length).toBe(0);
   });
 
-  it('default picker shows the raw pointer and posts a new choice', async () => {
+  it('default selector shows the raw pointer and posts a new choice', async () => {
     const { el, fetchMock } = await mountCatalog();
 
-    const picker = pickerFor(el, 'catalog-default-picker');
-    expect(picker.querySelector('.model-picker-trigger').textContent).toContain('local/llama3.2');
+    const select = pickerFor(el, 'catalog-default-picker');
+    expect(select.querySelector('.picker-popup-trigger').textContent).toContain('local/llama3.2');
 
-    await openPicker(picker);
-    expect(picker.querySelector('[data-model=""]').textContent).toContain('(config.json default)');
-    const selected = picker.querySelector('.model-picker-option.selected');
-    expect(selected.dataset.model).toBe('local/llama3.2');
+    await openPicker(select);
+    expect(select.querySelector('[data-value=""]').textContent).toContain('(config.json default)');
+    const selected = select.querySelector('.picker-popup-option.selected');
+    expect(selected.dataset.value).toBe('local/llama3.2');
 
-    const row = [...picker.querySelectorAll('.model-picker-option')]
-      .find((option) => option.dataset.model === 'hand-model');
+    const row = [...select.querySelectorAll('.picker-popup-option')]
+      .find((option) => option.dataset.value === 'hand-model');
     row.click();
-    await picker.updateComplete;
+    await select.updateComplete;
     await new Promise(r => setTimeout(r, 10));
 
     const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/default'));
@@ -244,26 +249,26 @@ describe('model-catalog component', () => {
     expect(JSON.parse(post[1].body)).toEqual({ model: 'hand-model' });
   });
 
-  it('auto-approval picker lists the use-conversation-model default and posts the pointer', async () => {
+  it('auto-approval selector lists the use-conversation-model default and posts the pointer', async () => {
     const { el, fetchMock } = await mountCatalog({
       ...CATALOG,
       aux_approval_pointer: '',
       aux_approval_model: '',
     });
 
-    const picker = pickerFor(el, 'catalog-aux-approval-picker');
-    expect(picker).toBeTruthy();
-    expect(picker.querySelector('.model-picker-trigger').textContent).toContain('(use conversation model)');
+    const select = pickerFor(el, 'catalog-aux-approval-picker');
+    expect(select).toBeTruthy();
+    expect(select.querySelector('.picker-popup-trigger').textContent).toContain('(use conversation model)');
 
-    await openPicker(picker);
-    expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('');
-    expect([...picker.querySelectorAll('.model-picker-option')].map(o => o.dataset.model))
+    await openPicker(select);
+    expect(select.querySelector('.picker-popup-option.selected').dataset.value).toBe('');
+    expect([...select.querySelectorAll('.picker-popup-option')].map(o => o.dataset.value))
       .toEqual(['', 'hand-model', 'local/llama3.2']);
 
-    const row = [...picker.querySelectorAll('.model-picker-option')]
-      .find((option) => option.dataset.model === 'hand-model');
+    const row = [...select.querySelectorAll('.picker-popup-option')]
+      .find((option) => option.dataset.value === 'hand-model');
     row.click();
-    await picker.updateComplete;
+    await select.updateComplete;
     await new Promise(r => setTimeout(r, 10));
 
     const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/aux_approval'));
@@ -307,44 +312,44 @@ describe('model-catalog component', () => {
     expect(inherit.el.querySelector('.model-catalog-judge-warning')).toBeFalsy();
   });
 
-  it('reflection picker lists enabled models plus an inherit option', async () => {
+  it('reflection selector lists enabled models plus an inherit option', async () => {
     const { el } = await mountCatalog({
       ...CATALOG,
       reflection_pointer: '',
       reflection_model: '',
     });
 
-    const picker = pickerFor(el, 'catalog-reflection-picker');
-    expect(picker).toBeTruthy();
-    expect(picker.querySelector('.model-picker-trigger').textContent)
+    const select = pickerFor(el, 'catalog-reflection-picker');
+    expect(select).toBeTruthy();
+    expect(select.querySelector('.picker-popup-trigger').textContent)
       .toContain('(config.json reflection / inherit)');
 
-    await openPicker(picker);
-    expect([...picker.querySelectorAll('.model-picker-option')].map(o => o.dataset.model))
+    await openPicker(select);
+    expect([...select.querySelectorAll('.picker-popup-option')].map(o => o.dataset.value))
       .toEqual(['', 'hand-model', 'local/llama3.2']);
     // Inherit (empty pointer) is the default when nothing is selected.
-    expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('');
+    expect(select.querySelector('.picker-popup-option.selected').dataset.value).toBe('');
 
     const verifier = pickerFor(el, 'catalog-verifier-picker');
     expect(verifier).toBeTruthy();
-    expect(verifier.querySelector('.model-picker-trigger').textContent)
+    expect(verifier.querySelector('.picker-popup-trigger').textContent)
       .toContain('(config.json verifier / inherit)');
     await openPicker(verifier);
-    expect([...verifier.querySelectorAll('.model-picker-option')].map(o => o.dataset.model))
+    expect([...verifier.querySelectorAll('.picker-popup-option')].map(o => o.dataset.value))
       .toEqual(['', 'hand-model', 'local/llama3.2']);
   });
 
-  it('reflection picker shows the judge pointer and posts a new choice', async () => {
+  it('reflection selector shows the judge pointer and posts a new choice', async () => {
     const { el, fetchMock } = await mountCatalog({
       ...CATALOG,
       reflection_pointer: 'local/llama3.2',
       reflection_model: 'local/llama3.2',
     });
 
-    const picker = pickerFor(el, 'catalog-reflection-picker');
-    expect(picker.querySelector('.model-picker-trigger').textContent).toContain('local/llama3.2');
+    const select = pickerFor(el, 'catalog-reflection-picker');
+    expect(select.querySelector('.picker-popup-trigger').textContent).toContain('local/llama3.2');
 
-    await chooseModel(picker, 'hand-model');
+    await chooseModel(select, 'hand-model');
     await new Promise(r => setTimeout(r, 10));
 
     const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/reflection'));
@@ -352,15 +357,15 @@ describe('model-catalog component', () => {
     expect(JSON.parse(post[1].body)).toEqual({ model: 'hand-model' });
   });
 
-  it('verifier picker posts the verifier pointer', async () => {
+  it('verifier selector posts the verifier pointer', async () => {
     const { el, fetchMock } = await mountCatalog({
       ...CATALOG,
       verifier_pointer: 'local/llama3.2',
       verifier_model: 'local/llama3.2',
     });
 
-    const picker = pickerFor(el, 'catalog-verifier-picker');
-    await chooseModel(picker, 'hand-model');
+    const select = pickerFor(el, 'catalog-verifier-picker');
+    await chooseModel(select, 'hand-model');
     await new Promise(r => setTimeout(r, 10));
 
     const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/verifier'));
@@ -368,7 +373,7 @@ describe('model-catalog component', () => {
     expect(JSON.parse(post[1].body)).toEqual({ model: 'hand-model' });
   });
 
-  it('clearing every picker posts an empty pointer', async () => {
+  it('clearing every selector posts an empty pointer', async () => {
     const { el, fetchMock } = await mountCatalog({
       ...CATALOG,
       aux_approval_pointer: 'hand-model',
