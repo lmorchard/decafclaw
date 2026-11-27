@@ -16,3 +16,13 @@ tmp/
 
 # Suggested-prompt dev sets contain raw archive text (private).
 evals/suggested_prompt/*.jsonl
+
+# Skill runtime state belongs in the agent workspace, not the git checkout.
+# contrib/skills/*/fetch.sh resolve their state dir as
+# `${DECAFCLAW_WORKSPACE:-$PWD}/skill-state/<skill>`, and the shell tools only
+# inject DECAFCLAW_WORKSPACE (src/decafclaw/tools/shell_tools.py). Run one of
+# those scripts any other way with a cwd inside the checkout and the $PWD
+# fallback wins, leaving last-run-time.txt in the worktree. Ignoring the path
+# keeps a stray run from dirtying the tree; it does not change where state is
+# written when DECAFCLAW_WORKSPACE is set.
+contrib/skills/*/skill-state/
