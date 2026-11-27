@@ -457,6 +457,7 @@ Click the context usage bar in the sidebar to see a popover with:
 - **Raw tab:**
   - View the canonical model request payload (`last_request.json`) prepared for the provider on the most recent LLM call
   - Model name, messages count, and tools count
+  - Slot-grouped contributions (HEAD, DELTA, TAIL, EPILOGUE, WORKING MEMORY) with extension attribution badges and a **KV cache boundary** divider after HEAD (#1509)
   - Full formatted canonical messages and tools JSON
   - Copy button to copy the request JSON to the clipboard
   - **Conversation copy** — two adjacent buttons (Copy MD / Copy JSONL) mounted alongside the raw copy; each exports the full conversation transcript via the same export endpoint

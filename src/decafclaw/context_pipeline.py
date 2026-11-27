@@ -44,6 +44,7 @@ def compose_system_prompt(config) -> tuple[str, SourceEntry]:
         source="system_prompt",
         tokens_estimated=tokens,
         items_included=1,
+        slot=ContextSlot.HEAD.value,
     )
     return text, entry
 
@@ -184,8 +185,8 @@ async def compose_pre_compose_hooks(
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
-    results = []
-    for task in tasks:
+    results: list[tuple[Any, Any]] = []
+    for hook, task in zip(hooks, tasks, strict=True):
         if task not in done:
             continue
         if task.cancelled():
@@ -193,7 +194,7 @@ async def compose_pre_compose_hooks(
             # must not have that swallowed by the fail-open collector.
             raise asyncio.CancelledError()
         try:
-            results.append(task.result())
+            results.append((hook, task.result()))
         except Exception as e:
             log.warning("PRE_COMPOSE hook failed: %s", e)
 
@@ -204,26 +205,32 @@ async def compose_pre_compose_hooks(
     working_memory: list[dict] = []
     sources: list[SourceEntry] = []
     fact_texts: list[str] = []
+    fact_owners: list[str] = []
     recalled_facts: list[str] = []
     provenance: dict[str, list[dict]] = {}
 
-    for r in results:
+    for hook, r in results:
+        extension = hook_extension_name(hook)
         if r is None:
             continue
         if isinstance(r, ContextContribution):
-            mount_context_contribution(r, head, delta, tail, epilogue, working_memory, sources)
+            mount_context_contribution(r, head, delta, tail, epilogue, working_memory, sources, extension=extension)
             merge_provenance(r.provenance, provenance)
         elif isinstance(r, str):
             if r.strip():
                 fact_texts.append(r.strip())
+                fact_owners.append(extension)
         elif isinstance(r, (list, tuple)):
             for item in r:
                 if isinstance(item, ContextContribution):
-                    mount_context_contribution(item, head, delta, tail, epilogue, working_memory, sources)
+                    mount_context_contribution(
+                        item, head, delta, tail, epilogue, working_memory, sources, extension=extension
+                    )
                     merge_provenance(item.provenance, provenance)
                 elif isinstance(item, str):
                     if item.strip():
                         fact_texts.append(item.strip())
+                        fact_owners.append(extension)
                 else:
                     log.warning(
                         "PRE_COMPOSE hook returned unsupported item %s; ignoring",
@@ -243,12 +250,26 @@ async def compose_pre_compose_hooks(
                 source="recalled_facts",
                 tokens_estimated=estimate_tokens(block["content"]),
                 items_included=len(fact_texts),
+                slot=ContextSlot.WORKING_MEMORY.value,
+                extension=", ".join(sorted(set(fact_owners) - {""})),
             )
         )
         if recalled_facts:
             provenance.setdefault("facts", []).extend({"fact": fact} for fact in recalled_facts)
 
     return head, delta, tail, epilogue, working_memory, sources, recalled_facts, provenance
+
+
+def hook_extension_name(hook: Any) -> str:
+    """Return the extension name owning a bound ``PRE_COMPOSE`` hook.
+
+    Extensions are bound methods on ``BaseExtension`` instances, whose
+    ``name`` attributes the Context Inspector as the contribution's origin
+    (#1509). Plain function hooks have no owner and report an empty string.
+    """
+    owner = getattr(hook, "__self__", None)
+    name = getattr(owner, "name", "")
+    return name if isinstance(name, str) else ""
 
 
 def merge_provenance(contribution: dict[str, list[dict]] | None, into: dict[str, list[dict]]) -> None:
@@ -285,8 +306,16 @@ def mount_context_contribution(
     epilogue: list[dict],
     working_memory: list[dict],
     sources: list[SourceEntry],
+    *,
+    extension: str = "",
 ) -> None:
-    """Validate and mount one structured contribution; fail open."""
+    """Validate and mount one structured contribution; fail open.
+
+    ``extension`` names the hook's owner so the contribution's ``SourceEntry``
+    can attribute its origin to the Context Inspector (#1509). The mounted
+    slot is authoritative: attribution follows where the messages actually
+    went even if the entry carried a stale slot.
+    """
     if not isinstance(contribution.slot, ContextSlot):
         log.warning("PRE_COMPOSE contribution has unknown slot %r; ignoring", contribution.slot)
         return
@@ -310,7 +339,11 @@ def mount_context_contribution(
     if contribution.source_entry is None:
         return
     if isinstance(contribution.source_entry, SourceEntry):
-        sources.append(contribution.source_entry)
+        entry = contribution.source_entry
+        entry.slot = contribution.slot.value
+        if not entry.extension:
+            entry.extension = extension
+        sources.append(entry)
     else:
         log.warning(
             "PRE_COMPOSE contribution for slot %s has malformed source_entry; ignoring",
