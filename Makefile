@@ -329,6 +329,14 @@ eval-tools:
 eval-history:
 	uv run python -m decafclaw.eval --history
 
+# Print the generated inventory of eval suites (read-only; never a gate)
+eval-inventory:
+	uv run python -m decafclaw.eval --inventory evals/
+
+# Machine-readable inventory for a later dashboard
+eval-inventory-json:
+	uv run python -m decafclaw.eval --inventory --json evals/
+
 # Rebuild eval embedding fixtures (run when changing embedding models)
 build-eval-fixtures:
 	uv run python scripts/build-eval-fixtures.py
