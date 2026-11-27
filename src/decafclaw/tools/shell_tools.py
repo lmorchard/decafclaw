@@ -946,7 +946,7 @@ async def _approve_by_security_monitor(
     *,
     command: str,
     cwd: str | None,
-    activity: Activity | None,
+    activity: Activity,
     tool_name: str,
 ) -> dict | None:
     """Tier 1 fast path: block catastrophically dangerous commands.
@@ -986,7 +986,7 @@ async def _approve_by_patterns(
     *,
     command: str,
     cwd: str | None,
-    activity: Activity | None,
+    activity: Activity,
     shell_cwd: Path,
     read_only_enabled: bool,
     tool_name: str,
@@ -1030,7 +1030,7 @@ async def _tier2_llm(
     command: str,
     cwd: str | None,
     purpose: str,
-    activity: Activity | None,
+    activity: Activity,
     message: str,
     tool_name: str,
     cwd_note: str,
@@ -1071,9 +1071,7 @@ async def _tier2_llm(
     if decision.status != SecurityStatus.ASK:
         return None
 
-    log.info(
-        f"[{tool_name}] security monitor requires explicit confirmation: {command} (reason: {decision.reason})"
-    )
+    log.info(f"[{tool_name}] security monitor requires explicit confirmation: {command} (reason: {decision.reason})")
     venv_path = venv_executable_path(command, ctx.config.workspace_path)
     if venv_path and _claim_shell_redirect(ctx, command=command, cwd=cwd, purpose=purpose):
         log.info(f"[{tool_name}] redirecting virtualenv invocation to uv run: {command}")
@@ -1168,7 +1166,7 @@ async def _blanket_preapproval(
     *,
     command: str,
     cwd: str | None,
-    activity: Activity | None,
+    activity: Activity,
     tool_name: str,
 ) -> dict | None:
     """Blanket tool pre-approval (e.g. allowed-tools: shell without scoped patterns).
@@ -1190,7 +1188,7 @@ async def _direction_decision(
     command: str,
     cwd: str | None,
     purpose: str,
-    activity: Activity | None,
+    activity: Activity,
     message: str,
     tool_name: str,
     cwd_note: str,
@@ -1271,7 +1269,7 @@ async def _aux_llm_attempt(
     command: str,
     cwd: str | None,
     purpose: str,
-    activity: Activity | None,
+    activity: Activity,
     tool_name: str,
 ) -> _AuxOutcome:
     """The aux-LLM auto-approval judge (#1641 Phase 2).
@@ -1288,9 +1286,7 @@ async def _aux_llm_attempt(
 
     if _command_matches_pattern(command, ctx.tools.llm_approved_shell_patterns):
         log.info(f"[{tool_name}] auto-approved by session aux-LLM memory: {command}")
-        await _record_approval(
-            ctx, command=command, cwd=cwd, decision="allow", tier="aux_memory", activity=activity
-        )
+        await _record_approval(ctx, command=command, cwd=cwd, decision="allow", tier="aux_memory", activity=activity)
         return _AuxOutcome(decision={"approved": True, "decision": "allow", "tier": "aux_memory"})
 
     decline_reason = ""
@@ -1343,18 +1339,14 @@ async def _aux_llm_attempt(
                 tool_label="shell auto-approval: ALLOWED",
                 extra_lines=extra_lines,
             )
-            await _record_approval(
-                ctx, command=command, cwd=cwd, decision="allow", tier="aux_allow", activity=activity
-            )
+            await _record_approval(ctx, command=command, cwd=cwd, decision="allow", tier="aux_allow", activity=activity)
 
             allowed: dict = {"approved": True, "decision": "allow", "tier": "aux_allow"}
             if advisory:
                 allowed["advisory"] = advisory
             return _AuxOutcome(decision=allowed)
 
-        log.info(
-            f"[{tool_name}] aux LLM declined auto-approval ({risk_category}): {command} - {data.get('reason')}"
-        )
+        log.info(f"[{tool_name}] aux LLM declined auto-approval ({risk_category}): {command} - {data.get('reason')}")
 
         decline_reason = str(data.get("reason") or "").strip()
         decline_risk = str(data.get("risk") or "").strip()
@@ -1397,7 +1389,7 @@ async def _final_confirmation(
     command: str,
     cwd: str | None,
     purpose: str,
-    activity: Activity | None,
+    activity: Activity,
     message: str,
     tool_name: str,
     cwd_note: str,
@@ -1599,9 +1591,7 @@ async def check_shell_approval(
         return decision
 
     # 5. Blanket tool pre-approval (e.g. allowed-tools: shell without scoped patterns).
-    if decision := await _blanket_preapproval(
-        ctx, command=command, cwd=cwd, activity=activity, tool_name=tool_name
-    ):
+    if decision := await _blanket_preapproval(ctx, command=command, cwd=cwd, activity=activity, tool_name=tool_name):
         return decision
 
     # 6. Direction (#1641 Phase 3): a command that starts a new activity asks once.
