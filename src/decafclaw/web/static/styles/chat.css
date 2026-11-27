@@ -829,11 +829,70 @@ calendar-sidebar .calendar-range-label {
 }
 
 calendar-sidebar .calendar-open-conv {
-  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  max-width: 100%;
+  border: 1px solid var(--pico-form-element-border-color, #ccc);
+  border-radius: 999px;
   background: transparent;
-  padding: 0 0.2rem;
+  padding: 0.05rem 0.45rem;
   margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.3;
   cursor: pointer;
+  color: var(--pico-muted-color);
+}
+
+calendar-sidebar .calendar-open-conv-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+calendar-sidebar .calendar-open-conv:hover,
+calendar-sidebar .calendar-open-conv:focus-visible {
+  color: var(--pico-color);
+  border-color: var(--pico-primary);
+  background: var(--pico-secondary-background);
+}
+
+calendar-page .calendar-target-link {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0.6rem 0 0;
+}
+
+calendar-page .calendar-target-label {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+
+calendar-page .calendar-target-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border: 1px solid var(--pico-primary);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--pico-primary);
+  padding: 0.1rem 0.6rem;
+  margin: 0;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+calendar-page .calendar-target-chip:hover,
+calendar-page .calendar-target-chip:focus-visible {
+  background: var(--pico-primary);
+  color: var(--pico-primary-inverse, #fff);
+}
+
+calendar-page .calendar-run-note {
+  margin: 0.4rem 0 0;
+  font-size: 0.7rem;
   color: var(--pico-muted-color);
 }
 

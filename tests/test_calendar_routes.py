@@ -585,3 +585,60 @@ async def test_update_can_add_and_clear_a_policy(client, http_config):
     assert event["allowed_tools"] == []
     assert event["shell_patterns"] == []
     assert event["model"] == ""
+
+
+# -- run now (rehearsal) ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_requires_authentication(app):
+    """The endpoint must not be reachable without a session cookie."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as anon:
+        resp = await anon.post("/api/calendar/events/cal_whatever/run")
+    assert resp.status_code in (401, 403), resp.text
+
+
+@pytest.mark.asyncio
+async def test_run_rejects_an_unknown_event(client):
+    resp = await client.post("/api/calendar/events/cal_nope/run")
+    assert resp.status_code == 404, resp.text
+
+
+@pytest.mark.asyncio
+async def test_run_refuses_a_non_pending_event(client, app):
+    created = await client.post("/api/calendar/events", json=_body())
+    event_id = created.json()["event"]["event_id"]
+    cancelled = await client.delete(f"/api/calendar/events/{event_id}")
+    assert cancelled.status_code == 200, cancelled.text
+
+    resp = await client.post(f"/api/calendar/events/{event_id}/run")
+    assert resp.status_code == 409, resp.text
+    assert "cancelled" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_run_reports_503_when_the_wake_cannot_start(client):
+    """No ConversationManager attached: the event cannot be enqueued."""
+    created = await client.post("/api/calendar/events", json=_body())
+    event_id = created.json()["event"]["event_id"]
+
+    resp = await client.post(f"/api/calendar/events/{event_id}/run")
+    assert resp.status_code == 503, resp.text
+
+
+def test_there_is_no_agent_tool_to_run_a_calendar_event():
+    """Run-now must stay a human-only action (#731).
+
+    `calendar_tools` deliberately sets policy_granted=False so an agent cannot
+    mint a preapproval-granting event. A run trigger exposed as a tool would
+    give that back: the agent could start an unattended turn under the human's
+    preapprovals on demand.
+    """
+    from decafclaw.tools import calendar_tools
+
+    tool_names = {tool["function"]["name"] for tool in calendar_tools.CALENDAR_TOOL_DEFINITIONS}
+    assert tool_names, "the tool list moved; this guard is no longer checking anything"
+    assert not any("run" in name for name in tool_names), tool_names
+    # The manager method must not be bound into any exposed tool.
+    assert not any(fn == "fire_now" for fn in vars(calendar_tools).values())

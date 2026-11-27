@@ -135,6 +135,38 @@ export class CalendarPage extends LitElement {
     }
   }
 
+  /**
+   * Run the event now, as a rehearsal.
+   *
+   * The backend deliberately does not advance the schedule, so this is safe to
+   * press repeatedly on a recurring event. It also cannot tell us how the run
+   * ended — the wake turn is enqueued and this request returns immediately, so
+   * the message says the run *started* and points at the session.
+   */
+  async #runNow() {
+    if (!this.eventId) return;
+    this._saving = true;
+    this._error = '';
+    this._message = '';
+    try {
+      const result = await DefaultService.wrapperApiCalendarEventsEventIdRunPost(this.eventId);
+      this._event = result.event;
+      this._message = 'Run started. Open its conversation to watch it.';
+      this.#notifyChanged();
+    } catch (err) {
+      this._error = responseError(err) || String(err);
+    } finally {
+      this._saving = false;
+    }
+  }
+
+  #openTargetConversation() {
+    const convId = this._event?.target_conv_id;
+    if (!convId) return;
+    const sidebar = /** @type {any} */ (document.querySelector('conversation-sidebar'));
+    sidebar?.store?.selectConversation(convId);
+  }
+
   async #cancel() {
     if (!this.eventId) return;
     this._saving = true;
@@ -181,12 +213,22 @@ export class CalendarPage extends LitElement {
           <button type="submit" ?disabled=${this._saving}>${event ? 'Save' : 'Create'}</button>
         </form>
         ${event ? html`
+          <div class="calendar-target-link">
+            <span class="calendar-target-label">Runs in</span>
+            <button
+              class="calendar-target-chip"
+              aria-label="Open the conversation this event runs in"
+              @click=${() => this.#openTargetConversation()}
+            >${event.target_title || event.target_conv_id}<span aria-hidden="true"> ↗</span></button>
+          </div>
           <div class="calendar-actions">
+            <button class="calendar-run-now" @click=${() => this.#runNow()} ?disabled=${this._saving || event.status !== 'pending'}>Run now</button>
             <button @click=${() => this.#snooze(900)} ?disabled=${this._saving}>Snooze 15m</button>
             <button @click=${() => this.#snooze(3600)} ?disabled=${this._saving}>1h</button>
             <button @click=${() => this.#snooze(86400)} ?disabled=${this._saving}>1d</button>
             <button class="calendar-cancel" @click=${() => this.#cancel()} ?disabled=${this._saving}>Cancel event</button>
           </div>
+          <p class="calendar-run-note">Run now rehearses this event without moving its schedule.</p>
         ` : nothing}
       </div>
     `;

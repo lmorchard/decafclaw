@@ -2714,6 +2714,34 @@
         }
       }
     },
+    "/api/calendar/events/{event_id}/run": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_calendar_events__event_id__run_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarEventResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/schedules": {
       "get": {
         "summary": "Wrapper",

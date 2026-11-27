@@ -554,6 +554,41 @@ async def calendar_events_snooze(request: Request, username: str) -> JSONRespons
     return JSONResponse({"event": _event_out(config, index, updated).model_dump()})
 
 
+@_authenticated
+async def calendar_events_run(request: Request, username: str) -> JSONResponse:
+    """POST /api/calendar/events/{event_id}/run — rehearse a pending event now.
+
+    Fires the wake turn without advancing the schedule, so pressing this on a
+    weekly event does not skip that week (`CalendarManager.fire_now`).
+
+    **Web route only — deliberately no agent tool.** Creation already reserves
+    the preapproval grant to this authenticated surface (#1971): the agent tool
+    sets ``policy_granted=False``. Exposing a run trigger as a tool would hand
+    that grant back on demand — the agent could start an unattended turn under
+    the human's preapprovals whenever it liked, which is the boundary #731
+    exists to hold. Test cover in `test_calendar_routes.py` asserts no
+    `calendar_run` tool is registered.
+    """
+    config = request.app.state.config
+    index = ConversationIndex(config)
+    event_id = request.path_params["event_id"]
+    event = _find(config, index, username, event_id)
+    if event is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if event.status != "pending":
+        return JSONResponse(
+            {"error": f"cannot run a {event.status} event"},
+            status_code=409,
+        )
+    updated = await _manager(request).fire_now(event.conv_id, event_id)
+    if updated is None:
+        # Only reachable when the wake could not be enqueued (no manager, no
+        # resolvable target, or rate-limited despite the bypass).
+        return JSONResponse({"error": "the event could not be started"}, status_code=503)
+    await _publish_changed(request, updated, "ran")
+    return JSONResponse({"event": _event_out(config, index, updated).model_dump()})
+
+
 calendar_router = APIRouter()
 calendar_router.add_api_route(
     "/api/calendar/events",
@@ -628,4 +663,11 @@ calendar_router.add_api_route(
             "content": {"application/json": {"schema": CalendarSnoozeRequest.model_json_schema()}},
         },
     },
+)
+calendar_router.add_api_route(
+    "/api/calendar/events/{event_id}/run",
+    calendar_events_run,
+    methods=["POST"],
+    response_model=CalendarEventResponse,
+    openapi_extra={"parameters": [{"name": "event_id", "in": "path", "required": True, "schema": {"type": "string"}}]},
 )

@@ -180,8 +180,13 @@ export class CalendarSidebar extends LitElement {
           <div class="calendar-row" @click=${() => this.#open(occurrence.event_id)}>
             <span class="calendar-row-time">${this.#time(occurrence.occurrence_at)}</span>
             <span class="calendar-row-title">${occurrence.title}${occurrence.recurrence ? ' ↻' : ''}</span>
-            <span class="calendar-row-target">${occurrence.target_title || occurrence.target_conv_id}
-              <button class="calendar-open-conv" title="Open conversation" @click=${(ev) => this.#openConversation(occurrence, ev)}>↗</button>
+            <span class="calendar-row-target">
+              <button
+                class="calendar-open-conv"
+                aria-label="Open the conversation this event runs in"
+                title=${`Open ${occurrence.target_title || occurrence.target_conv_id}`}
+                @click=${(ev) => this.#openConversation(occurrence, ev)}
+              ><span class="calendar-open-conv-name">${occurrence.target_title || occurrence.target_conv_id}</span><span aria-hidden="true"> ↗</span></button>
             </span>
           </div>
         `)}
