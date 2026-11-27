@@ -208,7 +208,7 @@ turn live:
 - **Unwatched turns** deliver the accumulated preamble join *plus* the note,
   same as before #707, because `ToolResult.text` is their only channel:
   - a **child agent** (`ctx.is_child`, set by `delegate.py` and by
-    `compaction.py`'s memory sweep). A parent agent consuming a child's
+    `compaction/__init__.py`'s memory sweep). A parent agent consuming a child's
     output is not a transport — it never subscribes to the event bus, so
     `ToolResult.text` (routed back through `delegate.py`'s `run_child_turn`
     or the workflow `subagent` primitive) is the child's only channel for its

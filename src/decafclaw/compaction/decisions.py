@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .conversation_paths import sidecar_path
+from ..conversation_paths import sidecar_path
 
 log = logging.getLogger(__name__)
 
