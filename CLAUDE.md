@@ -185,7 +185,7 @@ Common Make targets (see `Makefile` for the complete list):
 | Web | `check-js`, `test-js`, `vendor`, `gen-api-client`, `check-browser-assets` |
 | TUI | `check-tui`, `test-tui` (separate from `check`) |
 | Policy/generated types | `check-npm-policy`, `gen-message-types`, `check-message-types`, `check-skill-annotations` |
-| Evals | `eval`, `eval-tools`, `eval-history`, `build-eval-fixtures` |
+| Evals | `eval`, `eval-tools`, `eval-history`, `eval-inventory`, `eval-inventory-json`, `build-eval-fixtures` |
 | Data | `config`, `reindex`, `prune-embeddings`, `migrate-sidecars`, `migrate-sessions` |
 | Worktrees | `prune-worktrees-dry`, `prune-worktrees` |
 

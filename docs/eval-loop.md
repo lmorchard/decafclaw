@@ -7,6 +7,8 @@ DecafClaw includes an eval harness for testing prompts and tools with real LLM c
 ```bash
 make eval                                            # Run all YAML test files (default model)
 make eval-history                                    # Print the pass-rate trend over recent runs
+make eval-inventory                                  # Print the generated inventory of eval suites
+make eval-inventory-json                             # Same inventory as machine-readable JSON
 uv run python -m decafclaw.eval evals/               # Same, via Python invocation
 uv run python -m decafclaw.eval evals/memory.yaml    # Run a specific file
 uv run python -m decafclaw.eval evals/ --model gemini-3.8-flash  # Override model
@@ -14,6 +16,8 @@ uv run python -m decafclaw.eval evals/ --verbose     # Show truncated response s
 uv run python -m decafclaw.eval evals/ --concurrency 1  # Run tests sequentially (default: 4)
 uv run python -m decafclaw.eval --history            # Print history table, no run
 uv run python -m decafclaw.eval --history --history-limit 5  # Last 5 runs only
+uv run python -m decafclaw.eval --inventory          # Print the suite inventory, no run
+uv run python -m decafclaw.eval --inventory --json   # Inventory as JSON
 ```
 
 ## System prompt
@@ -344,6 +348,40 @@ Timestamp          Model                       Pass /  Total    Rate       Δ   
 ```
 
 The Δ column is pass-rate delta from the previous row. Useful for spotting regressions when a tool-description change knocks the rate down.
+
+## Suite inventory
+
+`make eval-inventory` prints a generated table over every `evals/**/*.yaml` suite. It is derived at read time from the YAML, git, and `evals/history.jsonl` — never stored — so it cannot drift into another stale artifact. It is reporting only and is deliberately **not** part of `make check`; its output may change freely.
+
+```bash
+make eval-inventory          # human-readable table
+make eval-inventory-json     # stable machine-readable JSON
+uv run python -m decafclaw.eval --inventory
+uv run python -m decafclaw.eval --inventory --json
+```
+
+```
+File                                Tier        Cases  Axes                 Model-gated  Last touched  Last run  Pass rate
+----------------------------------  ----------  -----  -------------------  -----------  ------------  --------  ---------
+abort_recovery.yaml                 behavioral  4      workflow_discipline  0            2026-07-25    —         —
+dream.yaml                          smoke       1      untagged             0            2026-10-10    —         —
+tool_choice/core_overlaps.yaml      choice      57     untagged             0            2026-11-23    —         —
+...
+33 suites, 175 cases
+```
+
+| Column | Source |
+|--------|--------|
+| `file` | path under `evals/` |
+| `tier` | derived: `tool_choice/` → `choice`; 1 case → `smoke`; else `behavioral` |
+| `cases` | parsed top-level YAML entries (not a grep) |
+| `axes` | sorted union of each case's `tests:` tags, or `untagged` |
+| `model-gated` | cases whose `setup.config_overrides` set a model/provider field |
+| `last touched` | `git log -1 --format=%cs -- <file>` |
+| `last run` | latest matching timestamp in `evals/history.jsonl`, else `—` |
+| `pass rate` | that run's per-file pass rate, else `—` |
+
+The `—` columns are the point: a suite that has never recorded a run, or has no axis tag, stays visible instead of being omitted. Tool-choice suites do not append to `history.jsonl`, so their run columns stay `—` until that surface gains history.
 
 ## Failure reflection
 
