@@ -18,10 +18,6 @@ rule (``secret_policy.py``), the redaction-marker guard, and
 snapshot revalidation so a file changed while the confirmation is
 pending is not clobbered.
 
-``SOUL.md`` is the core identity file: it is guarded against agent
-modification by name, and the guard holds whether or not the file
-exists on disk.
-
 The private helpers imported from ``.admin_tools`` are the project's
 shared confirmation/revalidation machinery — reusing them (rather than
 copying) is what keeps the recovery path below inheriting exactly the
@@ -64,10 +60,6 @@ _ALLOWED_SECTIONS: dict[str, str] = {
     "CUSTOM.MD": "CUSTOM.md",
 }
 
-# Core identity files the agent must never modify. Matched by name
-# (upper-cased), independent of on-disk state.
-_GUARDED_SECTIONS: frozenset[str] = frozenset({"SOUL.MD"})
-
 
 def _allowed_sections_list() -> str:
     """The allowed sections for user-facing messages (canonical names)."""
@@ -79,7 +71,6 @@ def _validate_section(section: str) -> tuple[str, None] | tuple[None, ToolResult
     exactly one element is None:
 
     - allowed section → (canonical_name, None)
-    - guarded section → (None, guarded-error)
     - anything else   → (None, descriptive-error)
 
     Callers pair the `err is not None` early return with
@@ -92,25 +83,16 @@ def _validate_section(section: str) -> tuple[str, None] | tuple[None, ToolResult
             text=(
                 f"[error: section '{section}' is not a valid prompt section name. "
                 f"Allowed sections: {_allowed_sections_list()} (plain file names, no paths). "
-                f"SOUL.md is guarded and cannot be updated. For other files under "
-                f"data/{{agent_id}}/ use admin_write.]"
+                f"For other files under data/{{agent_id}}/ use admin_write.]"
             )
         )
-    upper = cleaned.upper()
-    if upper in _GUARDED_SECTIONS:
-        return None, ToolResult(
-            text=(
-                f"[error: '{cleaned}' is a guarded core identity file and cannot be modified with "
-                f"update_system_prompt. Ask the user to edit it directly (data/{{agent_id}}/{cleaned}).]"
-            )
-        )
-    canonical = _ALLOWED_SECTIONS.get(upper)
+    canonical = _ALLOWED_SECTIONS.get(cleaned.upper())
     if canonical is None:
         return None, ToolResult(
             text=(
                 f"[error: '{cleaned}' is not an updatable prompt section. "
-                f"Allowed sections: {_allowed_sections_list()}. SOUL.md is guarded and "
-                f"cannot be updated. For other files under data/{{agent_id}}/ use admin_write.]"
+                f"Allowed sections: {_allowed_sections_list()}. "
+                f"For other files under data/{{agent_id}}/ use admin_write.]"
             )
         )
     return canonical, None
@@ -120,7 +102,7 @@ def _check_section_target(config: Any, canonical: str) -> tuple[Path | None, Too
     """Resolve and verify that a prompt section is a plain file, not a symlink or redirected target.
 
     Guards against symlink evasions where USER.md or CUSTOM.md points to a secret
-    store (e.g. web_tokens.json) or a guarded core identity file (SOUL.md).
+    store (e.g. web_tokens.json).
     Returns (resolved_path, error_result).
     """
     # Retain the section-name refusal check (e.g. if USER.md itself is in refuse_paths)
@@ -134,14 +116,6 @@ def _check_section_target(config: Any, canonical: str) -> tuple[Path | None, Too
         resolved, _ = _resolve_admin_path(config, canonical)
         if resolved is not None:
             dest_rel = _agent_rel(resolved, config)
-            if resolved.name.upper() in _GUARDED_SECTIONS or dest_rel.upper() in _GUARDED_SECTIONS:
-                return None, ToolResult(
-                    text=(
-                        f"[error: '{canonical}' is a symlink pointing to guarded core identity file "
-                        f"'{resolved.name}' and cannot be modified with update_system_prompt. "
-                        f"Ask the user to edit it directly (data/{{agent_id}}/{resolved.name}).]"
-                    )
-                )
             if is_refused(dest_rel, config):
                 return None, ToolResult(text=refusal_message(dest_rel))
         return None, ToolResult(
@@ -156,30 +130,14 @@ def _check_section_target(config: Any, canonical: str) -> tuple[Path | None, Too
     expected = (config.agent_path.resolve() / canonical).resolve()
     if resolved.resolve() != expected:
         dest_rel = _agent_rel(resolved, config)
-        if resolved.name.upper() in _GUARDED_SECTIONS or dest_rel.upper() in _GUARDED_SECTIONS:
-            return None, ToolResult(
-                text=(
-                    f"[error: '{canonical}' is redirected to guarded core identity file "
-                    f"'{resolved.name}' and cannot be modified with update_system_prompt. "
-                    f"Ask the user to edit it directly (data/{{agent_id}}/{resolved.name}).]"
-                )
-            )
         if is_refused(dest_rel, config):
             return None, ToolResult(text=refusal_message(dest_rel))
         return None, ToolResult(
             text=f"[error: prompt section '{canonical}' is redirected and cannot be modified with update_system_prompt]"
         )
 
-    # Check the resolved path itself against guarded sections and secret policy
+    # Check the resolved path itself against secret policy
     dest_rel = _agent_rel(resolved, config)
-    if resolved.name.upper() in _GUARDED_SECTIONS or dest_rel.upper() in _GUARDED_SECTIONS:
-        return None, ToolResult(
-            text=(
-                f"[error: '{canonical}' points to guarded core identity file "
-                f"'{resolved.name}' and cannot be modified with update_system_prompt. "
-                f"Ask the user to edit it directly (data/{{agent_id}}/{resolved.name}).]"
-            )
-        )
     if is_refused(dest_rel, config):
         return None, ToolResult(text=refusal_message(dest_rel))
 
@@ -259,7 +217,7 @@ class UpdateSystemPromptHandler:
     Invoked only by the recovery path (when a pending confirmation is
     resolved after server restart or when no agent loop is running).
     MUST inherit every guard the interactive tool has — section
-    allowlist, guarded sections, secret-path refusal, marker guard, and
+    allowlist, secret-path refusal, marker guard, and
     snapshot revalidation — because a pending approval is re-applied here
     after a restart, and stored action_data is not trusted input
     (see #1013, AdminMutationHandler._apply_mutation).
@@ -301,14 +259,8 @@ class UpdateSystemPromptHandler:
 
         # Destination checks on the snapshot: a persisted request captured before
         # a symlink was detected or from a tampered archive must not be allowed
-        # to overwrite a guarded or refused target.
+        # to overwrite a refused target.
         snap_rel = _agent_rel(snapshot.resolved, config)
-        if snapshot.resolved.name.upper() in _GUARDED_SECTIONS or snap_rel.upper() in _GUARDED_SECTIONS:
-            return await self._cancel(
-                ctx,
-                canonical,
-                f"[error: persisted snapshot targets guarded core identity file '{snapshot.resolved.name}']",
-            )
         if is_refused(snap_rel, config):
             return await self._cancel(ctx, canonical, refusal_message(snap_rel))
         if snapshot.resolved.resolve() != (config.agent_path.resolve() / canonical).resolve():
@@ -398,7 +350,6 @@ PROMPT_TOOL_DEFINITIONS = [
                 "explicitly asks to update your user context or standing instructions; the new text is "
                 "picked up by load_system_prompt on the next server restart or skill refresh "
                 "(system prompt assembly is not per-turn). "
-                "SOUL.md is guarded and CANNOT be updated through this tool. "
                 "REQUIRES INTERACTIVE USER CONFIRMATION showing a unified diff preview. "
                 "Blocked on unattended turns and child agents. "
                 "NOT for workspace files (use workspace_write), vault pages (use vault_write), "

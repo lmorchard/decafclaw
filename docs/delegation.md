@@ -35,11 +35,24 @@ Each call spawns an independent child agent that:
 |-------|----------|-------------|
 | `task` | Yes | Task description — becomes the child agent's user message |
 | `model` | No | Named model config for the subtask. Omit to inherit parent's model. See [Model Selection](model-selection.md). |
+| `max_iterations` | No | Tool-iteration budget per child. Omit (or `0`) for `agent.child_max_tool_iterations` (default 10). Raise it for research-heavy children; values above the parent's `agent.max_tool_iterations` are clamped. See [Iteration budget](#iteration-budget). |
 | `allow_vault_retrieval` | No | Opt the child INTO proactive memory retrieval at turn start. Default `false`. See [Vault access](#vault-access). |
 | `allow_vault_read` | No | Opt the child INTO read-side vault tools (`vault_read`, `vault_search`, etc.). Default `false`. See [Vault access](#vault-access). |
 | `return_schema` | No | JSON-schema-shaped object describing the structured return shape. When supplied, the child is instructed to emit prose followed by a fenced JSON block; the parsed object lands on `ToolResult.data`. See [Structured returns](#structured-returns). |
 | `background` | No | Run the child asynchronously (fire-and-forget). `true` returns a spawn ack with a `child_conv_id` immediately; the child runs in the background and its result is not returned to this turn. `false` (default) awaits the child and returns its answer. Cannot be combined with `return_schema`. |
 | `read_only` | No | Run the child in read-only mode: strip write-capable tools (per-tool `writes` flag) and append read-only instructions to the child system prompt. Use for analysis, review, search, and planning subtasks that must not change anything. Default `false`. |
+
+## Iteration budget
+
+Every child gets its own tool-iteration budget, independent of the parent's turn (#1827). The default is `agent.child_max_tool_iterations` (10): enough for a child that reads a few files and reports, and deliberately low because `delegate_task` fans out to several children concurrently and every iteration is an LLM round-trip.
+
+Pass `max_iterations` when the task is known to be expensive — research children that fetch multiple sources, or multi-step investigations where the default cap would truncate work mid-stream.
+
+- Omitted (or `0`) keeps the default child budget; behavior is unchanged.
+- An explicit value is honored up to the parent's `agent.max_tool_iterations` (default 200). Larger values are clamped to that ceiling, so a batch cannot authorize fan-out more expensive than a parent-equivalent turn per child.
+- `delegate_tasks` applies the same budget to every child in the batch.
+
+A child that exhausts its budget still gets one grace turn to summarize accumulated work, but sizing the budget up front avoids relying on it.
 
 ## Read-only mode
 
@@ -136,7 +149,7 @@ delegate_task(
 - `ToolResult.data.results` — per-task entries in input order, each with `index`, `ok`, and either `text`/`data` (success) or `error` (failure).
 - `ToolResult.data.summary` — total/ok/failed counts.
 
-**Shared params, not per-task.** `model`, `allow_vault_retrieval`, `allow_vault_read`, and `return_schema` all apply to every task in the batch. If you genuinely need per-task overrides, fall back to multiple singular `delegate_task` calls.
+**Shared params, not per-task.** `model`, `max_iterations`, `allow_vault_retrieval`, `allow_vault_read`, and `return_schema` all apply to every task in the batch. If you genuinely need per-task overrides, fall back to multiple singular `delegate_task` calls.
 
 **Concurrency cap.** At most `agent.max_parallel_delegates` children run at once (default 3). The remaining queue waits inside the gather. The total batch size is also capped at `agent.max_tasks_per_delegate_call` (default 10) to prevent fan-out blowup — over-cap requests fail fast with a clear error.
 

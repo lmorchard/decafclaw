@@ -6,8 +6,7 @@ DecafClaw uses a file-based data layout with a clear trust boundary between admi
 
 ```
 data/{agent_id}/                    # Admin-level (read-only to agent)
-  SOUL.md                           # Identity prompt override (guarded from agent updates)
-  AGENT.md                          # Capabilities prompt override
+  AGENT.md                          # Behavioral core prompt override (identity + behavior; admin-only)
   USER.md                           # Per-deployment user context (agent-updatable via update_system_prompt)
   CUSTOM.md                         # Custom standing instructions (agent-updatable via update_system_prompt, #24)
   COMPACTION.md                     # Custom compaction prompt

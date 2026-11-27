@@ -109,5 +109,5 @@ make check    # Lint + type check (Python + JS)
 - **[Heartbeat](heartbeat.md)** — set `HEARTBEAT_INTERVAL` and `HEARTBEAT_CHANNEL` or `HEARTBEAT_USER`
 - **[Scheduled Tasks](schedules.md)** — cron-style tasks in `data/{agent_id}/schedules/`
 - **[Semantic Search](semantic-search.md)** — run `make reindex` after first setup to build the embedding index
-- **Prompt customization** — place custom `SOUL.md`, `AGENT.md`, or `USER.md` in `data/{agent_id}/` to override bundled prompts
+- **Prompt customization** — place custom `AGENT.md` or `USER.md` in `data/{agent_id}/` to override bundled prompts
 - **[Deployment](deployment.md)** — systemd service for a persistent server install

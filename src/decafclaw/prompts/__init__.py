@@ -17,7 +17,6 @@ _PROMPTS_DIR = Path(__file__).parent
 
 # Prompt files loaded in order, paired with their wrapping XML tag
 _PROMPT_FILES: list[tuple[str, str]] = [
-    ("SOUL.md", "soul"),
     ("AGENT.md", "agent_role"),
 ]
 
@@ -36,7 +35,7 @@ def wrap_xml(tag: str, body: str) -> str:
 def load_system_prompt(config, rejections: list | None = None):
     """Assemble the system prompt from markdown files.
 
-    For each prompt file (SOUL.md, AGENT.md):
+    For each prompt file (AGENT.md):
     1. Check agent directory: data/{agent_id}/{file}
     2. Fall back to bundled: src/decafclaw/prompts/{file}
 

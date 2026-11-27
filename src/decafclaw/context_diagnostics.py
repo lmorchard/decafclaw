@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -69,17 +70,7 @@ def build_diagnostics(config, state: ComposerState, composed: ComposedContext, c
             entry["linked_from"] = r["linked_from"]
         candidates.append(entry)
 
-    sources = []
-    for s in composed.sources:
-        sources.append(
-            {
-                "source": s.source,
-                "tokens_estimated": s.tokens_estimated,
-                "items_included": s.items_included,
-                "items_truncated": s.items_truncated,
-                "details": s.details,
-            }
-        )
+    sources = [dataclasses.asdict(s) for s in composed.sources]
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),

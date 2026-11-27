@@ -38,6 +38,14 @@ Real-time streaming chat over WebSocket. Messages stream token-by-token as the L
 - Cancel in-progress turns
 - Confirmation prompts for shell commands and skill activation
 
+**Upload progress (#136).** The composer adds the attachment chip as soon as a
+file is selected, then shows a spinner and byte percentage until the server
+answers, and keeps the Send action disabled while any upload is in flight. The
+progress events come from `lib/upload-client.js#uploadFileWithProgress`, which
+uses `XMLHttpRequest` because `fetch` cannot observe request-body progress. The
+queued-send path (`conversation-store.js`) still uses the generated fetch
+client.
+
 **Connection loss (#1683).** The chat WebSocket reconnects on its own with
 exponential backoff (1s doubling to a 30s cap). While it is down, a full-screen
 overlay dims the app, spins, and narrates the next retry attempt; the rest of
@@ -457,6 +465,7 @@ Click the context usage bar in the sidebar to see a popover with:
 - **Raw tab:**
   - View the canonical model request payload (`last_request.json`) prepared for the provider on the most recent LLM call
   - Model name, messages count, and tools count
+  - Slot-grouped contributions (HEAD, DELTA, TAIL, EPILOGUE, WORKING MEMORY) with extension attribution badges and a **KV cache boundary** divider after HEAD (#1509)
   - Full formatted canonical messages and tools JSON
   - Copy button to copy the request JSON to the clipboard
   - **Conversation copy** — two adjacent buttons (Copy MD / Copy JSONL) mounted alongside the raw copy; each exports the full conversation transcript via the same export endpoint
@@ -488,7 +497,7 @@ confirmation prompts/responses, cancel/wake markers) are skipped.
 
 ### Config editor
 
-Edit admin config files (`SOUL.md`, `AGENT.md`, `HEARTBEAT.md`, etc.) directly in the browser. Changes are written to `data/{agent_id}/`.
+Edit admin config files (`AGENT.md`, `HEARTBEAT.md`, etc.) directly in the browser. Changes are written to `data/{agent_id}/`.
 The panel's file list and reads, plus the shared editor's config read/write
 operations, use the generated API client. Config paths are encoded one segment
 at a time so allowed nested schedule paths retain their `/` separators. Missing
@@ -634,7 +643,7 @@ Lit web components in `src/decafclaw/web/static/`:
 | Component | File | Purpose |
 |-----------|------|---------|
 | `chat-view` | `components/chat-view.js` | Main chat area with message list |
-| `chat-input` | `components/chat-input.js` | Message input with file upload and command autocomplete |
+| `chat-input` | `components/chat-input.js` | Message input with file upload progress and command autocomplete |
 | `chat-message` | `components/chat-message.js` | Individual message rendering |
 | `chat-controls` | `components/chat-controls.js` | Conversation control strip: model/context controls plus the conversation action cluster (issue #1190); on mobile (≤639px) the strip is replaced by the conversation-actions menu (issue #1192) |
 | `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser, model picker |

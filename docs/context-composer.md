@@ -10,29 +10,29 @@ Assembled from markdown files at startup. Admin-level files override bundled.
 
 | Order | File | Source | Purpose |
 |-------|------|--------|---------|
-| 1 | `SOUL.md` | `src/decafclaw/prompts/` or admin override | Identity, personality, behavioral guidelines |
-| 2 | `AGENT.md` | `src/decafclaw/prompts/` or admin override | Capabilities, tool guidance, memory instructions |
-| 3 | `USER.md` | Agent dir only | User-specific context (optional) |
-| 4 | `CUSTOM.md` | Agent dir only | Custom standing instructions the agent maintains via `update_system_prompt` (#24, optional) |
+| 1 | `AGENT.md` | `src/decafclaw/prompts/` or admin override | Behavioral core: identity, personality, capabilities, tool guidance, memory instructions |
+| 2 | `USER.md` | Agent dir only | User-specific context (optional) |
+| 3 | `CUSTOM.md` | Agent dir only | Custom standing instructions the agent maintains via `update_system_prompt` (#24, optional) |
 
-Override path: `data/{agent_id}/{SOUL,AGENT,USER,CUSTOM}.md`. All four are
+Override path: `data/{agent_id}/{AGENT,USER,CUSTOM}.md`. All three are
 admin-level (read-only to the agent via file tools), but `USER.md` and
 `CUSTOM.md` are additionally updatable by the agent through the
 confirmation-gated `update_system_prompt` tool
-([Tools → Prompt Sections](tools.md#prompt-sectionstoolsprompt_toolspy));
-`SOUL.md` is guarded against agent modification.
+([Tools → Prompt Sections](tools.md#prompt-sectionstoolsprompt_toolspy)).
+`AGENT.md` is the behavioral core; it holds identity and behavior together.
+(SOUL.md was retired in #1892; the user-context CUSTOM.md slot has stayed
+unused, so four files became three rather than a new file being added.)
 
 #### Section delimiters
 
 Each assembled section is wrapped in an XML tag at assembly time so the
-model can reliably distinguish identity from instructions from per-
-deployment facts from skill metadata from skill bodies. Source files
+model can reliably distinguish standing behavior from per-deployment
+facts from skill metadata from skill bodies. Source files
 stay plain markdown; wrapping happens in `load_system_prompt` (and the
 deferred-tool catalog is wrapped in `build_deferred_list_text`).
 
 | Tag | Source | Gating |
 |-----|--------|--------|
-| `<soul>` | `SOUL.md` | Always present (bundled default or admin override) |
 | `<agent_role>` | `AGENT.md` | Always present (bundled default or admin override) |
 | `<user_context>` | `USER.md` | Only when the file exists in the agent dir and has non-empty content |
 | `<custom_context>` | `CUSTOM.md` | Only when the file exists in the agent dir and has non-empty content (agent-maintained via `update_system_prompt`, #24) |
@@ -62,12 +62,12 @@ sweep/compaction, user for reflection) carry the framing already.
 | Surface | Tags | Where |
 |---------|------|-------|
 | Reflection judge (user message) | `<retrieved_context>`, `<prior_turn_tools>`, `<user_request>`, `<tool_results>`, `<assistant_response>` | `src/decafclaw/prompts/REFLECTION.md` (placeholders wrapped in the template) |
-| Memory sweep (user message) | `<messages_to_compact>` | `_build_sweep_user_input` in `compaction.py` |
-| Compaction full mode (user message) | `<decision_slice>` (optional), `<messages_to_compact>` | `_build_compaction_user_input` in `compaction.py` |
-| Compaction incremental mode (user message) | `<decision_slice>` (optional), `<previous_summary>`, `<new_messages>` | `_build_compaction_user_input` in `compaction.py` |
+| Memory sweep (user message) | `<messages_to_compact>` | `_build_sweep_user_input` in `compaction/__init__.py` |
+| Compaction full mode (user message) | `<decision_slice>` (optional), `<messages_to_compact>` | `_build_compaction_user_input` in `compaction/__init__.py` |
+| Compaction incremental mode (user message) | `<decision_slice>` (optional), `<previous_summary>`, `<new_messages>` | `_build_compaction_user_input` in `compaction/__init__.py` |
 
 The `<decision_slice>` block is pre-wrapped by `format_slice` in
-`compaction_decisions.py` (#302). `DECISIONS_PROMPT_ADDENDUM`
+`compaction/decisions.py` (#302). `DECISIONS_PROMPT_ADDENDUM`
 references this tag name directly so the LLM's instructions and the
 input it sees stay aligned. The chunked-compaction fallback for
 oversized inputs does not wrap chunks in `<messages_to_compact>` —
@@ -78,8 +78,8 @@ the slice guidance still lives in the system prompt via the addendum.
 ```
 ┌─────────────────────────────────────────┐
 │ SYSTEM PROMPT                           │
-│ - SOUL.md (identity, personality)       │
-│ - AGENT.md (tools, memory guidance)     │
+│ - AGENT.md (identity, behavior;         │
+│   tools and memory guidance)            │
 │ - USER.md (user context, if present)    │
 │ - CUSTOM.md (custom instructions, if    │
 │   present — agent-writable, #24)        │
@@ -554,7 +554,7 @@ The vault guide carries always-applies rules: vault folder layout, which paths a
 
 ### Role and trust
 
-The guide is injected as a **system** message, unlike retrieved vault content (remapped to `user`). This signals binding instructions, not advisory context. The trust assumption is that `AGENTS.md` is the user's own authored file — treat it the same way as `SOUL.md`/`AGENT.md`.
+The guide is injected as a **system** message, unlike retrieved vault content (remapped to `user`). This signals binding instructions, not advisory context. The trust assumption is that `AGENTS.md` is the user's own authored file — treat it the same way as `AGENT.md`.
 
 ### Independence from vault retrieval
 
@@ -609,7 +609,7 @@ See [config.md#recent_journal](config.md#recent_journal). Config dataclass: `Rec
 
 Interactive turns skip this tier by default to preserve prompt caches. Set `cleanup.preserve_prompt_cache: false` to enable it between compactions. Other turn modes retain their existing cleanup policy.
 
-Before the compaction threshold check fires, every iteration runs a cheap pass — `clear_old_tool_results` in `src/decafclaw/context_cleanup.py` — that makes three in-memory edits. The **size/age clear** replaces large old tool-message bodies with a short stub (`[tool output cleared: 4213 bytes]`). This is the simplest tier of context management Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) recommends: remove raw tool output the agent has already synthesized and won't re-examine. See #298. The **resolved-error pruning** pass (#540) stubs a tool *error* that a later success of the same tool has already resolved (`[tool error superseded by later success]`) — a recovered failure no longer earns attention budget either. The **superseded-read pruning** pass (#1146) stubs a successful full-file read whose path a later successful full read re-read (`[tool output superseded by a later successful read]`) — an older copy of a file the agent has since re-read can conflict with current content.
+Before the compaction threshold check fires, every iteration runs a cheap pass — `clear_old_tool_results` in `src/decafclaw/compaction/cleanup.py` — that makes three in-memory edits. The **size/age clear** replaces large old tool-message bodies with a short stub (`[tool output cleared: 4213 bytes]`). This is the simplest tier of context management Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) recommends: remove raw tool output the agent has already synthesized and won't re-examine. See #298. The **resolved-error pruning** pass (#540) stubs a tool *error* that a later success of the same tool has already resolved (`[tool error superseded by later success]`) — a recovered failure no longer earns attention budget either. The **superseded-read pruning** pass (#1146) stubs a successful full-file read whose path a later successful full read re-read (`[tool output superseded by a later successful read]`) — an older copy of a file the agent has since re-read can conflict with current content.
 
 **Resolved-error pruning** (#540). A tool error (a tool-role message whose `content` starts with `[error`, the `ToolResult(text="[error: ...]")` convention) is stubbed when a *later* result for the same tool name is not itself an error. It's more aggressive than the size/age clear: it applies regardless of size or age. Matching is by tool name by default; `cleanup.prune_resolved_same_args_only` makes it conservative (the later success must carry the same arguments as the failed call). It's skipped in heartbeat / scheduled / child-agent turns, like memory retrieval — the size/age clear is unaffected by mode. Same in-memory-only invariant: the archive keeps the original.
 
@@ -665,7 +665,7 @@ Two caveats on the Vertex row: non-migrated Gemini 2.5 endpoints cap the inline 
 
 ## Decision slice through compaction
 
-Compaction's prose summary is lossy for high-signal facts — architectural decisions, unresolved questions, artifacts produced — and that loss compounds across iterated compactions. Alongside the prose, compaction emits a **structured slice** that's threaded forward into every subsequent compaction so once an entry lands it's not re-derived from prose each cycle. See `src/decafclaw/compaction_decisions.py` and #302.
+Compaction's prose summary is lossy for high-signal facts — architectural decisions, unresolved questions, artifacts produced — and that loss compounds across iterated compactions. Alongside the prose, compaction emits a **structured slice** that's threaded forward into every subsequent compaction so once an entry lands it's not re-derived from prose each cycle. See `src/decafclaw/compaction/decisions.py` and #302.
 
 **Three lists**, each holding short string entries with creation timestamps:
 
@@ -736,17 +736,19 @@ The `DiagnosticsAndTelemetryExtension` (`src/decafclaw/extensions/diagnostics_an
   Optional fields can remain absent. A missing sidecar returns 404 and displays “No context data yet.”
   The route returns the stored data unchanged, including additional fields that the inspector does not use.
 - `GET /api/conversations/{id}/context/raw` returns the raw last request payload (`last_request.json`) with `model`, `messages`, and `tools`, plus `sources` when the composer produced per-source diagnostics.
+  Each `SourceEntry` records the lifecycle `slot` it mounted into (`head`, `delta`, `tail`, `epilogue`, or `working_memory`) and the originating `extension`, so the inspector can attribute hook-driven contributions (#1509).
   It requires authentication and applies the same conversation ownership/access checks as `/context`. If no request has been recorded yet, it returns 404.
 
 **Web UI:** Click the context usage bar in the sidebar to open a popover with:
 - **Diagnostics tab:**
   - Waffle chart (grid map) showing token allocation by source
   - Summary stats (estimated vs actual tokens, window size, compaction threshold)
-  - Source breakdown table with token counts and item details
+  - Source breakdown table with token counts, item details, slot badges, and extension attribution
   - Memory candidates with composite scores, score breakdowns, and graph expansion provenance
 - **Raw tab:**
   - "View source" inspection of the last request sent to the model
   - Model name and counts of messages and tools
+  - A slot-grouped contribution list (HEAD, DELTA, TAIL, EPILOGUE, WORKING MEMORY) with extension badges, a dashed **KV cache boundary** marker after HEAD, and the provider cacheable-prefix explanation
   - Full formatted JSON of messages and tool definitions
   - Copy button to copy the raw request JSON to the clipboard
 
@@ -783,12 +785,11 @@ preserve the reader's selection and panel dismissal state. The canvas state pers
 
 - `src/decafclaw/context_composer.py` — unified context assembly pipeline
 - `src/decafclaw/memory_context.py` — vault retrieval, graph expansion, scoring
-- `src/decafclaw/prompts/SOUL.md` — bundled identity prompt
-- `src/decafclaw/prompts/AGENT.md` — bundled capability/tool prompt
+- `src/decafclaw/prompts/AGENT.md` — bundled behavioral core prompt (identity + behavior)
 - `src/decafclaw/prompts/__init__.py` — prompt assembly logic
 - `src/decafclaw/agent.py` — agent loop, iteration-level tool list building
 - `src/decafclaw/tools/tool_registry.py` — tool classification and deferral
-- `src/decafclaw/compaction.py` — conversation summary generation
-- `src/decafclaw/context_cleanup.py` — lightweight tool-result clearing tier (#298)
-- `src/decafclaw/compaction_decisions.py` — structured decision slice threaded through compaction (#302)
+- `src/decafclaw/compaction/__init__.py` — conversation summary generation
+- `src/decafclaw/compaction/cleanup.py` — lightweight tool-result clearing tier (#298)
+- `src/decafclaw/compaction/decisions.py` — structured decision slice threaded through compaction (#302)
 - `src/decafclaw/frontmatter.py` — YAML frontmatter parsing

@@ -21,10 +21,18 @@
  *  - `.command-menu-item.highlighted` — the single highlighted row.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './chat-input.js';
 import { STORAGE_KEY } from '../lib/context-provenance-preference.js';
+import { uploadFileWithProgress } from '../lib/upload-client.js';
+
+// Uploads are in-flight UI state in the composer; stub the transport so tests
+// control progress and completion without touching the network.
+vi.mock('../lib/upload-client.js', () => ({
+  uploadFile: vi.fn(),
+  uploadFileWithProgress: vi.fn(),
+}));
 
 /** The command source named by criterion C1. */
 const COMMANDS = [
@@ -971,5 +979,137 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBe('false');
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0][0].detail).toEqual({ enabled: false });
+  });
+});
+
+describe('chat-input upload progress (issue #136)', () => {
+  /** @returns {{promise: Promise<any>, resolve: (v: any) => void, reject: (e: any) => void}} */
+  function deferred() {
+    /** @type {(v: any) => void} */
+    let resolve = () => {};
+    /** @type {(e: any) => void} */
+    let reject = () => {};
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  /** @param {any} el @returns {HTMLButtonElement} */
+  const sendButton = (el) => /** @type {HTMLButtonElement} */ (
+    el.querySelector('button[aria-label="Send message"]')
+  );
+
+  /** @param {any} el @returns {Element|null} */
+  const uploadProgress = (el) => el.querySelector('.attachment-upload-progress');
+
+  beforeEach(() => {
+    vi.mocked(uploadFileWithProgress).mockReset();
+  });
+
+  /** Mount a composer that already belongs to a conversation. @returns {Promise<any>} */
+  async function mountInConversation() {
+    const el = await mount();
+    el.convId = 'conv-1';
+    await el.updateComplete;
+    return el;
+  }
+
+  it('shows the file with progress while the upload is in flight', async () => {
+    const upload = deferred();
+    vi.mocked(uploadFileWithProgress).mockReturnValue(upload.promise);
+    const el = await mountInConversation();
+
+    el.addFiles([new File(['bytes'], 'notes.txt', { type: 'text/plain' })]);
+    await el.updateComplete;
+
+    // The thumbnail is in the strip before the upload finishes, with a
+    // determinate progress indicator and the send action unavailable.
+    expect(el.querySelector('.attachment-preview')).not.toBeNull();
+    expect(el.textContent).toContain('notes.txt');
+    const bar = uploadProgress(el);
+    expect(bar).not.toBeNull();
+    expect(bar?.getAttribute('aria-valuenow')).toBe('0');
+    expect(sendButton(el).disabled).toBe(true);
+
+    const onProgress = vi.mocked(uploadFileWithProgress).mock.calls[0][2];
+    onProgress?.(0.42);
+    await el.updateComplete;
+    expect(uploadProgress(el)?.getAttribute('aria-valuenow')).toBe('42');
+    expect(uploadProgress(el)?.textContent).toContain('42%');
+  });
+
+  it('does not dispatch a send while an upload is in flight', async () => {
+    const upload = deferred();
+    vi.mocked(uploadFileWithProgress).mockReturnValue(upload.promise);
+    const el = await mountInConversation();
+    const onSend = vi.fn();
+    el.addEventListener('send', onSend);
+
+    el.addFiles([new File(['bytes'], 'notes.txt', { type: 'text/plain' })]);
+    await el.updateComplete;
+    await type(el, 'with a file');
+    await press(el, 'Enter');
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(textareaOf(el).value).toBe('with a file');
+
+    upload.resolve({ filename: 'notes.txt', path: 'uploads/notes.txt', mime_type: 'text/plain' });
+    await vi.waitFor(() => expect(uploadProgress(el)).toBeNull());
+    await el.updateComplete;
+
+    await press(el, 'Enter');
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend.mock.calls[0][0].detail.attachments).toEqual([
+      { filename: 'notes.txt', path: 'uploads/notes.txt', mime_type: 'text/plain' },
+    ]);
+  });
+
+  it('drops the placeholder and reports the failure when an upload errors', async () => {
+    vi.mocked(uploadFileWithProgress).mockRejectedValue(new Error('Upload failed: 413'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const el = await mountInConversation();
+
+    el.addFiles([new File(['bytes'], 'big.bin', { type: 'application/octet-stream' })]);
+    await el.updateComplete;
+    await vi.waitFor(() => expect(el.querySelector('.attachment-preview')).toBeNull());
+    await el.updateComplete;
+
+    expect(warn).toHaveBeenCalledWith('Upload failed:', 'Upload failed: 413');
+    expect(sendButton(el).disabled).toBe(false);
+  });
+
+  it('keeps the stop action available while busy with only an upload pending', async () => {
+    const upload = deferred();
+    vi.mocked(uploadFileWithProgress).mockReturnValue(upload.promise);
+    const el = await mountInConversation();
+    el.busy = true;
+    await el.updateComplete;
+
+    el.addFiles([new File(['bytes'], 'notes.txt', { type: 'text/plain' })]);
+    await el.updateComplete;
+
+    const primary = /** @type {HTMLButtonElement} */ (el.querySelector('.composer-primary-btn'));
+    expect(primary.getAttribute('aria-label')).toBe('Stop generation');
+    expect(primary.disabled).toBe(false);
+  });
+
+  it('ignores a late result for a file removed mid-upload', async () => {
+    const upload = deferred();
+    vi.mocked(uploadFileWithProgress).mockReturnValue(upload.promise);
+    const el = await mountInConversation();
+
+    el.addFiles([new File(['bytes'], 'notes.txt', { type: 'text/plain' })]);
+    await el.updateComplete;
+    el.querySelector('.attachment-remove')?.click();
+    await el.updateComplete;
+    expect(el.querySelector('.attachment-preview')).toBeNull();
+
+    upload.resolve({ filename: 'notes.txt', path: 'uploads/notes.txt', mime_type: 'text/plain' });
+    await upload.promise;
+    await el.updateComplete;
+    expect(el.querySelector('.attachment-preview')).toBeNull();
+    expect(sendButton(el).disabled).toBe(false);
   });
 });

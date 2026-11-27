@@ -131,7 +131,7 @@ async def test_reactive_overflow_clears_compaction_estimate_on_next_usage(ctx, c
 
     monkeypatch.setattr("decafclaw.agent._call_llm_with_events", mock_call_llm_with_events)
 
-    # Mirror compact_history's success behavior (compaction.py): record the
+    # Mirror compact_history's success behavior (compaction/__init__.py): record the
     # post-compaction estimate on ctx.tokens for the turn's message_complete.
     async def mock_compact(ctx_, history_):
         ctx_.tokens.last_compaction_estimate = 5000
@@ -266,7 +266,7 @@ def test_effective_compaction_threshold_lowered_beats_ratio(ctx, config):
 @pytest.mark.asyncio
 async def test_maybe_compact_clears_for_skip_mode_even_with_preserve(ctx, config, monkeypatch):
     """Non-interactive modes clear tool results even when interactive history is preserved."""
-    from decafclaw.context_cleanup import ClearStats
+    from decafclaw.compaction.cleanup import ClearStats
     from decafclaw.context_types import ComposerMode, TaskMode
 
     mock_clear = MagicMock(return_value=ClearStats())

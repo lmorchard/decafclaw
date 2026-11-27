@@ -915,7 +915,7 @@ class TestDecisionSliceIntegration:
     ):
         """A successful parse persists the slice to the sidecar and
         prepends the rendered slice to the prose summary."""
-        from decafclaw.compaction_decisions import load_slice
+        from decafclaw.compaction.decisions import load_slice
 
         ctx.config.compaction.preserve_turns = 5
         ctx.config.compaction.decisions_enabled = True
@@ -968,7 +968,7 @@ class TestDecisionSliceIntegration:
         """If the LLM emits a partially-overlapping slice, the merge
         keeps existing entries' created_at and adds new ones with the
         current time."""
-        from decafclaw.compaction_decisions import (
+        from decafclaw.compaction.decisions import (
             DecisionEntry,
             DecisionSlice,
             load_slice,
@@ -1026,7 +1026,7 @@ class TestDecisionSliceIntegration:
     ):
         """When the LLM forgets the JSON block, prose-only fallback
         still works — slice file is not touched."""
-        from decafclaw.compaction_decisions import _slice_path
+        from decafclaw.compaction.decisions import _slice_path
 
         ctx.config.compaction.preserve_turns = 5
         ctx.config.compaction.decisions_enabled = True
@@ -1059,7 +1059,7 @@ class TestDecisionSliceIntegration:
     ):
         """With decisions_enabled=False, no slice operations even if
         the LLM happens to emit a JSON block."""
-        from decafclaw.compaction_decisions import _slice_path
+        from decafclaw.compaction.decisions import _slice_path
 
         ctx.config.compaction.preserve_turns = 5
         ctx.config.compaction.decisions_enabled = False

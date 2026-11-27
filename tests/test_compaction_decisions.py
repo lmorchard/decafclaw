@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from decafclaw.compaction_decisions import (
+from decafclaw.compaction.decisions import (
     DecisionEntry,
     DecisionSlice,
     _slice_path,

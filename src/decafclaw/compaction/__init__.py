@@ -7,8 +7,14 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .archive import parse_timestamp, read_archive, read_compacted_history, write_compacted_history
-from .compaction_decisions import (
+from ..archive import parse_timestamp, read_archive, read_compacted_history, write_compacted_history
+from ..events import TurnLifecycle
+from ..llm import call_llm
+from ..model_catalog import effective_default_model
+from ..prompts import wrap_xml
+from ..util import estimate_tokens
+from ..wake_replay import normalize_suppressed_wakes
+from .decisions import (
     format_slice,
     load_slice,
     merge_slice,
@@ -16,12 +22,6 @@ from .compaction_decisions import (
     save_slice,
     strip_json_block,
 )
-from .events import TurnLifecycle
-from .llm import call_llm
-from .model_catalog import effective_default_model
-from .prompts import wrap_xml
-from .util import estimate_tokens
-from .wake_replay import normalize_suppressed_wakes
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -64,7 +64,9 @@ async def _dispatch_pre_compaction(ctx: "Context", history: list) -> None:
     await asyncio.gather(*(_bounded(hook) for hook in hooks))
 
 
-_BUNDLED_SWEEP_PROMPT_PATH = Path(__file__).parent / "prompts" / "MEMORY_SWEEP.md"
+# `compaction/__init__.py` sits one level below the package root; the bundled
+# prompt stays with its siblings in `decafclaw/prompts/`.
+_BUNDLED_SWEEP_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "MEMORY_SWEEP.md"
 
 
 def _load_sweep_prompt(config) -> str:
@@ -87,10 +89,10 @@ async def _run_memory_sweep(ctx: "Context", old_messages: list[dict]) -> None:
     noteworthy information before it's summarized away. Fail-open:
     errors are logged and discarded.
     """
-    from .agent import run_agent_turn  # deferred: circular dep
-    from .context import Context, TaskMode
-    from .skills.vault.tools import TOOL_DEFINITIONS as VAULT_TOOL_DEFS
-    from .skills.vault.tools import TOOLS as VAULT_TOOLS
+    from ..agent import run_agent_turn  # deferred: circular dep
+    from ..context import Context, TaskMode
+    from ..skills.vault.tools import TOOL_DEFINITIONS as VAULT_TOOL_DEFS
+    from ..skills.vault.tools import TOOLS as VAULT_TOOLS
 
     config = ctx.config
     conv_id = ctx.key()
@@ -288,7 +290,7 @@ def _build_compaction_user_input(mode, old_slice_block: str = "") -> str:
 
     Sections, joined by ``\\n\\n``:
       - ``<decision_slice>``…``</decision_slice>`` (optional; pre-wrapped
-        by :func:`compaction_decisions.format_slice`)
+        by :func:`decisions.format_slice`)
       - Incremental mode:
         ``<previous_summary>``…``</previous_summary>``,
         ``<new_messages>``…``</new_messages>``
@@ -805,8 +807,8 @@ async def compact_history(ctx: "Context", history: list) -> bool:
             history_tokens_after=estimated_tokens_after,
         )
         try:
-            from .archive import append_message
-            from .compaction_display import compaction_notice
+            from ..archive import append_message
+            from ..compaction_display import compaction_notice
 
             notice_text = compaction_notice(
                 succeeded,

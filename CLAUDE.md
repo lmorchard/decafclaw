@@ -115,8 +115,8 @@ Read [skills](docs/skills.md) and [schedules](docs/schedules.md).
 Read [configuration](docs/config.md), [data layout](docs/data-layout.md), [providers](docs/providers.md), [model selection](docs/model-selection.md), and [MCP](docs/mcp-servers.md).
 
 - Resolution: dataclass defaults → `data/{agent_id}/config.json` → environment (highest). Dataclasses live in `config.py`/`config_types.py`.
-- Admin files (SOUL.md, AGENT.md, USER.md, COMPACTION.md, config.json) live at the agent root and are read-only to file tools. The agent can rewrite USER.md/CUSTOM.md through confirmation-gated `update_system_prompt`. SOUL.md stays protected. Agent-writable files live in `workspace/`.
-- System sections use XML wrappers (`soul`, `agent_role`, `user_context`, `custom_context`, `skill_catalog`, `loaded_skills`, `deferred_tools`). Add wrappers during assembly; keep source Markdown plain.
+- Admin files (AGENT.md, USER.md, COMPACTION.md, config.json) live at the agent root and are read-only to file tools. The agent can rewrite USER.md/CUSTOM.md through confirmation-gated `update_system_prompt`. Agent-writable files live in `workspace/`.
+- System sections use XML wrappers (`agent_role`, `user_context`, `custom_context`, `skill_catalog`, `loaded_skills`, `deferred_tools`). Add wrappers during assembly; keep source Markdown plain.
 - Providers describe connections; `model_configs` name a model and provider reference. Users choose models; the agent cannot change its own model (cost control).
 - MCP servers are global, configured in `data/{agent_id}/mcp_servers.json`. Names use `mcp__<server>__<tool>`. Stdio servers restart with backoff.
 - **Use shared `secret_policy.py` for admin protection.** Its path-refusal rule covers all six admin tools. Redaction follows `secret` field annotations, never key-name matching. Admins can extend `secret_policy.refuse_paths`/`redact_paths`. Reject writes containing `<redacted>`. This is extensible harm reduction, not a watertight secret boundary.
@@ -164,7 +164,7 @@ Python modules below are under `src/decafclaw/`. Use [docs/index.md](docs/index.
 | Area | Entry points |
 | --- | --- |
 | Agent/runtime | `agent.py`, `conversation_manager.py`, `context.py`, `runner.py`, `events.py` |
-| Context | `context_composer.py` (orchestrator), `context_pipeline.py`, `context_types.py`, `context_tools.py`, `context_preempt.py`, `context_diagnostics.py`, `compaction.py`, `compaction_decisions.py`, `context_cleanup.py`, `memory_context.py` |
+| Context | `context_composer.py` (orchestrator), `context_pipeline.py`, `context_types.py`, `context_tools.py`, `context_preempt.py`, `context_diagnostics.py`, `compaction/` (`__init__.py`, `decisions.py`, `cleanup.py`), `memory_context.py` |
 | Tools | `tool_definitions.py`, `tool_execution.py`, `tools/tool_registry.py`, `tools/search_tools.py`, `preempt_search.py` |
 | Configuration/models | `config.py`, `config_types.py`, `config_watcher.py`, `model_catalog.py`, `llm/` |
 | Persistence | `archive.py`, `conversation_paths.py`, `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py` |

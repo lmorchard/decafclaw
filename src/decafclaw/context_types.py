@@ -126,13 +126,22 @@ UNWATCHED_TASK_MODES: frozenset[TaskMode] = frozenset(
 
 @dataclass
 class SourceEntry:
-    """Diagnostic entry for a single context source."""
+    """Diagnostic entry for a single context source.
+
+    ``slot`` and ``extension`` attribute hook-driven contributions for the
+    Context Inspector (#1509): the :class:`decafclaw.extensions.ContextSlot`
+    value the messages mounted into and the extension that produced them.
+    Sources without a lifecycle slot (system prompt, tools, history) leave
+    both empty.
+    """
 
     source: str
     tokens_estimated: int
     items_included: int
     items_truncated: int = 0
     details: dict = field(default_factory=dict)
+    slot: str = ""
+    extension: str = ""
 
 
 # -- Result -------------------------------------------------------------------

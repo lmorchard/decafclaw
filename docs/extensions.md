@@ -74,9 +74,11 @@ travel as metadata on the archived user row (see
 
 Token accounting and Context Inspector visibility come from the
 contribution's `source_entry`, which is appended to the turn's `sources`
-list. A contribution without one still mounts its messages, but adds no
-source row and no estimated tokens. Malformed contributions and unsupported
-returns are logged and skipped.
+list. The composer stamps it with the mounted slot and the owning extension's
+name, so the inspector can badge contributions by lifecycle position and mark
+the cache boundary after `HEAD` (#1509). A contribution without one still
+mounts its messages, but adds no source row and no estimated tokens.
+Malformed contributions and unsupported returns are logged and skipped.
 
 A contribution may also set `provenance`, a map from source key to a list of
 JSON-ready item dicts. The composer merges those items into the turn's

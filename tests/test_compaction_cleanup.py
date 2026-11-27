@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from decafclaw.config_types import CleanupConfig
-from decafclaw.context_cleanup import (
+from decafclaw.compaction.cleanup import (
     _STUB_PREFIX,
     _SUPERSEDED_READ_STUB,
     _SUPERSEDED_STUB,
@@ -14,6 +13,7 @@ from decafclaw.context_cleanup import (
     _user_turn_boundary_indices,
     clear_old_tool_results,
 )
+from decafclaw.config_types import CleanupConfig
 from decafclaw.context_types import ComposerMode
 
 

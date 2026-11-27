@@ -688,12 +688,12 @@ async def run_test(config: Config, test_case: dict) -> dict:
     # Assemble the system prompt the same way decafclaw/__init__.py does at
     # startup. Without this, config.system_prompt stays "" (config.py only reads
     # a SYSTEM_PROMPT env var) and ContextComposer._compose_system_prompt emits
-    # a zero-length system message — no SOUL.md, no AGENT.md, no skill catalog,
+    # a zero-length system message — no AGENT.md, no skill catalog,
     # no always-loaded skill bodies. Every eval case ran that way until #670.
     #
     # Deliberately after _build_test_config's sandbox, which supplies both
     # halves of reproducibility here: the tmp data_home means load_system_prompt
-    # finds no per-agent SOUL.md/AGENT.md/USER.md overrides, and the cleared
+    # finds no per-agent AGENT.md/USER.md overrides, and the cleared
     # extra_skill_paths means its discover_skills call sees bundled skills only.
     # Without the second half a developer's ~/.agents/skills would land in the
     # <skill_catalog> of every eval prompt.

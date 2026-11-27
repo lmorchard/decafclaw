@@ -291,6 +291,35 @@ chat-input .attachment-file-icon {
   white-space: nowrap;
 }
 
+/* In-flight upload: dim the chip and show a spinner plus byte percentage. */
+chat-input .attachment-upload-progress {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  border-radius: 6px;
+  background: var(--pico-card-background-color);
+  opacity: 0.9;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+chat-input .attachment-upload-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--pico-muted-border-color);
+  border-top-color: var(--pico-primary);
+  border-radius: 50%;
+  animation: chat-input-upload-spin 0.8s linear infinite;
+}
+
+@keyframes chat-input-upload-spin {
+  to { transform: rotate(360deg); }
+}
+
 chat-input .attachment-remove {
   position: absolute;
   top: -6px;
