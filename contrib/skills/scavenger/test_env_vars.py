@@ -174,8 +174,9 @@ def test_env_exec_bg_carries_vars_for_native(monkeypatch, env_store):
 
     # The exports ride inside the base64-wrapped script for native environments.
     import base64
+    import shlex
 
-    b64 = seen["cmd"].split('echo "')[1].split('"')[0]
+    b64 = next(token for token in shlex.split(seen["cmd"]) if "base64 -d" in token).split()[1]
     inner = base64.b64decode(b64).decode()
     assert "export A=one" in inner
 

@@ -597,9 +597,9 @@ def test_container_create_labels_container_and_volume(mock_fleet, cache):
     ):
         res = sc.env_create(mock_fleet, "c1", host_name="desktop-linux", ttl="1h")
     script = next(c for _, c in ssh.commands if "run -d" in c)
-    assert script.count('scavenger.env_id="c1"') == 2  # container and volume
-    assert 'scavenger.ttl_seconds="3600"' in script
-    assert f'scavenger.expires_at="{int(res.expires_at)}"' in script
+    assert script.count("scavenger.env_id=c1") == 2  # container and volume
+    assert "scavenger.ttl_seconds=3600" in script
+    assert f"scavenger.expires_at={int(res.expires_at)}" in script
     assert sc.load_leases()["c1"].container_name == "scavenger-env-c1"
 
 
@@ -771,7 +771,7 @@ def test_env_create_container_limit_flags_in_script(mock_fleet, cache):
     create_script = next(command for _, command in ssh.commands if "run -d" in command)
     assert "--network=none" in create_script
     assert "--pids-limit=4096" in create_script
-    assert create_script.count('scavenger.env_id="limit-env"') == 2
+    assert create_script.count("scavenger.env_id=limit-env") == 2
 
 
 def test_scavenger_run_tool_network_none(mock_fleet):

@@ -18,6 +18,7 @@ python3 path/to/scavenger.py [--config FLEET_JSON] <command> [--json] ...
 - Every command exits 0 on success and non-zero on failure. With `--json`, a failure prints `{"error": "..."}`.
 - `run`, `exec-native`, and `env-exec` exit with the remote command's exit code.
 - `env-create` always prints JSON.
+- Environment ids must match `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$`; they become container/volume names and remote workspace paths.
 - Always `probe` first. Do not assume which hosts exist.
 - Always `env-destroy` an environment when you finish. Leases also expire (`--ttl`, default 2h), and `reap` removes expired ones.
 

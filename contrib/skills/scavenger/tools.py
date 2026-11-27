@@ -38,14 +38,19 @@ try:
         env_sync,
         execute_job,
         find_lease,
+        home_shell_path,
+        job_remote_script,
         load_fleet_config,
         load_leases,
+        new_job_dir,
         parse_env_assignments,
         probe_host,
         reconcile_leases,
+        remote_argv,
         resolve_recipes_dir,
         run_ssh,
         select_best_host,
+        validate_env_id,
         wake_host,
     )
 except ImportError:
@@ -64,19 +69,33 @@ except ImportError:
         env_sync,
         execute_job,
         find_lease,
+        home_shell_path,
+        job_remote_script,
         load_fleet_config,
         load_leases,
+        new_job_dir,
         parse_env_assignments,
         probe_host,
         reconcile_leases,
+        remote_argv,
         resolve_recipes_dir,
         run_ssh,
         select_best_host,
+        validate_env_id,
         wake_host,
     )
 
 #: Network modes accepted by scavenger container tools.
 NETWORK_MODES = ("none", "default")
+
+
+def _env_id_error(env_id: str) -> Optional[str]:
+    """Return a tool error string when env_id is not a safe name component."""
+    try:
+        validate_env_id(env_id)
+    except ValueError as e:
+        return f"Error: {e}"
+    return None
 
 
 def _resolve_local_path(ctx: Any, path: str) -> Optional[str]:
@@ -193,33 +212,23 @@ def scavenger_run(
     if real_repo and not os.path.isdir(os.path.join(real_repo, ".git")):
         real_repo = None
 
-    selinux_flag = ":Z" if target_host.needs_selinux_z else ""
-    device_args = " ".join(target_host.device_flags) if target_host.device_flags else ""
-    limit_args = " ".join(container_limit_flags(target_host, network))
-
+    job_dir = new_job_dir()
     if real_repo:
         bundle_proc = subprocess.Popen(
             ["git", "-C", real_repo, "bundle", "create", "-", "HEAD"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        ssh_wrapper = f"""
-set -e
-RECV_DIR=$(mktemp -d /tmp/scavenger-job-XXXXXX)
-trap 'rm -rf "$RECV_DIR"' EXIT
-cat > "$RECV_DIR/repo.bundle"
-git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
-
-{target_host.engine} run --rm \\
-    --memory={mem} \\
-    --cpus={cpus} \\
-    {limit_args} \\
-    {device_args} \\
-    -v "$RECV_DIR/workspace:/workspace{selinux_flag}" \\
-    -w /workspace \\
-    {image} \\
-    sh -c '{command}'
-"""
+        ssh_wrapper = job_remote_script(
+            target_host,
+            command,
+            job_dir,
+            image=image,
+            mem_limit=mem,
+            cpus=cpus,
+            network=network,
+            repo_bundle=True,
+        )
         ssh_proc = subprocess.run(
             ["ssh", "-o", "BatchMode=yes", target_host.ssh_alias, ssh_wrapper],
             stdin=bundle_proc.stdout,
@@ -232,22 +241,16 @@ git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
             bundle_proc.stdout.close()
         res = ssh_proc
     else:
-        remote_script = f"""
-set -e
-JOB_DIR=$(mktemp -d /tmp/scavenger-job-XXXXXX)
-trap 'rm -rf "$JOB_DIR"' EXIT
-mkdir -p "$JOB_DIR/workspace"
-
-{target_host.engine} run --rm \\
-    --memory={mem} \\
-    --cpus={cpus} \\
-    {limit_args} \\
-    {device_args} \\
-    -v "$JOB_DIR/workspace:/workspace{selinux_flag}" \\
-    -w /workspace \\
-    {image} \\
-    sh -c '{command}'
-"""
+        remote_script = job_remote_script(
+            target_host,
+            command,
+            job_dir,
+            image=image,
+            mem_limit=mem,
+            cpus=cpus,
+            network=network,
+            repo_bundle=False,
+        )
         res = subprocess.run(
             ["ssh", "-o", "BatchMode=yes", target_host.ssh_alias, remote_script],
             capture_output=True,
@@ -311,6 +314,9 @@ def scavenger_env_create(
     env_vars: Optional[Dict[str, str]] = None,
 ) -> str:
     """Reserve a stateful environment (container or native workspace) on the fleet."""
+    invalid = _env_id_error(env_id)
+    if invalid:
+        return invalid
     if network not in NETWORK_MODES:
         return f"Error: Invalid network '{network}'. Use 'none' (no network) or 'default'."
 
@@ -379,6 +385,9 @@ async def scavenger_env_exec(
     Optional wake_on (e.g. 'exit', 'pattern:BUILD SUCCESSFUL', 'file:app.apk') arms an
     automated wake event so DecafClaw is woken when the condition triggers.
     """
+    invalid = _env_id_error(env_id)
+    if invalid:
+        return invalid
     fleet = load_fleet_config()
     res = find_lease(fleet, env_id)
     if not res:
@@ -468,6 +477,9 @@ async def scavenger_env_watch(
     - watch_type='file': target file appears or is touched
     - watch_type='pattern': pattern matches in target log file
     """
+    invalid = _env_id_error(env_id)
+    if invalid:
+        return invalid
     fleet = load_fleet_config()
     res = find_lease(fleet, env_id)
     if not res:
@@ -511,6 +523,9 @@ async def scavenger_env_watch(
 
 def scavenger_env_info(ctx: Any, env_id: str) -> str:
     """Inspect targeted details and remaining TTL for a specific environment reservation."""
+    invalid = _env_id_error(env_id)
+    if invalid:
+        return invalid
     fleet = load_fleet_config()
     res = find_lease(fleet, env_id)
     if not res:
@@ -534,6 +549,9 @@ async def scavenger_env_terminal(ctx: Any, env_id: str, shell: str = "sh") -> st
     Open an interactive Canvas terminal tab connected directly into a scavenger environment.
     Embeds DecafClaw's native xterm.js PTY terminal widget in a new tab.
     """
+    invalid = _env_id_error(env_id)
+    if invalid:
+        return invalid
     fleet = load_fleet_config()
     res = find_lease(fleet, env_id)
     if not res:
@@ -551,13 +569,15 @@ async def scavenger_env_terminal(ctx: Any, env_id: str, shell: str = "sh") -> st
 
     if res.kind == "native":
         ws = res.workspace_path or f"workspaces/{res.env_id}"
-        script = f"""#!/bin/sh
-exec ssh -t -o BatchMode=no {host.ssh_alias} "cd ~/{ws} && exec ${{SHELL:-bash}} -l"
-"""
+        remote_cmd = f"cd {home_shell_path(ws)} && exec ${{SHELL:-bash}} -l"
+        ssh_args = ["ssh", "-t", "-o", "BatchMode=no", host.ssh_alias, remote_cmd]
     else:
         c_name = res.container_name or f"scavenger-env-{res.env_id}"
-        script = f"""#!/bin/sh
-exec ssh -t -o BatchMode=no {host.ssh_alias} "{host.engine} exec -it {c_name} {shell}"
+        remote_cmd = remote_argv([host.engine, "exec", "-it", c_name, shell])
+        ssh_args = ["ssh", "-t", "-o", "BatchMode=no", host.ssh_alias, remote_cmd]
+
+    script = f"""#!/bin/sh
+exec {remote_argv(ssh_args)}
 """
 
     with open(wrapper_path, "w", encoding="utf-8") as f:
@@ -600,6 +620,9 @@ exec ssh -t -o BatchMode=no {host.ssh_alias} "{host.engine} exec -it {c_name} {s
 
 def scavenger_env_sync(ctx: Any, env_id: str, direction: str, local_path: str) -> str:
     """Sync files up to or down from a reserved environment."""
+    invalid = _env_id_error(env_id)
+    if invalid:
+        return invalid
     fleet = load_fleet_config()
     res = find_lease(fleet, env_id)
     if not res:
@@ -615,6 +638,9 @@ def scavenger_env_sync(ctx: Any, env_id: str, direction: str, local_path: str) -
 
 def scavenger_env_destroy(ctx: Any, env_id: str) -> str:
     """Tear down a reserved environment and release its lease."""
+    invalid = _env_id_error(env_id)
+    if invalid:
+        return invalid
     fleet = load_fleet_config()
     ok = env_destroy(fleet, env_id)
     if ok:
