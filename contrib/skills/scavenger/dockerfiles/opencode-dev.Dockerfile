@@ -30,8 +30,23 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 # Install Astral uv for blazing fast Python project management
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="/usr/local/bin" sh
 
-# Install OpenCode CLI globally
-RUN npm install -g opencode-ai
+# Install OpenCode 2.x.
+#
+# The package was renamed: `opencode-ai` is the legacy 1.x line and stops at
+# 1.19.6, while `@opencode/cli` carries 2.x. The runner probes the installed
+# major and only passes `--standalone` to 2.x, so a 1.x image yields working but
+# slower shared-server runs; pinning here keeps the image on the line ghflow
+# targets and makes an upgrade a deliberate edit rather than a silent drift.
+#
+# The version is pinned on purpose. Installing unpinned is what let this image
+# sit on 1.19.6 while the runner expected 2.x.
+ARG OPENCODE_VERSION=2.4.2
+RUN npm install -g @opencode/cli@${OPENCODE_VERSION}
+
+# Fail the build if the installed major is not 2.x. A recipe that silently
+# produces the wrong major is the failure this guard exists to prevent.
+RUN test "$(opencode --version | sed 's/^[^0-9]*//' | cut -d. -f1)" = "2" \
+    || { echo "Expected OpenCode 2.x, got: $(opencode --version)"; exit 1; }
 
 # Provider configuration for the homelab model gateway. The API key is resolved
 # from OPENAI_API_KEY at runtime, so no credential is baked into the image.

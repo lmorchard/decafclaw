@@ -962,6 +962,22 @@ def resolve_recipe(recipe_name: str, recipes_dir: Optional[str] = None) -> Optio
     return None
 
 
+def recipe_image_tag(recipe_path: str) -> str:
+    """Return a content-addressed image tag for a recipe Dockerfile.
+
+    The tag used to be ``scavenger-recipe-<name>:latest`` and the build was
+    skipped whenever that image already existed on the host. Editing a recipe
+    therefore never reached a container: a stale image could keep serving
+    months-old tool versions while the source said otherwise. Including the
+    Dockerfile digest in the tag makes an edit produce a new tag, which misses
+    the image check and builds.
+    """
+    with open(recipe_path, "rb") as handle:
+        digest = hashlib.sha256(handle.read()).hexdigest()[:12]
+    clean_name = re.sub(r"[^a-zA-Z0-9_-]", "-", os.path.basename(recipe_path).replace(".Dockerfile", ""))
+    return f"scavenger-recipe-{clean_name}:{digest}"
+
+
 def ensure_remote_image(host: HostConfig, tag: str, dockerfile_path: str) -> None:
     """Ensure a container image exists on the remote host; builds it from Dockerfile if missing."""
     if host.engine == "podman":
@@ -1050,8 +1066,7 @@ def env_create(
             raise ValueError(f"Recipe '{recipe}' not found (searched {recipes_dir or DEFAULT_RECIPES_DIR})")
         rec_path, rec_kind = resolved
         if rec_kind == "dockerfile":
-            clean_rec_name = re.sub(r"[^a-zA-Z0-9_-]", "-", os.path.basename(rec_path).replace(".Dockerfile", ""))
-            tag = f"scavenger-recipe-{clean_rec_name}:latest"
+            tag = recipe_image_tag(rec_path)
             ensure_remote_image(host, tag, rec_path)
             image = tag
             kind = "container"
