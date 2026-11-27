@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .calendar_events import CalendarEvent
@@ -81,6 +81,45 @@ def validate_tool_names(entries: list[str], *, field_name: str) -> list[str]:
             )
         cleaned.append(entry)
     return cleaned
+
+
+def resolve_event_skill_dir(config: Any, event: "CalendarEvent") -> str:
+    """Resolve `$SKILL_DIR` substitutions for a calendar event (#2007).
+
+    Resolution order: first `required_skills` entry that resolves against
+    `discovered_skills` and satisfies `grants_capability(info)`.
+
+    **Only a capability-tier skill may anchor `$SKILL_DIR`.**
+    `workspace/skills/` is agent-writable AND the highest-precedence scan
+    entry, so without this an agent-planted skill repoints `$SKILL_DIR` and
+    a *trusted* event's `shell_patterns` or reason expands it into an
+    agent-writable directory on an unattended turn (#739, #2007).
+
+    Returns the resolved directory string, or empty string if no candidate qualifies.
+    """
+    if not config or not getattr(config, "discovered_skills", None):
+        return ""
+    from .skills import grants_capability
+
+    skill_map = {s.name: s for s in config.discovered_skills}
+    for candidate in event.required_skills or []:
+        candidate_name = str(candidate or "").strip()
+        if not candidate_name:
+            continue
+        info = skill_map.get(candidate_name)
+        if info is None:
+            continue
+        if not grants_capability(info):
+            log.warning(
+                "Calendar event %s: ignoring %s-tier skill %r when resolving "
+                "$SKILL_DIR — only trusted-tier skills may anchor it",
+                event.event_id,
+                getattr(info, "trust_tier", "?"),
+                candidate_name,
+            )
+            continue
+        return str(info.location.resolve())
+    return ""
 
 
 async def activate_required_skills(ctx: "Context", event: "CalendarEvent") -> None:
@@ -178,6 +217,9 @@ def apply_event_policy(ctx: "Context", event: "CalendarEvent") -> None:
         # must stay visible.
         tool_names, inline_patterns = split_allowed_tools(allowed)
         all_patterns = patterns + inline_patterns
+        skill_dir = resolve_event_skill_dir(getattr(ctx, "config", None), event)
+        if skill_dir:
+            all_patterns = [p.replace("$SKILL_DIR", skill_dir) for p in all_patterns]
         if all_patterns and "shell" not in tool_names:
             tool_names.append("shell")
         tools.allowed = set(tool_names) | _ESCAPE_HATCH_TOOLS

@@ -1209,3 +1209,48 @@ async def test_fire_now_does_not_enqueue_when_the_wake_cannot_start(config, mock
     loaded = load_calendar_events(config, "conv-fail")[0]
     assert loaded.status == "pending"
     assert loaded.last_fired_at == "", "a failed run must not be recorded as having fired"
+
+
+@pytest.mark.asyncio
+async def test_fire_expands_skill_dir_in_prompt_and_shell_patterns(config, mock_manager):
+    """End-to-end: _fire must substitute $SKILL_DIR in reason and shell patterns (#2007)."""
+    from types import SimpleNamespace
+
+    from decafclaw.context import Context
+
+    skill_loc = config.workspace_path / "admin-skills" / "my-skill"
+    skill_loc.mkdir(parents=True)
+    config.discovered_skills = [
+        SimpleNamespace(
+            name="my-skill",
+            trust_tier="admin",
+            location=skill_loc,
+            body="",
+            always_loaded=False,
+            has_native_tools=False,
+            tools_location=None,
+            tools_trust_tier=None,
+            requires_env=[],
+        )
+    ]
+    _make_conv_dir(config, "conv-skill-dir")
+    event = _event(
+        "conv-skill-dir",
+        fire_at_ts=time.time(),
+        reason="Run python3 $SKILL_DIR/run.py",
+        required_skills=["my-skill"],
+        allowed_tools=["shell(python3 $SKILL_DIR/run.py *)"],
+        policy_granted=True,
+    )
+    added = await mock_manager.calendar.add(event)
+    await mock_manager.calendar._tasks[added.event_id]
+
+    kwargs = mock_manager.enqueue_turn.await_args.kwargs
+    expected_path = str(skill_loc.resolve())
+    assert f"python3 {expected_path}/run.py" in kwargs["prompt"]
+    assert "$SKILL_DIR" not in kwargs["prompt"]
+
+    setup = kwargs["context_setup"]
+    ctx = Context.for_task(config, event_bus=None, user_id="testuser", conv_id="conv-skill-dir")
+    await setup(ctx)
+    assert f"python3 {expected_path}/run.py *" in ctx.tools.preapproved_shell_patterns

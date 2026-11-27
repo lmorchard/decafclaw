@@ -13,9 +13,11 @@ from types import SimpleNamespace
 import pytest
 
 from decafclaw.calendar_events import CalendarEvent
+from decafclaw.calendar_manager import _build_prompt
 from decafclaw.calendar_policy import (
     activate_required_skills,
     apply_event_policy,
+    resolve_event_skill_dir,
     split_allowed_tools,
     validate_tool_names,
 )
@@ -354,3 +356,104 @@ async def test_an_always_loaded_skill_is_not_duplicated_in_the_block():
     message, _tokens, count = rendered
     assert count == 1, "only the non-always-loaded skill should render"
     assert "vault body" not in message["content"]
+
+
+# -- $SKILL_DIR expansion (#2007) -------------------------------------------
+
+
+def test_resolve_event_skill_dir_resolves_capability_tier_skill():
+    for tier in ("admin", "bundled", "extra"):
+        skills = [_skill("my-tool", tier=tier)]
+        cfg = SimpleNamespace(discovered_skills=skills)
+        event = _event(required_skills=["my-tool"])
+        assert resolve_event_skill_dir(cfg, event) == "/skills/my-tool"
+
+
+def test_resolve_event_skill_dir_skips_workspace_tier():
+    skills = [_skill("my-tool", tier="workspace")]
+    cfg = SimpleNamespace(discovered_skills=skills)
+    event = _event(required_skills=["my-tool"])
+    assert resolve_event_skill_dir(cfg, event) == ""
+
+
+def test_resolve_event_skill_dir_falls_through_to_next_candidate():
+    skills = [
+        _skill("untrusted", tier="workspace"),
+        _skill("trusted", tier="admin"),
+    ]
+    cfg = SimpleNamespace(discovered_skills=skills)
+    event = _event(required_skills=["untrusted", "trusted"])
+    assert resolve_event_skill_dir(cfg, event) == "/skills/trusted"
+
+
+def test_resolve_event_skill_dir_with_no_qualifying_skills():
+    skills = [_skill("other", tier="admin")]
+    cfg = SimpleNamespace(discovered_skills=skills)
+    assert resolve_event_skill_dir(cfg, _event(required_skills=[])) == ""
+    assert resolve_event_skill_dir(cfg, _event(required_skills=["missing"])) == ""
+    assert resolve_event_skill_dir(None, _event(required_skills=["other"])) == ""
+
+
+def test_build_prompt_expands_skill_dir_with_capability_tier():
+    skills = [_skill("weeknotes-composer", tier="admin")]
+    cfg = SimpleNamespace(discovered_skills=skills)
+    event = _event(
+        reason="Run python3 $SKILL_DIR/scripts/cluster.py now",
+        required_skills=["weeknotes-composer"],
+    )
+    prompt = _build_prompt(event, cfg)
+    assert "Run python3 /skills/weeknotes-composer/scripts/cluster.py now" in prompt
+    assert "$SKILL_DIR" not in prompt
+
+
+def test_build_prompt_leaves_skill_dir_unexpanded_for_workspace_tier():
+    skills = [_skill("weeknotes-composer", tier="workspace")]
+    cfg = SimpleNamespace(discovered_skills=skills)
+    event = _event(
+        reason="Run python3 $SKILL_DIR/scripts/cluster.py now",
+        required_skills=["weeknotes-composer"],
+    )
+    prompt = _build_prompt(event, cfg)
+    assert "$SKILL_DIR" in prompt
+
+
+def test_build_prompt_handles_missing_config_or_empty_reason():
+    event = _event(reason="Run python3 $SKILL_DIR/test.py", required_skills=["skill"])
+    prompt = _build_prompt(event)
+    assert "$SKILL_DIR" in prompt
+
+    no_reason = _event(reason="")
+    prompt2 = _build_prompt(no_reason)
+    assert "Calendar event: Weekly." in prompt2
+
+
+def test_apply_event_policy_expands_skill_dir_in_shell_patterns():
+    skills = [_skill("weeknotes-composer", tier="admin")]
+    cfg = SimpleNamespace(discovered_skills=skills)
+    event = _event(
+        allowed_tools=["shell(python3 $SKILL_DIR/scripts/*)"],
+        shell_patterns=["$SKILL_DIR/bin/*"],
+        required_skills=["weeknotes-composer"],
+        policy_granted=True,
+    )
+    ctx = _ctx(config=cfg)
+    apply_event_policy(ctx, event)
+    assert ctx.tools.preapproved_shell_patterns == [
+        "/skills/weeknotes-composer/bin/*",
+        "python3 /skills/weeknotes-composer/scripts/*",
+    ]
+
+
+def test_apply_event_policy_does_not_expand_skill_dir_for_workspace_tier():
+    skills = [_skill("weeknotes-composer", tier="workspace")]
+    cfg = SimpleNamespace(discovered_skills=skills)
+    event = _event(
+        allowed_tools=["shell(python3 $SKILL_DIR/scripts/*)"],
+        required_skills=["weeknotes-composer"],
+        policy_granted=True,
+    )
+    ctx = _ctx(config=cfg)
+    apply_event_policy(ctx, event)
+    assert ctx.tools.preapproved_shell_patterns == [
+        "python3 $SKILL_DIR/scripts/*",
+    ]
