@@ -27,9 +27,9 @@ if TYPE_CHECKING:
 
 from .archive import append_message
 from .candidate_response import CandidateResponse, dispatch_candidate_response
+from .compaction.cleanup import clear_old_tool_results
 from .config_types import LoopBreakerConfig
 from .context import TaskMode, TurnLifecycle
-from .context_cleanup import clear_old_tool_results
 from .context_composer import ContextComposer
 from .context_types import TASK_MODE_TRAITS, UNWATCHED_TASK_MODES, ComposerMode
 from .iteration_budget import IterationBudget
@@ -1419,7 +1419,7 @@ class TurnRunner:
         "is this a child". Three shapes of turn have no live subscriber:
 
         - a child agent (`ctx.is_child`, set by delegate.py and
-          compaction.py's memory sweep) — the parent LLM never subscribes to
+          compaction/__init__.py's memory sweep) — the parent LLM never subscribes to
           the event bus, so `ToolResult.text` (routed back through
           delegate.py's `run_child_turn` / workflow `subagent`) is its *only*
           channel for the child's work;

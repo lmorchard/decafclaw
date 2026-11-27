@@ -164,7 +164,7 @@ Python modules below are under `src/decafclaw/`. Use [docs/index.md](docs/index.
 | Area | Entry points |
 | --- | --- |
 | Agent/runtime | `agent.py`, `conversation_manager.py`, `context.py`, `runner.py`, `events.py` |
-| Context | `context_composer.py` (orchestrator), `context_pipeline.py`, `context_types.py`, `context_tools.py`, `context_preempt.py`, `context_diagnostics.py`, `compaction.py`, `compaction_decisions.py`, `context_cleanup.py`, `memory_context.py` |
+| Context | `context_composer.py` (orchestrator), `context_pipeline.py`, `context_types.py`, `context_tools.py`, `context_preempt.py`, `context_diagnostics.py`, `compaction/` (`__init__.py`, `decisions.py`, `cleanup.py`), `memory_context.py` |
 | Tools | `tool_definitions.py`, `tool_execution.py`, `tools/tool_registry.py`, `tools/search_tools.py`, `preempt_search.py` |
 | Configuration/models | `config.py`, `config_types.py`, `config_watcher.py`, `model_catalog.py`, `llm/` |
 | Persistence | `archive.py`, `conversation_paths.py`, `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py` |

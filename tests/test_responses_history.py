@@ -11,8 +11,8 @@ import pytest
 from decafclaw.agent import run_agent_turn
 from decafclaw.archive import append_message, restore_history
 from decafclaw.compaction import compact_history, flatten_messages
+from decafclaw.compaction.cleanup import clear_old_tool_results
 from decafclaw.config_types import ModelConfig, ProviderConfig, ReflectionConfig
-from decafclaw.context_cleanup import clear_old_tool_results
 from decafclaw.llm import init_providers
 from decafclaw.llm.history import assistant_message
 from decafclaw.llm.providers.openai_responses import OpenAIResponsesProvider, _ResponsesState

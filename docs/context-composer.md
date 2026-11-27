@@ -62,12 +62,12 @@ sweep/compaction, user for reflection) carry the framing already.
 | Surface | Tags | Where |
 |---------|------|-------|
 | Reflection judge (user message) | `<retrieved_context>`, `<prior_turn_tools>`, `<user_request>`, `<tool_results>`, `<assistant_response>` | `src/decafclaw/prompts/REFLECTION.md` (placeholders wrapped in the template) |
-| Memory sweep (user message) | `<messages_to_compact>` | `_build_sweep_user_input` in `compaction.py` |
-| Compaction full mode (user message) | `<decision_slice>` (optional), `<messages_to_compact>` | `_build_compaction_user_input` in `compaction.py` |
-| Compaction incremental mode (user message) | `<decision_slice>` (optional), `<previous_summary>`, `<new_messages>` | `_build_compaction_user_input` in `compaction.py` |
+| Memory sweep (user message) | `<messages_to_compact>` | `_build_sweep_user_input` in `compaction/__init__.py` |
+| Compaction full mode (user message) | `<decision_slice>` (optional), `<messages_to_compact>` | `_build_compaction_user_input` in `compaction/__init__.py` |
+| Compaction incremental mode (user message) | `<decision_slice>` (optional), `<previous_summary>`, `<new_messages>` | `_build_compaction_user_input` in `compaction/__init__.py` |
 
 The `<decision_slice>` block is pre-wrapped by `format_slice` in
-`compaction_decisions.py` (#302). `DECISIONS_PROMPT_ADDENDUM`
+`compaction/decisions.py` (#302). `DECISIONS_PROMPT_ADDENDUM`
 references this tag name directly so the LLM's instructions and the
 input it sees stay aligned. The chunked-compaction fallback for
 oversized inputs does not wrap chunks in `<messages_to_compact>` —
@@ -609,7 +609,7 @@ See [config.md#recent_journal](config.md#recent_journal). Config dataclass: `Rec
 
 Interactive turns skip this tier by default to preserve prompt caches. Set `cleanup.preserve_prompt_cache: false` to enable it between compactions. Other turn modes retain their existing cleanup policy.
 
-Before the compaction threshold check fires, every iteration runs a cheap pass — `clear_old_tool_results` in `src/decafclaw/context_cleanup.py` — that makes three in-memory edits. The **size/age clear** replaces large old tool-message bodies with a short stub (`[tool output cleared: 4213 bytes]`). This is the simplest tier of context management Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) recommends: remove raw tool output the agent has already synthesized and won't re-examine. See #298. The **resolved-error pruning** pass (#540) stubs a tool *error* that a later success of the same tool has already resolved (`[tool error superseded by later success]`) — a recovered failure no longer earns attention budget either. The **superseded-read pruning** pass (#1146) stubs a successful full-file read whose path a later successful full read re-read (`[tool output superseded by a later successful read]`) — an older copy of a file the agent has since re-read can conflict with current content.
+Before the compaction threshold check fires, every iteration runs a cheap pass — `clear_old_tool_results` in `src/decafclaw/compaction/cleanup.py` — that makes three in-memory edits. The **size/age clear** replaces large old tool-message bodies with a short stub (`[tool output cleared: 4213 bytes]`). This is the simplest tier of context management Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) recommends: remove raw tool output the agent has already synthesized and won't re-examine. See #298. The **resolved-error pruning** pass (#540) stubs a tool *error* that a later success of the same tool has already resolved (`[tool error superseded by later success]`) — a recovered failure no longer earns attention budget either. The **superseded-read pruning** pass (#1146) stubs a successful full-file read whose path a later successful full read re-read (`[tool output superseded by a later successful read]`) — an older copy of a file the agent has since re-read can conflict with current content.
 
 **Resolved-error pruning** (#540). A tool error (a tool-role message whose `content` starts with `[error`, the `ToolResult(text="[error: ...]")` convention) is stubbed when a *later* result for the same tool name is not itself an error. It's more aggressive than the size/age clear: it applies regardless of size or age. Matching is by tool name by default; `cleanup.prune_resolved_same_args_only` makes it conservative (the later success must carry the same arguments as the failed call). It's skipped in heartbeat / scheduled / child-agent turns, like memory retrieval — the size/age clear is unaffected by mode. Same in-memory-only invariant: the archive keeps the original.
 
@@ -665,7 +665,7 @@ Two caveats on the Vertex row: non-migrated Gemini 2.5 endpoints cap the inline 
 
 ## Decision slice through compaction
 
-Compaction's prose summary is lossy for high-signal facts — architectural decisions, unresolved questions, artifacts produced — and that loss compounds across iterated compactions. Alongside the prose, compaction emits a **structured slice** that's threaded forward into every subsequent compaction so once an entry lands it's not re-derived from prose each cycle. See `src/decafclaw/compaction_decisions.py` and #302.
+Compaction's prose summary is lossy for high-signal facts — architectural decisions, unresolved questions, artifacts produced — and that loss compounds across iterated compactions. Alongside the prose, compaction emits a **structured slice** that's threaded forward into every subsequent compaction so once an entry lands it's not re-derived from prose each cycle. See `src/decafclaw/compaction/decisions.py` and #302.
 
 **Three lists**, each holding short string entries with creation timestamps:
 
@@ -788,7 +788,7 @@ preserve the reader's selection and panel dismissal state. The canvas state pers
 - `src/decafclaw/prompts/__init__.py` — prompt assembly logic
 - `src/decafclaw/agent.py` — agent loop, iteration-level tool list building
 - `src/decafclaw/tools/tool_registry.py` — tool classification and deferral
-- `src/decafclaw/compaction.py` — conversation summary generation
-- `src/decafclaw/context_cleanup.py` — lightweight tool-result clearing tier (#298)
-- `src/decafclaw/compaction_decisions.py` — structured decision slice threaded through compaction (#302)
+- `src/decafclaw/compaction/__init__.py` — conversation summary generation
+- `src/decafclaw/compaction/cleanup.py` — lightweight tool-result clearing tier (#298)
+- `src/decafclaw/compaction/decisions.py` — structured decision slice threaded through compaction (#302)
 - `src/decafclaw/frontmatter.py` — YAML frontmatter parsing

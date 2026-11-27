@@ -17,6 +17,8 @@ import pytest
         ("decafclaw.skills.vault.tools", "TOOLS"),
         ("decafclaw.archive", "append_message"),
         ("decafclaw.compaction", "compact_history"),
+        ("decafclaw.compaction.decisions", "format_slice"),
+        ("decafclaw.compaction.cleanup", "clear_old_tool_results"),
         ("decafclaw.mattermost", "ConversationDisplay"),
     ],
 )
