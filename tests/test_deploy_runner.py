@@ -13,6 +13,7 @@ import json
 import pathlib
 import re
 import sys
+import time
 
 import pytest
 
@@ -540,3 +541,97 @@ def test_manual_action_proceeds_with_ack_manual(tmp_path):
     state = dr.DeployState.load(tmp_path / "state.json")
     assert state.last_good == CANDIDATE
     assert world.notifications[-1]["title"] == "Deploy succeeded"
+
+
+# -- command watchdog -------------------------------------------------------
+
+
+def test_command_watchdog_abandons_a_child_that_ignores_signals(monkeypatch, tmp_path):
+    """The bound must work against a process that cannot be killed.
+
+    This is the failure the watchdog exists for. A child wedged in a `hard` NFS
+    mount sits in uninterruptible sleep: SIGTERM and even SIGKILL are deferred
+    until the syscall returns. `subprocess.run(timeout=...)` would call kill()
+    then wait(), and that wait() blocks forever -- presenting a bound that does
+    not exist. Here the child traps SIGTERM and blocks; the runner must still
+    return promptly with the timeout code.
+
+    A plain `sleep` would not prove anything: it dies on SIGKILL, so even a naive
+    implementation would appear to work.
+    """
+    monkeypatch.setenv("DECAFCLAW_DEPLOY_COMMAND_TIMEOUT", "1")
+
+    script = tmp_path / "stubborn.py"
+    script.write_text(
+        "import signal, time\n"
+        "signal.signal(signal.SIGTERM, lambda *a: None)\n"
+        "print('started', flush=True)\n"
+        "time.sleep(120)\n"
+    )
+
+    started = time.monotonic()
+    result = dr._run_command([sys.executable, str(script)])
+    elapsed = time.monotonic() - started
+
+    assert result.returncode == dr.COMMAND_TIMEOUT_EXIT
+    assert "watchdog" in result.stderr
+    # Comfortably below the child's own 120s sleep, and above the 1s bound.
+    assert elapsed < 30, f"watchdog did not return promptly (took {elapsed:.1f}s)"
+
+
+def test_command_watchdog_passes_through_a_normal_exit(monkeypatch):
+    """A fast, successful command must be unaffected by the watchdog."""
+    monkeypatch.setenv("DECAFCLAW_DEPLOY_COMMAND_TIMEOUT", "30")
+
+    result = dr._run_command([sys.executable, "-c", "print('hello')"])
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "hello"
+
+
+def test_command_watchdog_can_be_disabled(monkeypatch):
+    """A zero or negative value means 'no watchdog', for an operator debugging."""
+    monkeypatch.setenv("DECAFCLAW_DEPLOY_COMMAND_TIMEOUT", "0")
+    assert dr._command_timeout() is None
+
+    monkeypatch.setenv("DECAFCLAW_DEPLOY_COMMAND_TIMEOUT", "-5")
+    assert dr._command_timeout() is None
+
+
+def test_command_watchdog_ignores_garbage_and_keeps_the_default(monkeypatch):
+    """A typo must not silently disable the bound."""
+    monkeypatch.setenv("DECAFCLAW_DEPLOY_COMMAND_TIMEOUT", "fifteen")
+    assert dr._command_timeout() == dr.DEFAULT_COMMAND_TIMEOUT_SEC
+
+
+def test_default_command_watchdog_allows_a_full_backup():
+    """16 GB at the measured ~25 MB/s is ~11 minutes; the default must clear it.
+
+    A bound that kills real backups would turn healthy deploys into refusals,
+    which is why this is asserted rather than left to whoever edits the number.
+    """
+    assert dr.DEFAULT_COMMAND_TIMEOUT_SEC >= 600
+
+
+def test_backup_watchdog_refuses_instead_of_stopping_the_service(tmp_path):
+    """A watchdog hit on the backup must be treated as a refusal, not a failure.
+
+    The backup step runs before `systemctl stop`. If the backup directory is
+    unreachable, deploying anyway would stop a healthy service with no recovery
+    point, so the runner must bail out here.
+    """
+
+    class WatchdogWorld(FakeWorld):
+        def run(self, cmd, cwd=None):
+            self.calls.append(list(cmd))
+            if cmd[:1] == ["backup.sh"]:
+                return dr.CommandResult(dr.COMMAND_TIMEOUT_EXIT, "", "watchdog tripped")
+            return super().run(cmd, cwd)
+
+    world = WatchdogWorld(health_script=[_health(commit=HEAD)])
+    runner = make_runner(tmp_path, world, backup_cmd=["backup.sh"])
+
+    assert runner.run() == dr.EXIT_REFUSED
+
+    commands = _commands(world)
+    assert not any("systemctl --user stop" in command for command in commands)
