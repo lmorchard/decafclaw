@@ -185,6 +185,42 @@ error; `2` refused before stopping the service (guard, health, backup); `3`
 deployed and rolled back; `4` deploy and rollback both failed (a human is
 needed); `5` blocked by another run's lock, a quarantined SHA, or required manual action.
 
+### Bounding a child command
+
+Every command the runner shells out to — `git`, `systemctl`, `uv sync`, the
+backup — can block on a `hard` NFS mount. Such a process sits in *uninterruptible
+sleep* (D-state), where SIGTERM, SIGINT and even SIGKILL are only recorded as
+pending until the syscall returns. That is what froze the `decafclaw` host on
+2026-11-26.
+
+**`subprocess.run(timeout=...)` does not fix this, and reaching for it is the
+trap.** On expiry python calls `kill()` and then `wait()`, and that `wait()`
+blocks forever on a D-state child. It presents a bound that does not exist —
+worse than none, because it looks solved.
+
+What works is never blocking on the child at all. `_run_command` starts it with
+`start_new_session=True` so it owns a process group, waits with
+`communicate(timeout=...)`, and on expiry signals the group with `killpg` and
+**does not wait**. It returns `COMMAND_TIMEOUT_EXIT` (`124`) with a message
+naming the command. A wedged child may outlive the runner; the runner records a
+failure and moves on instead of holding the deploy lock forever.
+
+Two details that are easy to get wrong:
+
+- **The timeout path must return no output.** Reading `child.stdout` to salvage
+  partial output blocks on a wedged child, because that child still holds the
+  pipe open. Recovering output here just relocates the hang.
+- **`124` is treated as a refusal by the backup step.** A backup watchdog hit
+  returns `EXIT_REFUSED` and never reaches `systemctl stop`. Deploying past an
+  unreachable backup directory would stop a healthy service with no recovery
+  point.
+
+The bound is `DECAFCLAW_DEPLOY_COMMAND_TIMEOUT`, default **1800 s**. Sizing is
+from measurement, not taste: a real pre-deploy backup is ~11 minutes here, so a
+tighter bound would kill healthy deploys. `0` disables the watchdog for hand
+debugging, and an unparseable value falls back to the default rather than
+silently disabling it.
+
 ### Backups
 
 `scripts/backup.py` archives the data that is not reproducible. It runs
@@ -210,6 +246,19 @@ cp deploy/decafclaw-backup.service deploy/decafclaw-backup.timer ~/.config/syste
 systemctl --user daemon-reload
 systemctl --user enable --now decafclaw-backup.timer
 ```
+
+**The unit is bounded on purpose.** `--backup-dir` points at a `hard` NFS mount,
+so a run that starts while the export is unreachable blocks in uninterruptible
+sleep, where signals are deferred. systemd's default `TimeoutStartSec` is
+`infinity`, which would leave the unit hung forever with nothing in
+`systemctl --user --failed` to find. `TimeoutStartSec=45min` turns that into a
+visible failure. It is four times the measured cost of a real backup: the data
+home is ~16 GB and gzip runs ~25 MB/s single-threaded, so a full archive is
+~11 minutes. Do not tighten it toward that figure — a bound that kills healthy
+backups is its own outage.
+
+**Child commands are bounded too.** See
+[Bounding a child command](#bounding-a-child-command).
 
 **Scope.** Included: `workspace/sessions/`, `workspace/drafts/`,
 `workspace/todos/`, `workspace/notifications/`, `workspace/newsletter/`,
