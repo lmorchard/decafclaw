@@ -103,6 +103,26 @@ class BackgroundJob:
     # so the WAKE turn is the user-facing signal and the inbox record would only
     # add bell noise (#1842). Unattended jobs keep their inbox notification.
     attended: bool = False
+    # Set when a BLOCKING status read observed this job leave RUNNING, i.e. the
+    # caller waited for it and has the result inline. Suppresses the completion
+    # wake: telling the agent about a result it just read costs a full model
+    # round-trip to discover nothing (#1961).
+    #
+    # Deliberately not set by a non-blocking poll. A poll can land after
+    # completion at any time, and treating that as consumption would silence
+    # wakes the agent never asked to wait for.
+    #
+    # This is the shell_background_status counterpart of #1136's `foreground`
+    # claim, which suppresses the whole completion sequence on the budgeted
+    # `shell` path. That path was covered; this one was not.
+    result_consumed: bool = False
+    # Number of blocking `shell_background_status(wait=...)` callers parked on
+    # done_event right now. Paired with result_consumed to close a scheduling
+    # race (#1961): _finalize_job runs in the reader task and decides the wake
+    # immediately after setting done_event, so a waiter may not have resumed to
+    # record `result_consumed` yet. Checking the counter too makes the decision
+    # independent of which coroutine the loop schedules first.
+    blocking_waiters: int = 0
     completion_tail_lines: int = 50
     pin_sticky: bool = False  # stream live output to the sticky slot (#1104)
     progress_parser: ProgressParserPreset = ProgressParserPreset.AUTO  # parser preset (#1137, #1384)
@@ -296,6 +316,22 @@ async def _enqueue_wake(job: BackgroundJob) -> None:
         "action (respond to the user, call other tools, or reply with "
         "BACKGROUND_WAKE_OK to end the turn silently if no action is needed)."
     )
+    # A blocking status read already delivered this result to the caller inline;
+    # waking it to report the same thing is a full model round-trip spent
+    # rediscovering what it just read (#1961).
+    #
+    # The `blocking_waiters` check closes a race: this runs in the reader task
+    # immediately after done_event.set(), so the waiter may not have resumed and
+    # set result_consumed yet. A nonzero counter means somebody is parked on the
+    # event specifically to read the output, which is the same fact.
+    if job.result_consumed or job.blocking_waiters > 0:
+        log.debug(
+            "Job %s has a blocking reader (consumed=%s, waiters=%d) — skipping wake",
+            job.job_id,
+            job.result_consumed,
+            job.blocking_waiters,
+        )
+        return
     try:
         await job.manager.enqueue_turn(
             conv_id=job.conv_id,
@@ -1129,12 +1165,23 @@ async def tool_shell_background_status(
 
     wait_timed_out = False
     if wait > 0 and job.status == JobStatus.RUNNING:
+        # Register as a blocking reader BEFORE awaiting, so _finalize_job in the
+        # reader task can see that somebody is parked here for the output and
+        # skip the wake regardless of coroutine scheduling order (#1961).
+        job.blocking_waiters += 1
         try:
             await asyncio.wait_for(job.done_event.wait(), timeout=wait)
+            # The wait observed the job leave RUNNING and this call is returning
+            # its output, so the completion wake would only re-announce what the
+            # caller already has.
+            job.result_consumed = True
         except asyncio.TimeoutError:
             # Completion may have landed as the timeout fired; report the
-            # actual state rather than a stale timeout.
+            # actual state rather than a stale timeout. A timed-out wait
+            # consumed nothing, so no suppression.
             wait_timed_out = job.status == JobStatus.RUNNING
+        finally:
+            job.blocking_waiters -= 1
 
     now = time.monotonic()
     elapsed_ms = int((now - job.started_at) * 1000)
