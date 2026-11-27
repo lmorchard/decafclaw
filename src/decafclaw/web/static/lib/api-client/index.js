@@ -1543,6 +1543,21 @@ var DefaultService = class {
   }
   /**
    * Wrapper
+   * @param eventId
+   * @returns CalendarEventResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiCalendarEventsEventIdRunPost(eventId) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/calendar/events/{event_id}/run",
+      path: {
+        "event_id": eventId
+      }
+    });
+  }
+  /**
+   * Wrapper
    * @returns ScheduleListResponse Successful Response
    * @throws ApiError
    */

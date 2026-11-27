@@ -320,15 +320,43 @@ class CalendarManager:
             self._discard_current_task_locked(current.event_id)
             return
 
+        if not await self._enqueue_wake(current, target_conv_id):
+            self._discard_current_task_locked(current.event_id)
+            return
+
+        if current.recurrence:
+            if await self._reschedule_or_complete(current):
+                await self._notify_if_unattended(current, target_conv_id)
+        elif await self._mark_status(current, "fired", last_fired_at=now_iso()):
+            await self._notify_if_unattended(current, target_conv_id)
+
+    async def _enqueue_wake(self, event: CalendarEvent, target_conv_id: str) -> bool:
+        """Enqueue the wake turn for an event. Returns False if it could not start.
+
+        Extracted so a scheduled fire and a manual run (`fire_now`) put the same
+        turn on the queue: identical prompt, identical policy, identical skill
+        activation. A rehearsal that took a different path would not be
+        rehearsing anything.
+
+        Deliberately does NOT touch status or recurrence — the caller owns that.
+        `_fire` advances the series; `fire_now` must not.
+        """
         from .conversation_manager import TurnKind
         from .scheduled_wakes import compose_wake_context_setup
 
+        manager = self.manager
+        if manager is None:
+            # Both callers check this, but the check must be visible here for the
+            # narrowing below; a silent None return keeps the contract simple.
+            log.warning("No ConversationManager attached; calendar event %s not started", event.event_id)
+            return False
+
         base_setup = compose_wake_context_setup(
-            self.manager,
+            manager,
             target_conv_id,
-            channel_id=current.channel_id,
-            thread_id=current.thread_id,
-            transport=current.transport,
+            channel_id=event.channel_id,
+            thread_id=event.thread_id,
+            transport=event.transport,
         )
 
         async def context_setup(ctx) -> None:
@@ -343,43 +371,84 @@ class CalendarManager:
             coroutine ``context_setup``.
             """
             base_setup(ctx)
-            apply_event_policy(ctx, current)
-            await activate_required_skills(ctx, current)
+            apply_event_policy(ctx, event)
+            await activate_required_skills(ctx, event)
 
         try:
-            future = await self.manager.enqueue_turn(
+            future = await manager.enqueue_turn(
                 conv_id=target_conv_id,
                 kind=TurnKind.WAKE,
-                prompt=_build_prompt(current),
+                prompt=_build_prompt(event),
                 metadata={
-                    "calendar_event_id": current.event_id,
+                    "calendar_event_id": event.event_id,
                     "suppressible": False,
-                    "channel_id": current.channel_id,
-                    "thread_id": current.thread_id,
-                    "transport": current.transport,
+                    "channel_id": event.channel_id,
+                    "thread_id": event.thread_id,
+                    "transport": event.transport,
                 },
-                user_id=current.user_id,
+                user_id=event.user_id,
                 context_setup=context_setup,
                 bypass_wake_rate_limit=True,
             )
         except Exception as exc:
-            log.warning("Failed to enqueue calendar event %s: %s", current.event_id, exc)
-            self._discard_current_task_locked(current.event_id)
-            return
+            log.warning("Failed to enqueue calendar event %s: %s", event.event_id, exc)
+            return False
 
         if future.rate_limited is True:
             log.warning(
                 "Calendar event %s was rate-limited despite bypass; leaving it pending",
-                current.event_id,
+                event.event_id,
             )
-            self._discard_current_task_locked(current.event_id)
-            return
+            return False
 
-        if current.recurrence:
-            if await self._reschedule_or_complete(current):
-                await self._notify_if_unattended(current, target_conv_id)
-        elif await self._mark_status(current, "fired", last_fired_at=now_iso()):
-            await self._notify_if_unattended(current, target_conv_id)
+        return True
+
+    async def fire_now(self, conv_id: str, event_id: str) -> CalendarEvent | None:
+        """Run a pending event's wake turn now, WITHOUT advancing its schedule.
+
+        This is a rehearsal, not a fire. It matters that it is not a fire:
+        ``_fire`` -> ``_reschedule_or_complete`` advances a recurring series, so
+        testing a weekly event on a Tuesday would silently skip that week. Every
+        side effect that makes a fire "count" is withheld here:
+
+        * ``status`` is untouched, so a one-shot event stays pending and does not
+          become ``fired``/``completed``.
+        * ``fire_at`` and the recurrence anchor are untouched, so the armed timer
+          still points at the real occurrence.
+        * ``_reschedule_or_complete`` is never called.
+
+        ``last_fired_at`` IS updated — it records that a run happened, which is
+        true, and it is the only field whose meaning survives a rehearsal.
+
+        Returns the updated event, or None when it is unknown or not pending.
+        """
+        async with self._lock:
+            current = self._find_event(conv_id, event_id)
+            if current is None or current.status != "pending":
+                return None
+
+            try:
+                target_conv_id = self._resolve_target(current)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Calendar event %s target resolution failed: %s", event_id, exc)
+                target_conv_id = None
+            if target_conv_id is None:
+                return None
+            if self.manager is None:
+                log.warning("No ConversationManager attached; cannot run calendar event %s", event_id)
+                return None
+
+            if not await self._enqueue_wake(current, target_conv_id):
+                return None
+
+            updated = replace(current, last_fired_at=now_iso(), updated_at=now_iso())
+            events = load_calendar_events(self.config, conv_id)
+            for index, event in enumerate(events):
+                if event.event_id == event_id:
+                    events[index] = updated
+                    break
+            save_calendar_events(self.config, conv_id, events)
+            return updated
 
     async def _reschedule_or_complete(self, event: CalendarEvent) -> bool:
         """Advance a recurring event to its next occurrence, or mark it completed.

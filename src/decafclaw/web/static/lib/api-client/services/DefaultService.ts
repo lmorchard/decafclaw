@@ -1447,6 +1447,23 @@ export class DefaultService {
     }
     /**
      * Wrapper
+     * @param eventId
+     * @returns CalendarEventResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiCalendarEventsEventIdRunPost(
+        eventId: string,
+    ): CancelablePromise<CalendarEventResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/calendar/events/{event_id}/run',
+            path: {
+                'event_id': eventId,
+            },
+        });
+    }
+    /**
+     * Wrapper
      * @returns ScheduleListResponse Successful Response
      * @throws ApiError
      */
