@@ -835,9 +835,12 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     const picker = /** @type {any} */ (menu.querySelector('model-picker'));
     expect(picker).toBeTruthy();
     expect(picker.inline).toBe(true);
-    expect([...picker.querySelectorAll('.model-picker-option')].map((row) => row.dataset.model))
+    // #2011: rows live in the nested <picker-popup>, which updates separately.
+    await picker.updateComplete;
+    await picker.querySelector('picker-popup')?.updateComplete;
+    expect([...picker.querySelectorAll('.picker-popup-option')].map((row) => row.dataset.value))
       .toEqual(['m1', 'm2']);
-    expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('m1');
+    expect(picker.querySelector('.picker-popup-option.selected').dataset.value).toBe('m1');
 
     // #1684: the mode control is retired.
     expect(menu.querySelector('#conversation-menu-mode')).toBeNull();
@@ -846,8 +849,8 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     const modelHandler = vi.fn();
     document.addEventListener('set-model', modelHandler);
 
-    const modelRow = [...picker.querySelectorAll('.model-picker-option')]
-      .find((row) => row.dataset.model === 'm2');
+    const modelRow = [...picker.querySelectorAll('.picker-popup-option')]
+      .find((row) => row.dataset.value === 'm2');
     modelRow.click();
     await el.updateComplete;
 
@@ -875,13 +878,17 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     await el.updateComplete;
 
     const picker = /** @type {any} */ (el.querySelector('model-picker'));
-    expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('m2');
+    await picker.updateComplete;
+    await picker.querySelector('picker-popup')?.updateComplete;
+    expect(picker.querySelector('.picker-popup-option.selected').dataset.value).toBe('m2');
 
     // Switching conversation updates the picker
     store.activeModel = 'm1';
     store.dispatchEvent(new Event('change'));
     await el.updateComplete;
-    expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('m1');
+    await picker.updateComplete;
+    await picker.querySelector('picker-popup')?.updateComplete;
+    expect(picker.querySelector('.picker-popup-option.selected').dataset.value).toBe('m1');
   });
 
   it('updates the menu disabled state when only busy changes', async () => {

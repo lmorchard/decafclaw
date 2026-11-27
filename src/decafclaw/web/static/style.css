@@ -25,7 +25,9 @@
 @import './styles/chat-controls.css';
 @import './styles/host-gauges.css';
 @import './styles/chat-input.css';
+@import './styles/picker-popup.css';
 @import './styles/model-picker.css';
+@import './styles/model-select.css';
 @import './styles/side-question-drawer.css';
 @import './styles/widgets.css';
 @import './styles/wiki.css';

@@ -430,8 +430,21 @@ The sidebar list rows in the Chats, Vault, Files, Tags, and Schedules tabs work 
 
 ### Model picker
 
-When model configs are available, one shared `<model-picker>` element
-(`components/model-picker.js`) serves every conversation model selector:
+Model selection splits into a generic popup primitive and two thin consumers
+(#2011). The primitive knows nothing about models or conversations; each
+consumer owns its own semantics and event.
+
+**`<picker-popup>`** (`components/picker-popup.js`) owns the mechanism: the
+trigger, the viewport-anchored panel with flip/clamp placement, the search
+field, row rendering, keyboard navigation, and open/close lifecycle. It takes
+`items` (flat) or `groups` (with headings), plus an optional `emptyItem`
+pinned above the list while the search box is empty, and dispatches one
+bubbling `pick` with `{ value, item }` per chosen row — including the
+already-selected row and including `emptyItem`. It decides nothing about what
+a value means; a caller's `""` passes through like any other. It performs no
+fetches and holds no caller domain state.
+
+**`<model-picker>`** is the conversation consumer:
 
 - The desktop control strip above the composer.
 - The mobile conversation menu (rendered inline, without a popup).
@@ -449,16 +462,17 @@ closes the panel and returns focus to the trigger. A click outside also closes
 it. The panel is anchored below the trigger on wide screens and becomes a
 viewport-bounded sheet on narrow screens. Picking a different model dispatches
 one bubbling `set-model` event; picking the current model only closes the
-panel. All visible state re-renders from properties, so session switches and
-mid-session model changes stay in sync (#1440). See
-[Model Selection](model-selection.md).
+panel. A conversation switch closes the panel. All visible state re-renders
+from properties, so session switches and mid-session model changes stay in
+sync (#1440). See [Model Selection](model-selection.md).
 
-The same element serves the four settings model pointers in **⚙ Agent
-Config → Models** (default, auto-approval, reflection, verifier) in selection
-mode (#1948). That mode renders the flat `picker_models` list from the model
-catalog plus the field's own empty/inherit label, and dispatches
-`model-select` with `{ value }` instead of `set-model`. Search, keyboard
-navigation, and the popup behavior are shared with the conversation picker.
+**`<model-select>`** is the settings consumer, used by the four model pointers
+in **⚙ Agent Config → Models** (default, auto-approval, reflection, verifier).
+It renders a flat `picker_models` list plus that field's own empty/inherit
+label, and dispatches `model-select` with `{ value }`. Because it is a
+separate element with no `convId`, a settings pointer has no path to
+`store.setModel` — the two concerns cannot be crossed by getting a mode flag
+wrong.
 
 ### Context inspector
 
