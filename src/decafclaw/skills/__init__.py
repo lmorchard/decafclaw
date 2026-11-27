@@ -137,9 +137,10 @@ def substitute_skill_placeholders(body: str, *, arguments: str = "", skill_dir: 
     The single source of truth for placeholder expansion, shared by every
     entry point that renders a skill or schedule body: the command path
     (`commands.execute_command`), skill activation
-    (`tools.skill_tools.activate_skill_internal`), and the schedule path
-    (`schedules._render_required_skill_bodies`). Keeping one implementation
-    stops the three from drifting apart — they must expand the same
+    (`tools.skill_tools.activate_skill_internal`), the schedule path
+    (`schedules._render_required_skill_bodies`), and the calendar wake
+    prompt (`calendar_manager._build_prompt`). Keeping one implementation
+    stops them from drifting apart — they must expand the same
     placeholders identically.
 
     Supported placeholders:

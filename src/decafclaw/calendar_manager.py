@@ -16,7 +16,7 @@ import logging
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .calendar_events import (
     CalendarEvent,
@@ -51,11 +51,19 @@ def ensure_dedicated_session(config, user_id: str, session_key: str, session_tit
     return conv_id
 
 
-def _build_prompt(event: CalendarEvent) -> str:
+def _build_prompt(event: CalendarEvent, config: Any = None) -> str:
     """Build the wake prompt for a calendar event."""
+    from .calendar_policy import resolve_event_skill_dir
+    from .skills import substitute_skill_placeholders
+
+    reason = event.reason or ""
+    if reason:
+        skill_dir = resolve_event_skill_dir(config, event) if config else ""
+        reason = substitute_skill_placeholders(reason, skill_dir=skill_dir)
+
     lines = [f"Calendar event: {event.title}."]
-    if event.reason:
-        lines.append(f"Reason: {event.reason}.")
+    if reason:
+        lines.append(f"Reason: {reason}.")
     lines.append(f"Due: {event.fire_at}.")
     if event.session_mode == "dedicated" and event.session_title:
         lines.append(f"Target session: {event.session_title}.")
@@ -378,7 +386,7 @@ class CalendarManager:
             future = await manager.enqueue_turn(
                 conv_id=target_conv_id,
                 kind=TurnKind.WAKE,
-                prompt=_build_prompt(event),
+                prompt=_build_prompt(event, self.config),
                 metadata={
                     "calendar_event_id": event.event_id,
                     "suppressible": False,
