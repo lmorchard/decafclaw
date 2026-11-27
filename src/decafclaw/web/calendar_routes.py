@@ -13,7 +13,7 @@ import time
 from typing import Literal
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
 from ..calendar_events import (
@@ -26,6 +26,7 @@ from ..calendar_events import (
     validate_session_key,
 )
 from ..calendar_manager import CalendarManager
+from ..calendar_policy import split_allowed_tools, validate_tool_names
 from ..calendar_recurrence import next_occurrence, validate_recurrence, validate_timezone
 from ..conversation_paths import conversation_dir
 from .conversations import ConversationIndex, can_read_conversation
@@ -64,6 +65,12 @@ class CalendarEventOut(BaseModel):
     recurrence_start: str = ""
     occurrence_at: str = ""
     recurrence_until: str = ""
+    allowed_tools: list[str] = Field(default_factory=list)
+    disallowed_tools: list[str] = Field(default_factory=list)
+    shell_patterns: list[str] = Field(default_factory=list)
+    required_skills: list[str] = Field(default_factory=list)
+    policy_granted: bool = False
+    model: str = ""
     origin_title: str = ""
     target_title: str = ""
     recurrence_summary: str = ""
@@ -104,6 +111,14 @@ class CalendarEventCreateRequest(BaseModel):
     session_mode: Literal["current", "dedicated"] = "current"
     session_key: str = ""
     session_title: str = ""
+    # Tool policy (#1971). This route is the human-controlled surface, so it is
+    # the one path allowed to grant preapproval.
+    allowed_tools: list[str] = Field(default_factory=list)
+    disallowed_tools: list[str] = Field(default_factory=list)
+    shell_patterns: list[str] = Field(default_factory=list)
+    required_skills: list[str] = Field(default_factory=list)
+    # Model pin (#1972).
+    model: str = ""
 
 
 class CalendarEventUpdateRequest(BaseModel):
@@ -116,6 +131,13 @@ class CalendarEventUpdateRequest(BaseModel):
     session_mode: Literal["current", "dedicated"] | None = None
     session_key: str | None = None
     session_title: str | None = None
+    # Tool policy (#1971) / model pin (#1972). None leaves the stored value
+    # alone; an empty list explicitly clears it.
+    allowed_tools: list[str] | None = None
+    disallowed_tools: list[str] | None = None
+    shell_patterns: list[str] | None = None
+    required_skills: list[str] | None = None
+    model: str | None = None
 
 
 class CalendarSnoozeRequest(BaseModel):
@@ -324,6 +346,12 @@ async def calendar_events_create(request: Request, username: str) -> JSONRespons
             session_key = validate_session_key(session_key)
             if not body.session_title.strip():
                 raise ValueError("session_title is required for a dedicated session")
+        allowed, inline_patterns = split_allowed_tools(body.allowed_tools)
+        disallowed = validate_tool_names(body.disallowed_tools, field_name="disallowed_tools")
+        skills = validate_tool_names(body.required_skills, field_name="required_skills")
+        shell_patterns = [
+            str(p or "").strip() for p in list(body.shell_patterns) + inline_patterns if str(p or "").strip()
+        ]
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
 
@@ -346,6 +374,14 @@ async def calendar_events_create(request: Request, username: str) -> JSONRespons
         recurrence_start=fire_at_iso if rule else "",
         occurrence_at=fire_at_iso if rule else "",
         recurrence_until=until,
+        allowed_tools=allowed,
+        disallowed_tools=disallowed,
+        shell_patterns=shell_patterns,
+        required_skills=skills,
+        # This route requires an authenticated session, so it is the human
+        # control surface schedules get from their `source` tier (#1971).
+        policy_granted=bool(allowed or shell_patterns or disallowed or skills),
+        model=body.model.strip(),
     )
     if not event.title or not event.reason:
         return JSONResponse({"error": "title and reason are required"}, status_code=400)
@@ -409,8 +445,26 @@ async def calendar_events_update(request: Request, username: str) -> JSONRespons
             changes["session_key"] = validate_session_key(body.session_key)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-    elif body.session_key is not None:
-        changes["session_key"] = ""
+    # Tool policy (#1971). This route is the human-controlled surface, so a
+    # policy update here may grant preapproval.
+    try:
+        if body.allowed_tools is not None:
+            names, inline_patterns = split_allowed_tools(body.allowed_tools)
+            changes["allowed_tools"] = names
+            if inline_patterns:
+                changes["shell_patterns"] = sorted(set(inline_patterns) | set(body.shell_patterns or ()))
+        if body.shell_patterns is not None:
+            changes["shell_patterns"] = [str(p or "").strip() for p in body.shell_patterns if str(p or "").strip()]
+        if body.disallowed_tools is not None:
+            changes["disallowed_tools"] = validate_tool_names(body.disallowed_tools, field_name="disallowed_tools")
+        if body.required_skills is not None:
+            changes["required_skills"] = validate_tool_names(body.required_skills, field_name="required_skills")
+        if body.model is not None:
+            changes["model"] = body.model.strip()
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if any(key in changes for key in ("allowed_tools", "shell_patterns", "disallowed_tools", "required_skills")):
+        changes["policy_granted"] = True
     if body.session_title is not None and final_mode != "current":
         changes["session_title"] = body.session_title.strip()
     elif body.session_title is not None:

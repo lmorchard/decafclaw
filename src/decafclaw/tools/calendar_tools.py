@@ -17,6 +17,7 @@ from ..calendar_events import (
     validate_session_key,
 )
 from ..calendar_manager import CalendarManager
+from ..calendar_policy import validate_tool_names
 from ..calendar_recurrence import validate_recurrence, validate_timezone
 from ..media import ToolResult, WidgetRequest
 from .schedule_tools import _is_disallowed_task_mode
@@ -91,8 +92,18 @@ async def tool_calendar_create(
     recurrence: str = "",
     timezone: str = "",
     recurrence_until: str = "",
+    allowed_tools: list[str] | None = None,
+    disallowed_tools: list[str] | None = None,
+    required_skills: list[str] | None = None,
+    model: str = "",
 ) -> ToolResult:
-    """Create a calendar event, optionally recurring."""
+    """Create a calendar event, optionally recurring.
+
+    Tool policy here can only *restrict*: ``allowed_tools`` and
+    ``disallowed_tools`` narrow what the wake turn may use, and
+    ``required_skills`` pre-activates skill bodies. Nothing on this path grants
+    preapproval — that requires a human, and lives on the web route (#1971).
+    """
     error = _guard(ctx)
     if error is not None:
         return error
@@ -161,6 +172,13 @@ async def tool_calendar_create(
                 data={"error": "missing_session_title"},
             )
 
+    try:
+        allowed = validate_tool_names(allowed_tools or [], field_name="allowed_tools")
+        disallowed = validate_tool_names(disallowed_tools or [], field_name="disallowed_tools")
+        skills = validate_tool_names(required_skills or [], field_name="required_skills")
+    except ValueError as exc:
+        return ToolResult(text=f"[error: {exc}]", data={"error": "invalid_policy"})
+
     event = CalendarEvent(
         event_id=new_event_id(),
         conv_id=ctx.conv_id,
@@ -183,6 +201,13 @@ async def tool_calendar_create(
         recurrence_start=fire_at_iso if recurrence_text else "",
         occurrence_at=fire_at_iso if recurrence_text else "",
         recurrence_until=until_text,
+        allowed_tools=allowed,
+        disallowed_tools=disallowed,
+        required_skills=skills,
+        # Deliberately never set: provenance for preapproval is the web route's
+        # to grant.
+        policy_granted=False,
+        model=str(model or "").strip(),
     )
 
     mgr = _get_calendar_manager(ctx)
@@ -577,6 +602,29 @@ CALENDAR_TOOL_DEFINITIONS = [
                     "session_title": {
                         "type": "string",
                         "description": "Display title for a dedicated session",
+                    },
+                    "allowed_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Restrict the wake turn to these tools. Accepts shell(pattern) "
+                            "entries, which only take effect if a human grants preapproval "
+                            "from the web UI; requested here they are dropped."
+                        ),
+                    },
+                    "disallowed_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tools the wake turn must not use",
+                    },
+                    "required_skills": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Skill bodies to pre-activate for the wake turn",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Named model config for the wake turn; empty inherits the conversation's",
                     },
                 },
                 "required": ["title", "reason", "fire_at"],
