@@ -4,7 +4,7 @@ written: 2026-11-27
 sources:
   - AGENTS.md 2b8c7b9510883792dc97ce3bcf05e7925d1c463a
   - CLAUDE.md 2b8c7b9510883792dc97ce3bcf05e7925d1c463a
-  - Makefile 117048f9668d222d165ea3f5fd709516000bd410
+  - Makefile 57746ea942c6cf3fbe36b18d59664f7fc760ba74
   - .github/workflows/ci.yml ec6ef8f98a0a7ef7911df8ce3b302212255e31d0
   - conftest.py 2b63e029a3b2c4524ade2c71f18f181f3997dff1
   - tests/conftest.py 3e6f545a3c6d2adf28d926ba539fbba8d574b559
@@ -32,8 +32,8 @@ worktree:
 - `cp ../../../.env .env` from the main clone (it points at shared agent data), then set a distinct `HTTP_PORT`. Run `make test` once for a baseline before code changes.
 
 ## Gates
-- `make fmt` before every commit. `make check` = `install-js check-npm-policy check-message-types check-skill-annotations fmt-check lint typecheck check-js check-browser-assets`; `make test` = `uv run pytest tests/ contrib/skills/`.
-- CI required: `lint-and-test` (`make check`, then pytest `-m "not integration and not browser"`) and `js-test` (`make test-js`). Separate jobs: `browser-test` (Playwright chromium, pytest `-m "browser and not integration"`) and `check-tui` (`make check-tui test-tui`). Required checks also run on the merge queue's `merge_group`.
+- `make fmt` before every commit. `make check` = `install-js check-npm-policy check-message-types check-skill-annotations fmt-check lint typecheck check-js check-browser-assets`; `make test` = `uv run pytest tests/ contrib/skills/`; `make check-tests` = `uv run pytest -m "not integration and not browser" tests/ contrib/skills/` (CI's full non-browser corpus; `check` does not run the suite).
+- CI required: `lint-and-test` (`make check`, then pytest `-m "not integration and not browser"`; locally `make check-tests`) and `js-test` (`make test-js`). Separate jobs: `browser-test` (Playwright chromium, pytest `-m "browser and not integration"`) and `check-tui` (`make check-tui test-tui`). Required checks also run on the merge queue's `merge_group`.
 - npm policy (#930): direct deps exact-pinned; every Makefile npm install runs `--ignore-scripts` (allowlisted scripts via `npm rebuild`); `make check-npm-policy` gates it. `make install-js` uses `npm ci`; do not `npm install` in `src/decafclaw/web/static/` — dependency changes go through `make vendor`.
 
 ## Generated files
