@@ -145,6 +145,44 @@ def test_archive_contains_includes_excludes_and_env(tmp_path):
     assert "backups/old.tar.gz" not in names
 
 
+def test_truncated_archive_never_evicts_a_good_one(tmp_path):
+    """A soft-mount write can time out mid-archive and still look complete.
+
+    The backup directory is a ``soft`` NFS mount, so a write can fail with EIO
+    partway through. ``os.replace`` then succeeds on whatever landed, and without
+    a verification step ``_prune`` would delete the oldest good archive to make
+    room for a truncated one. Silent, and it destroys the recovery material.
+
+    Simulated here by truncating the archive after it is written but before prune
+    runs -- which is exactly the on-disk state a timed-out write leaves behind.
+    """
+    home = _data_home(tmp_path)
+    repo = _repo(tmp_path)
+    backup_dir = home / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    good = backup_dir / "decafclaw-20260101-000000.tar.gz"
+    good.write_bytes(b"pretend-this-is-a-real-archive")
+    os.utime(good, (1, 1))
+
+    runner = _runner(tmp_path, home, repo, retention=1)
+    real_verify = backup._verify_archive
+
+    def truncate_then_verify(path):
+        # Leave a file that exists, is non-empty, and is not a valid gzip stream.
+        path.write_bytes(b"\x1f\x8b\x08\x00truncated")
+        real_verify(path)
+
+    backup._verify_archive = truncate_then_verify
+    try:
+        result = runner.run()
+    finally:
+        backup._verify_archive = real_verify
+
+    assert result == 1, "a backup that cannot be read back must report failure"
+    assert good.exists(), "a corrupt new archive must never evict a good one"
+    assert not list(backup_dir.glob("*.partial")), "partial files must not be left behind"
+
+
 def test_retention_keeps_newest_five_and_never_the_new_archive(tmp_path):
     home = _data_home(tmp_path)
     repo = _repo(tmp_path)

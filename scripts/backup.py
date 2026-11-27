@@ -172,6 +172,27 @@ def _add_env(tar: tarfile.TarFile, repo_dir: Path) -> int:
     return 1
 
 
+def _verify_archive(path: Path) -> None:
+    """Raise if the archive is not a readable, complete gzip tar.
+
+    The backup directory is a ``soft`` NFS mount. A write that times out partway
+    can leave a file that exists and is non-empty but truncated, and nothing in
+    the normal path would notice: ``os.replace`` succeeds on whatever landed, the
+    manifest records it as ``status: ok``, and ``_prune`` then deletes the oldest
+    good archive to make room for it.
+
+    Reading every member back is the cheapest check that matters here -- it
+    forces the whole compressed stream to be decompressed and every header parsed,
+    which fails on truncation. It does not prove the bytes are the *right* bytes,
+    but it does prove they are a finished archive.
+
+    This must run BEFORE prune, not after.
+    """
+    with tarfile.open(path, "r:gz") as tar:
+        for _ in tar:
+            pass
+
+
 def _config_sha(data_home: Path) -> str:
     config = data_home / "config.json"
     try:
@@ -321,6 +342,10 @@ class BackupRunner:
                         included.append("env")
                 os.replace(partial, archive_path)
                 os.chmod(archive_path, 0o600)
+                # Verify before anything is allowed to prune: on a soft mount a
+                # timed-out write can leave a truncated archive that would
+                # otherwise evict a good one.
+                _verify_archive(archive_path)
             except Exception:
                 partial.unlink(missing_ok=True)
                 raise
