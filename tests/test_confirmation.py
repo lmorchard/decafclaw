@@ -5,11 +5,14 @@ import dataclasses
 
 import pytest
 
+from decafclaw.archive import restore_history
 from decafclaw.confirmations import (
     ConfirmationAction,
     ConfirmationRequest,
     ConfirmationResponse,
 )
+from decafclaw.conversation_manager import ConversationManager, _QueuedConfirmation
+from decafclaw.events import EventBus
 from decafclaw.tools.confirmation import request_confirmation
 
 # -- Archive round-trip -------------------------------------------------------
@@ -541,3 +544,238 @@ async def test_concurrent_confirmations_independent(ctx):
 
     assert results["call_2"] is True  # approved
     assert results["call_1"] is False  # timed out — only call_2 was approved
+
+
+# -- Conversation-manager slot-resolve helper (#1349) -------------------------
+#
+# ``ConversationManager._resolve_slot`` owns the under-lock archive/claim
+# ordering used by the four confirmation paths. These are direct unit cases
+# for each discriminated result; callers are rewired separately (#1350,
+# #1351).
+
+
+@pytest.fixture
+def manager(config):
+    return ConversationManager(config, EventBus())
+
+
+def _slot_request(*, timeout: float | None = None) -> ConfirmationRequest:
+    return ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow command?",
+        timeout=timeout,
+    )
+
+
+def _archived_roles(config, conv_id: str) -> list[str]:
+    return [row.get("role", "") for row in (restore_history(config, conv_id) or [])]
+
+
+@pytest.mark.asyncio
+async def test_resolve_slot_promoted_installs_request(manager, config):
+    """Install mode promotes a new request into the empty active slot and
+    archives the request before the in-memory triple changes."""
+    conv_id = "conv-slot-install"
+    state = manager._get_or_create(conv_id)
+    request = _slot_request()
+
+    async with state.lock:
+        result = manager._resolve_slot(state, conv_id, install=request)
+
+    assert result.outcome == "promoted"
+    assert result.request is request
+    assert result.waiter_event is state.confirmation_event
+    assert state.pending_confirmation is request
+    assert state.confirmation_event is not None
+    assert state.confirmation_response is None
+    assert _archived_roles(config, conv_id) == ["confirmation_request"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_slot_promoted_without_waiter(manager, config):
+    """Workflow suspends install with no waiter (``wait=False``)."""
+    conv_id = "conv-slot-post"
+    state = manager._get_or_create(conv_id)
+    request = _slot_request()
+
+    async with state.lock:
+        result = manager._resolve_slot(state, conv_id, install=request, wait=False)
+
+    assert result.outcome == "promoted"
+    assert result.waiter_event is None
+    assert state.pending_confirmation is request
+    assert state.confirmation_event is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_slot_claimed_keeps_response_for_live_waiter(manager, config):
+    """A responder claim archives the response, stores it for the live
+    waiter, and clears pending/event without promoting the queue."""
+    conv_id = "conv-slot-claim"
+    state = manager._get_or_create(conv_id)
+    request = _slot_request()
+    event = asyncio.Event()
+    queued = _slot_request()
+    state.pending_confirmation = request
+    state.confirmation_event = event
+    state.confirmation_queue.append(_QueuedConfirmation(request=queued))
+    response = ConfirmationResponse(confirmation_id=request.confirmation_id, approved=True)
+
+    async with state.lock:
+        result = manager._resolve_slot(state, conv_id, response=response)
+
+    assert result.outcome == "claimed"
+    assert result.response is response
+    assert result.request is request
+    assert result.waiter_event is event
+    assert result.promoted_request is None
+    assert state.pending_confirmation is None
+    assert state.confirmation_event is None
+    # The live waiter consumes the claim itself.
+    assert state.confirmation_response is response
+    assert _archived_roles(config, conv_id) == ["confirmation_response"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_slot_timed_out_archives_denial(manager, config):
+    """A timeout with no responder synthesizes and archives a denial before
+    clearing the slot and promoting the next queued request."""
+    conv_id = "conv-slot-timeout"
+    state = manager._get_or_create(conv_id)
+    request = _slot_request(timeout=0.1)
+    state.pending_confirmation = request
+    state.confirmation_event = asyncio.Event()
+
+    async with state.lock:
+        result = manager._resolve_slot(state, conv_id, timed_out=True)
+
+    assert result.outcome == "timed_out"
+    assert result.request is request
+    assert result.response is not None
+    assert result.response.approved is False
+    assert result.response.confirmation_id == request.confirmation_id
+    assert state.pending_confirmation is None
+    assert state.confirmation_event is None
+    assert state.confirmation_response is None
+    assert _archived_roles(config, conv_id) == ["confirmation_response"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_slot_timed_out_returns_existing_claim(manager, config):
+    """A responder that beat the timeout wins instead of being overwritten."""
+    conv_id = "conv-slot-claim-before-timeout"
+    state = manager._get_or_create(conv_id)
+    request = _slot_request()
+    response = ConfirmationResponse(confirmation_id=request.confirmation_id, approved=True)
+    state.pending_confirmation = request
+    state.confirmation_response = response
+
+    async with state.lock:
+        result = manager._resolve_slot(state, conv_id, timed_out=True)
+
+    assert result.outcome == "claimed"
+    assert result.response is response
+    assert state.pending_confirmation is None
+    assert state.confirmation_response is None
+    assert _archived_roles(config, conv_id) == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_slot_cancelled_archives_denial(manager, config):
+    """Cancellation mode persists a denial, hands it to a live waiter, and
+    clears pending/event."""
+    conv_id = "conv-slot-cancel"
+    state = manager._get_or_create(conv_id)
+    request = _slot_request()
+    event = asyncio.Event()
+    state.pending_confirmation = request
+    state.confirmation_event = event
+
+    async with state.lock:
+        result = manager._resolve_slot(state, conv_id, cancelled=True)
+
+    assert result.outcome == "cancelled"
+    assert result.request is request
+    assert result.response is not None
+    assert result.response.approved is False
+    assert result.waiter_event is event
+    assert state.pending_confirmation is None
+    assert state.confirmation_event is None
+    assert state.confirmation_response is result.response
+    assert _archived_roles(config, conv_id) == ["confirmation_response"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_slot_cancelled_without_waiter_promotes(manager, config):
+    """With no live waiter, cancellation clears the slot and promotes the
+    next queued request."""
+    conv_id = "conv-slot-cancel-promote"
+    state = manager._get_or_create(conv_id)
+    request = _slot_request()
+    queued = _slot_request()
+    state.pending_confirmation = request
+    state.confirmation_event = None
+    state.confirmation_queue.append(_QueuedConfirmation(request=queued))
+
+    async with state.lock:
+        result = manager._resolve_slot(state, conv_id, cancelled=True)
+
+    assert result.outcome == "cancelled"
+    assert result.waiter_event is None
+    assert result.promoted_request is queued
+    assert state.pending_confirmation is queued
+    assert state.confirmation_event is not None
+    assert state.confirmation_response is None
+    assert _archived_roles(config, conv_id) == ["confirmation_response"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_slot_observed_cancel_returns_cancelled(manager, config):
+    """A waiter that wakes to a slot already cleared by cancellation gets
+    the ``cancelled`` outcome without a duplicate archive write."""
+    conv_id = "conv-slot-observed-cancel"
+    state = manager._get_or_create(conv_id)
+    request = _slot_request()
+    state.pending_confirmation = request
+    state.confirmation_event = asyncio.Event()
+    # cancel_pending_confirmation cleared the slot before this waiter woke.
+    state.pending_confirmation = None
+    state.confirmation_event = None
+    state.confirmation_response = None
+
+    async with state.lock:
+        result = manager._resolve_slot(state, conv_id)
+
+    assert result.outcome == "cancelled"
+    assert result.response is None
+    assert result.promoted_request is None
+    assert state.pending_confirmation is None
+    assert state.confirmation_response is None
+    assert _archived_roles(config, conv_id) == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_slot_archive_failure_leaves_state_untouched(manager, monkeypatch):
+    """The archive write happens BEFORE the in-memory claim. A failed write
+    must leave the pending/event/response triple untouched for retry."""
+    conv_id = "conv-slot-archive-fail"
+    state = manager._get_or_create(conv_id)
+    request = _slot_request()
+    event = asyncio.Event()
+    state.pending_confirmation = request
+    state.confirmation_event = event
+    response = ConfirmationResponse(confirmation_id=request.confirmation_id, approved=True)
+
+    def _boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("decafclaw.conversation_manager.append_message", _boom)
+
+    async with state.lock:
+        with pytest.raises(OSError):
+            manager._resolve_slot(state, conv_id, response=response)
+
+    assert state.pending_confirmation is request
+    assert state.confirmation_event is event
+    assert state.confirmation_response is None

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from dataclasses import fields as dc_fields
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from uuid import uuid4
 
 from .archive import LLM_ROLES, append_message
@@ -466,6 +466,34 @@ class _QueuedConfirmation:
     request: ConfirmationRequest
     promoted_event: asyncio.Event = field(default_factory=asyncio.Event)
     active_event: asyncio.Event | None = None
+
+
+# Discriminated results of ``ConversationManager._resolve_slot`` (#1349).
+#   promoted  — a request was installed into the empty active slot.
+#   claimed   — a response owns the slot (supplied by a responder, or
+#               already present when a waiter re-acquires the lock).
+#   timed_out — the waiter's timeout synthesized and archived a denial.
+#   cancelled — cancellation resolved the slot without a response.
+SlotOutcome = Literal["claimed", "timed_out", "cancelled", "promoted"]
+
+
+@dataclass(frozen=True)
+class SlotResolution:
+    """Result of one confirmation slot resolution (#1349).
+
+    ``request`` is the request the resolution applies to (the installed,
+    claimed, timed-out, or cancelled request). ``response`` is the durable
+    answer when one exists. ``waiter_event`` is the event a live waiter
+    must be woken through, captured before the slot was cleared.
+    ``promoted_request`` is the queued request moved into the active slot
+    when no live waiter consumed the resolution.
+    """
+
+    outcome: SlotOutcome
+    request: ConfirmationRequest | None = None
+    response: ConfirmationResponse | None = None
+    waiter_event: asyncio.Event | None = None
+    promoted_request: ConfirmationRequest | None = None
 
 
 def _confirmation_request_payload(request: ConfirmationRequest) -> dict:
@@ -1785,6 +1813,137 @@ class ConversationManager:
         state.confirmation_event = None
         state.confirmation_response = None
         self._promote_next_confirmation_unlocked(state, conv_id)
+
+    def _resolve_slot(
+        self,
+        state: "ConversationState",
+        conv_id: str,
+        *,
+        install: ConfirmationRequest | None = None,
+        response: ConfirmationResponse | None = None,
+        timed_out: bool = False,
+        cancelled: bool = False,
+        wait: bool = True,
+    ) -> SlotResolution:
+        """Resolve the active confirmation slot under ``state.lock``.
+
+        Caller must hold ``state.lock``. One of ``install``, ``response``,
+        ``timed_out``, or ``cancelled`` selects the operation; with none of
+        them the caller is a waiter observing how its slot was resolved.
+
+        Owns the archive-before-claim ordering shared by the four
+        confirmation paths (``respond_to_confirmation``,
+        ``cancel_pending_confirmation``, ``request_confirmation``, and
+        ``post_confirmation``). Every operation that writes a durable row
+        appends it BEFORE mutating the pending/event/response triple, so a
+        concurrent waiter or claimer can never observe a resolution that is
+        not yet in the archive. ``append_message`` is sync filesystem I/O,
+        so this stays inside the caller's per-conversation lock.
+
+        Outcomes:
+          - ``promoted``: ``install`` moved a request into the empty active
+            slot (a fresh event, or ``None`` when ``wait=False``).
+          - ``claimed``: a response owns the slot. With a live waiter the
+            caller wakes ``waiter_event`` and the waiter consumes the claim;
+            without one the caller drives recovery then clears the claim.
+          - ``timed_out``: no responder and the wait expired; the denial is
+            already archived in ``response``.
+          - ``cancelled``: cancellation supplied the denial, or the waiter
+            observed a slot already cleared by cancellation (no archive
+            write, because cancellation persisted its own denial).
+        """
+        if install is not None:
+            if response is not None or timed_out or cancelled:
+                raise ValueError("install cannot be combined with other slot operations")
+            if state.pending_confirmation is not None:
+                raise RuntimeError(f"_resolve_slot: conversation {conv_id[:8]} already has a pending confirmation")
+            append_message(self.config, conv_id, install.to_archive_message())
+            state.pending_confirmation = install
+            state.confirmation_event = asyncio.Event() if wait else None
+            state.confirmation_response = None
+            return SlotResolution(
+                outcome="promoted",
+                request=install,
+                waiter_event=state.confirmation_event,
+            )
+
+        if response is not None and (timed_out or cancelled):
+            raise ValueError("response cannot be combined with timed_out/cancelled")
+        if timed_out and cancelled:
+            raise ValueError("timed_out and cancelled are mutually exclusive")
+
+        pending = state.pending_confirmation
+
+        if cancelled:
+            if pending is None:
+                raise RuntimeError(f"_resolve_slot: conversation {conv_id[:8]} has no pending confirmation to cancel")
+            denial = ConfirmationResponse(
+                confirmation_id=pending.confirmation_id,
+                approved=False,
+            )
+            append_message(self.config, conv_id, denial.to_archive_message())
+            waiter_event = state.confirmation_event
+            state.pending_confirmation = None
+            state.confirmation_event = None
+            promoted = None
+            if waiter_event is not None:
+                # The live waiter consumes the denial and promotes later.
+                state.confirmation_response = denial
+            else:
+                state.confirmation_response = None
+                promoted = self._promote_next_confirmation_unlocked(state, conv_id)
+            return SlotResolution(
+                outcome="cancelled",
+                request=pending,
+                response=denial,
+                waiter_event=waiter_event,
+                promoted_request=promoted,
+            )
+
+        if response is not None:
+            if pending is None:
+                raise RuntimeError(
+                    f"_resolve_slot: conversation {conv_id[:8]} has no pending confirmation to respond to"
+                )
+            append_message(self.config, conv_id, response.to_archive_message())
+            waiter_event = state.confirmation_event
+            state.confirmation_response = response
+            state.pending_confirmation = None
+            state.confirmation_event = None
+            return SlotResolution(
+                outcome="claimed",
+                request=pending,
+                response=response,
+                waiter_event=waiter_event,
+            )
+
+        # Waiter post-wait observation: did a responder claim the slot, did
+        # we time out, or did cancellation clear it out from under us?
+        outcome: SlotOutcome
+        claimed = state.confirmation_response
+        if claimed is not None:
+            outcome = "claimed"
+            resolved = claimed
+        elif timed_out and pending is not None:
+            outcome = "timed_out"
+            resolved = ConfirmationResponse(
+                confirmation_id=pending.confirmation_id,
+                approved=False,
+            )
+            append_message(self.config, conv_id, resolved.to_archive_message())
+        else:
+            outcome = "cancelled"
+            resolved = None
+        state.pending_confirmation = None
+        state.confirmation_event = None
+        state.confirmation_response = None
+        promoted = self._promote_next_confirmation_unlocked(state, conv_id)
+        return SlotResolution(
+            outcome=outcome,
+            request=pending,
+            response=resolved,
+            promoted_request=promoted,
+        )
 
     async def _emit_confirmation_request(
         self,
