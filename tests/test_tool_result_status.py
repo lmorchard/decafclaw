@@ -26,10 +26,36 @@ from decafclaw.tools import _to_tool_result
         ("[cancelled]", ToolStatus.CANCELLED),
         ("[cancelled: shell]", ToolStatus.CANCELLED),
         ("[tool interrupted: agent turn cancelled]", ToolStatus.CANCELLED),
+        # Legacy phrasings that do not start with "[cancelled": the agent loop /
+        # tool_execution cancel marker and subagent_cancel's result.
+        ("[Agent turn cancelled by user]", ToolStatus.CANCELLED),
+        ("[subagent cancelled: conv-abc123]", ToolStatus.CANCELLED),
+        # The error marker is case-insensitive: extensions/mentions capitalizes it.
+        ("[Error reading workspace file 'notes.md': boom]", ToolStatus.ERROR),
+        ("[Error: reading MCP resource 'x' timed out after 30s]", ToolStatus.ERROR),
+        ("[ERROR: nope]", ToolStatus.ERROR),
+        # Non-outcome markers stay successes (guards against over-matching).
+        ("[no context available]", ToolStatus.SUCCESS),
+        ("[awaiting user response: approve?]", ToolStatus.SUCCESS),
     ],
 )
 def test_derive_tool_status(text, expected):
     assert derive_tool_status(text) is expected
+
+
+def test_derive_tool_status_ignores_marker_case():
+    # The marker's case must not change the outcome: a capitalized [Error ...]
+    # is an error, exactly like its lowercase form.
+    assert derive_tool_status("[Error: nope]") is ToolStatus.ERROR
+    assert derive_tool_status("[error: nope]") is ToolStatus.ERROR
+
+
+def test_derive_tool_status_long_text_still_classifies_by_prefix():
+    # Large outputs (e.g. shell results) must classify by their leading marker
+    # without the prefix being lost to truncation or case folding.
+    assert derive_tool_status("[error: boom]\n" + "x" * 10_000) is ToolStatus.ERROR
+    assert derive_tool_status("[Agent turn cancelled by user]\n" + "y" * 10_000) is ToolStatus.CANCELLED
+    assert derive_tool_status("ok\n" + "z" * 10_000) is ToolStatus.SUCCESS
 
 
 # -- ToolResult.status: derived at construction --------------------------------
@@ -49,6 +75,27 @@ def test_cancelled_result_carries_cancelled_status():
 
 def test_interrupted_result_carries_cancelled_status():
     assert ToolResult(text="[tool interrupted: agent turn cancelled]").status is ToolStatus.CANCELLED
+
+
+def test_agent_cancel_marker_carries_cancelled_status():
+    # agent._check_cancelled / tool_execution._check_cancelled produce this exact
+    # phrasing (with termination_reason=CANCELLED); it must not derive SUCCESS.
+    from decafclaw.media import TerminationReason
+
+    result = ToolResult(text="[Agent turn cancelled by user]", termination_reason=TerminationReason.CANCELLED)
+    assert result.status is ToolStatus.CANCELLED
+
+
+def test_subagent_cancel_result_carries_cancelled_status():
+    # subagent_tools.subagent_cancel's success phrasing is a cancellation of the
+    # child turn, not an error — and it must not derive SUCCESS either.
+    assert ToolResult(text="[subagent cancelled: conv-abc123]").status is ToolStatus.CANCELLED
+
+
+def test_capitalized_error_marker_carries_error_status():
+    # extensions/mentions capitalizes the error marker; case must not matter.
+    assert ToolResult(text="[Error reading workspace file 'notes.md': boom]").status is ToolStatus.ERROR
+    assert ToolResult(text="[Error: reading MCP resource 'x' timed out after 30s]").status is ToolStatus.ERROR
 
 
 def test_explicit_status_overrides_derivation():

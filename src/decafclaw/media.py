@@ -104,17 +104,37 @@ class ToolStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+# Legacy cancellation markers, matched case-insensitively against the result's
+# leading text. Covers every phrasing the codebase has produced: [cancelled...]
+# and [tool interrupted...] (tools), [Agent turn cancelled by user] (agent loop /
+# tool_execution), and [subagent cancelled: ...] (subagent_cancel). The marker's
+# case must not matter, so matching is done on a lowercased prefix.
+_CANCELLED_PREFIXES = (
+    "[cancelled",
+    "[tool interrupted",
+    "[agent turn cancelled",
+    "[subagent cancelled",
+)
+
+
 def derive_tool_status(text: str | None) -> ToolStatus:
     """Map a tool result's text prefix to a structured :class:`ToolStatus`.
 
     The single source of truth for the legacy text conventions: a
     ``[cancelled...]`` / ``[tool interrupted...]`` prefix is a cancellation,
-    an ``[error...`` prefix is an error, and anything else succeeded. Used to
-    populate :attr:`ToolResult.status`; consumers should read that field rather
-    than re-parsing text.
+    an ``[error...`` prefix is an error (case-insensitive — extensions/mentions
+    capitalizes the marker), and anything else succeeded. Used to populate
+    :attr:`ToolResult.status`; consumers should read that field rather than
+    re-parsing text.
+
+    The derivation is a pure function of the result text (status is not
+    persisted with archived tool messages), so it must recognize every legacy
+    phrasing, including those in pre-existing conversation history.
     """
-    t = (text or "").lstrip()
-    if t.startswith("[cancelled") or t.startswith("[tool interrupted"):
+    # Only the leading marker can decide; slice before lowercasing so large
+    # outputs (e.g. shell results) don't pay for a full-string copy.
+    t = (text or "").lstrip()[:32].lower()
+    if t.startswith(_CANCELLED_PREFIXES):
         return ToolStatus.CANCELLED
     if t.startswith("[error"):
         return ToolStatus.ERROR
