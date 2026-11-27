@@ -161,7 +161,7 @@ document.addEventListener('set-model', (e) => {
 
 // Conversation actions menu (issue #1192): canvas resummon / terminal picked
 // from the composer's conversation-actions menu. Context and side-question
-// have their own document-level listeners (context: conversation-sidebar,
+// have their own document-level listeners (context: conversation-controls,
 // side-question: app.js setupSideQuestion).
 document.addEventListener('conversation-action', (e) => {
   const { action } = /** @type {CustomEvent} */ (e).detail;

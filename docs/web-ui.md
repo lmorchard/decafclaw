@@ -667,7 +667,9 @@ Lit web components in `src/decafclaw/web/static/`:
 | `chat-input` | `components/chat-input.js` | Message input with file upload progress and command autocomplete |
 | `chat-message` | `components/chat-message.js` | Individual message rendering |
 | `chat-controls` | `components/chat-controls.js` | Conversation control strip: model/context controls plus the conversation action cluster (issue #1190); on mobile (≤639px) the strip is replaced by the conversation-actions menu (issue #1192) |
-| `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser, model picker |
+| `conversation-sidebar` | `components/conversation-sidebar.js` | Sidebar shell: section selector, per-section panels (vault, files, schedules, calendar, tags), config footer; delegates the list to `conversation-list` and the controls to `conversation-controls` |
+| `conversation-list` | `components/conversation-list.js` | Conversation hierarchy: folders, session groups with subagent rows, status badges, search, create actions (#1406) |
+| `conversation-controls` | `components/conversation-controls.js` | Model picker, context usage meter and inspector; the sidebar fallback for the composer control strip (#1407) |
 | `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor (see [host contract](#the-wiki-editor-host-contract)) |
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |
 | `wiki-metadata` | `components/wiki-metadata.js` | Frontmatter panel content: view-mode summary + tags, edit-mode typed controls and raw YAML editor. The disclosure toggle is owned by `wiki-page` and rendered in the toolbar. |
