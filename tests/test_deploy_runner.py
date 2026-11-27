@@ -57,6 +57,7 @@ class FakeWorld:
         ancestor: bool = True,
         health_script: list[dict | None] | None = None,
         fail_prefixes: list[list[str]] | None = None,
+        git_outputs: dict[tuple[str, ...], str] | None = None,
     ):
         self.candidate = candidate
         self.head = head
@@ -67,12 +68,15 @@ class FakeWorld:
         self.calls: list[list[str]] = []
         self.notifications: list[dict] = []
         self.fail_prefixes = fail_prefixes or []
+        self.git_outputs = git_outputs or {}
 
     def run(self, cmd, cwd=None):
         self.calls.append(list(cmd))
         for prefix in self.fail_prefixes:
             if cmd[: len(prefix)] == prefix:
                 return dr.CommandResult(1, "", f"{' '.join(prefix)} failed")
+        if tuple(cmd) in self.git_outputs:
+            return dr.CommandResult(0, self.git_outputs[tuple(cmd)])
         if cmd[:2] == ["git", "fetch"]:
             return dr.CommandResult(0)
         if cmd[:2] == ["git", "rev-parse"]:
@@ -167,6 +171,41 @@ def test_guard_attempt_limit_blocks(tmp_path):
     result = runner.guard(state, CANDIDATE, HEAD)
     assert result.action == "blocked"
     assert "failed 3 time(s)" in result.reason
+
+
+def test_guard_manual_action_blocks_with_reason(tmp_path):
+    git_outputs = {
+        ("git", "log", f"{HEAD}..{CANDIDATE}", "--format=%(trailers:key=Deploy-Action,valueonly=true)"): "manual\n",
+        (
+            "git",
+            "log",
+            f"{HEAD}..{CANDIDATE}",
+            "--format=%(trailers:key=Deploy-Note,valueonly=true)",
+        ): "Run db migration\n",
+    }
+    world = FakeWorld(git_outputs=git_outputs)
+    runner = make_runner(tmp_path, world)
+    result = runner.guard(dr.DeployState(), CANDIDATE, HEAD)
+    assert result.action == "blocked"
+    assert result.manual_required is True
+    assert "Run db migration" in result.reason
+
+
+def test_guard_manual_action_allowed_with_ack_manual(tmp_path):
+    git_outputs = {
+        ("git", "log", f"{HEAD}..{CANDIDATE}", "--format=%(trailers:key=Deploy-Action,valueonly=true)"): "manual\n",
+        (
+            "git",
+            "log",
+            f"{HEAD}..{CANDIDATE}",
+            "--format=%(trailers:key=Deploy-Note,valueonly=true)",
+        ): "Run db migration\n",
+    }
+    world = FakeWorld(git_outputs=git_outputs)
+    runner = make_runner(tmp_path, world, ack_manual=True)
+    result = runner.guard(dr.DeployState(), CANDIDATE, HEAD)
+    assert result.action == "deploy"
+    assert result.manual_required is False
 
 
 # -- End-to-end decisions ----------------------------------------------------
@@ -437,3 +476,67 @@ def test_deploy_attempt_clears_deferral_state(tmp_path):
     state = dr.DeployState.load(tmp_path / "state.json")
     assert CANDIDATE not in state.first_seen
     assert CANDIDATE not in state.deferral_notified
+
+
+def test_manual_action_notifies_once_and_blocks(tmp_path):
+    changelog_content = (
+        "# Changelog\n\n"
+        "## [Unreleased]\n\n"
+        "### ⚠️ Deployment Notes\n"
+        "- Run db migration manually with `uv run scripts/migrate.py`\n\n"
+        "### Added\n- New feature\n"
+    )
+    git_outputs = {
+        ("git", "log", f"{HEAD}..{CANDIDATE}", "--format=%(trailers:key=Deploy-Action,valueonly=true)"): "manual\n",
+        (
+            "git",
+            "log",
+            f"{HEAD}..{CANDIDATE}",
+            "--format=%(trailers:key=Deploy-Note,valueonly=true)",
+        ): "Run db migration\n",
+        ("git", "show", f"{CANDIDATE}:CHANGELOG.md"): changelog_content,
+    }
+    world = FakeWorld(git_outputs=git_outputs)
+    runner = make_runner(tmp_path, world)
+
+    # First run: blocked, sends high-priority notification with notes
+    assert runner.run() == dr.EXIT_BLOCKED
+    assert len(world.notifications) == 1
+    notif = world.notifications[0]
+    assert "Deploy blocked: manual action required" in notif["title"]
+    assert notif["priority"] == "high"
+    assert "Run db migration" in notif["body"]
+    assert "- Run db migration manually with `uv run scripts/migrate.py`" in notif["body"]
+
+    # Verify state saved
+    state = dr.DeployState.load(tmp_path / "state.json")
+    assert state.manual_notified[CANDIDATE]
+
+    # Second run: blocked, does NOT send duplicate notification
+    assert runner.run() == dr.EXIT_BLOCKED
+    assert len(world.notifications) == 1
+
+
+def test_manual_action_proceeds_with_ack_manual(tmp_path):
+    git_outputs = {
+        ("git", "log", f"{HEAD}..{CANDIDATE}", "--format=%(trailers:key=Deploy-Action,valueonly=true)"): "manual\n",
+        (
+            "git",
+            "log",
+            f"{HEAD}..{CANDIDATE}",
+            "--format=%(trailers:key=Deploy-Note,valueonly=true)",
+        ): "Run db migration\n",
+    }
+    world = FakeWorld(
+        git_outputs=git_outputs,
+        health_script=[
+            _health(commit=HEAD),
+            _health(commit=CANDIDATE),
+        ],
+    )
+    runner = make_runner(tmp_path, world, ack_manual=True)
+
+    assert runner.run() == dr.EXIT_OK
+    state = dr.DeployState.load(tmp_path / "state.json")
+    assert state.last_good == CANDIDATE
+    assert world.notifications[-1]["title"] == "Deploy succeeded"

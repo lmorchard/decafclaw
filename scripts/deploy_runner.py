@@ -12,7 +12,8 @@ Deploy steps::
     1  lock (flock)                 refuse if another run holds it
     2  read state                   last_good / quarantined / last_attempt
     3  fetch + resolve candidate    git rev-parse <ref>
-    4  guard                        ahead of HEAD and SHA not quarantined
+    4  guard                        ahead of HEAD, not quarantined, and no
+                                    unacknowledged Deploy-Action: manual trailers
     5  pre-deploy health            no answer => refuse to deploy
     6  wait for idle                poll /health busy state, bounded
     7  backup                       abort if it fails, before stopping
@@ -47,6 +48,7 @@ import fcntl
 import json
 import logging
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -87,6 +89,7 @@ class GuardResult:
     reason: str = ""
     candidate: str = ""
     head: str = ""
+    manual_required: bool = False
 
 
 @dataclass
@@ -121,6 +124,7 @@ class DeployState:
     last_attempt: dict | None = None
     first_seen: dict[str, str] = field(default_factory=dict)
     deferral_notified: dict[str, str] = field(default_factory=dict)
+    manual_notified: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> "DeployState":
@@ -144,12 +148,16 @@ class DeployState:
         deferral_notified = raw.get("deferral_notified")
         if not isinstance(deferral_notified, dict):
             deferral_notified = {}
+        manual_notified = raw.get("manual_notified")
+        if not isinstance(manual_notified, dict):
+            manual_notified = {}
         return cls(
             last_good=str(raw.get("last_good") or ""),
             quarantined=dict(quarantined),
             last_attempt=last_attempt,
             first_seen={str(k): str(v) for k, v in first_seen.items()},
             deferral_notified={str(k): str(v) for k, v in deferral_notified.items()},
+            manual_notified={str(k): str(v) for k, v in manual_notified.items()},
         )
 
     def save(self, path: Path) -> None:
@@ -179,6 +187,7 @@ class RunnerConfig:
     allow_no_backup: bool = False
     defer_busy: bool = False
     deferral_cap_hours: float = 6.0
+    ack_manual: bool = False
 
 
 # -- Default adapters --------------------------------------------------------
@@ -338,7 +347,37 @@ class DeployRunner:
                 candidate,
                 head,
             )
+        if not self.config.ack_manual:
+            manual_reason = self._check_manual_action(candidate, head)
+            if manual_reason:
+                return GuardResult(
+                    "blocked",
+                    f"{candidate[:12]} requires manual intervention: {manual_reason}",
+                    candidate,
+                    head,
+                    manual_required=True,
+                )
         return GuardResult("deploy", "", candidate, head)
+
+    def _check_manual_action(self, candidate: str, head: str) -> str:
+        """Check if any commit in head..candidate requires manual deployment."""
+        trailers = self._git(
+            "log",
+            f"{head}..{candidate}",
+            "--format=%(trailers:key=Deploy-Action,valueonly=true)",
+        )
+        if "manual" in trailers.stdout.lower():
+            notes = self._git(
+                "log",
+                f"{head}..{candidate}",
+                "--format=%(trailers:key=Deploy-Note,valueonly=true)",
+            ).stdout.strip()
+            # Clean up empty lines
+            non_empty_notes = [line.strip() for line in notes.splitlines() if line.strip()]
+            if non_empty_notes:
+                return "; ".join(non_empty_notes)
+            return "Deploy-Action: manual trailer set (check CHANGELOG.md)"
+        return ""
 
     # -- health -------------------------------------------------------------
 
@@ -505,6 +544,9 @@ class DeployRunner:
             return EXIT_OK
         if guard.action == "blocked":
             self._say(guard.reason)
+            if guard.manual_required:
+                self._record_manual_notification(state, candidate, guard.reason)
+                state.save(config.state_file)
             return EXIT_BLOCKED
         if guard.action == "refuse":
             self._say(guard.reason)
@@ -576,6 +618,43 @@ class DeployRunner:
         )
         return EXIT_ROLLED_BACK
 
+    def _record_manual_notification(self, state: DeployState, candidate: str, reason: str) -> None:
+        """Notify once when candidate requires manual action and auto-update is blocked."""
+        now = _now_iso()
+        if candidate in state.manual_notified:
+            return
+        changelog_snippet = self._extract_changelog_deployment_notes(candidate)
+        body = f"{candidate[:12]}: {reason}"
+        if changelog_snippet:
+            body += f"\n\nDeployment Notes:\n{changelog_snippet}"
+        self._notify_outcome(
+            title=f"Deploy blocked: manual action required ({candidate[:8]})",
+            body=body,
+            priority="high",
+        )
+        state.manual_notified[candidate] = now
+
+    def _extract_changelog_deployment_notes(self, candidate: str) -> str:
+        """Extract '### ⚠️ Deployment Notes' or '### Deployment Notes' section from candidate's CHANGELOG.md."""
+        res = self._git("show", f"{candidate}:CHANGELOG.md")
+        if res.returncode != 0 or not res.stdout:
+            return ""
+        lines = res.stdout.splitlines()
+        capturing = False
+        captured: list[str] = []
+        for line in lines:
+            if re.match(r"^###\s+(?:⚠️\s*)?Deployment Notes", line.strip()):
+                capturing = True
+                continue
+            if capturing:
+                if re.match(r"^##\s+", line) or re.match(r"^###\s+", line):
+                    break
+                captured.append(line)
+        text = "\n".join(captured).strip()
+        # Filter out HTML comments if whole snippet is commented or has comments
+        text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip()
+        return text
+
     def _record_deferral(self, state: DeployState, candidate: str, reason: str) -> None:
         """Track a busy-tick skip and notify once when it exceeds the cap."""
         now = _now_iso()
@@ -635,6 +714,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=6.0,
         help="notify once when a busy candidate has waited this long (default 6)",
     )
+    parser.add_argument(
+        "--ack-manual",
+        action="store_true",
+        help="proceed even if candidate commits require manual deployment actions",
+    )
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args(argv)
 
@@ -665,6 +749,7 @@ def main(argv: list[str] | None = None) -> int:
         allow_no_backup=args.allow_no_backup,
         defer_busy=args.defer_busy,
         deferral_cap_hours=args.deferral_cap_hours,
+        ack_manual=args.ack_manual,
     )
     return DeployRunner(config).run()
 
