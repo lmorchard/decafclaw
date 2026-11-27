@@ -13,32 +13,67 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from contrib.skills.scavenger.scavenger import (
-    DEFAULT_FLEET,
-    EnvReservation,
-    HostConfig,
-    HostStatus,
-    container_limit_flags,
-    env_arm_watch,
-    env_create,
-    env_destroy,
-    env_exec,
-    env_exec_bg,
-    env_reap,
-    env_sync,
-    execute_job,
-    find_lease,
-    load_fleet_config,
-    load_leases,
-    parse_env_assignments,
-    probe_host,
-    reconcile_leases,
-    resolve_recipes_dir,
-    run_ssh,
-    select_best_host,
-    wake_host,
-)
 from decafclaw import canvas
+
+_skill_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.abspath(os.path.join(_skill_dir, "..", "..", ".."))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+if _skill_dir not in sys.path:
+    sys.path.insert(0, _skill_dir)
+
+try:
+    from contrib.skills.scavenger.scavenger import (
+        DEFAULT_FLEET,
+        EnvReservation,
+        HostConfig,
+        HostStatus,
+        container_limit_flags,
+        env_arm_watch,
+        env_create,
+        env_destroy,
+        env_exec,
+        env_exec_bg,
+        env_reap,
+        env_sync,
+        execute_job,
+        find_lease,
+        load_fleet_config,
+        load_leases,
+        parse_env_assignments,
+        probe_host,
+        reconcile_leases,
+        resolve_recipes_dir,
+        run_ssh,
+        select_best_host,
+        wake_host,
+    )
+except ImportError:
+    from scavenger import (  # type: ignore[no-redef]
+        DEFAULT_FLEET,
+        EnvReservation,
+        HostConfig,
+        HostStatus,
+        container_limit_flags,
+        env_arm_watch,
+        env_create,
+        env_destroy,
+        env_exec,
+        env_exec_bg,
+        env_reap,
+        env_sync,
+        execute_job,
+        find_lease,
+        load_fleet_config,
+        load_leases,
+        parse_env_assignments,
+        probe_host,
+        reconcile_leases,
+        resolve_recipes_dir,
+        run_ssh,
+        select_best_host,
+        wake_host,
+    )
 
 #: Network modes accepted by scavenger container tools.
 NETWORK_MODES = ("none", "default")
