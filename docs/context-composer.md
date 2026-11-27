@@ -10,29 +10,29 @@ Assembled from markdown files at startup. Admin-level files override bundled.
 
 | Order | File | Source | Purpose |
 |-------|------|--------|---------|
-| 1 | `SOUL.md` | `src/decafclaw/prompts/` or admin override | Identity, personality, behavioral guidelines |
-| 2 | `AGENT.md` | `src/decafclaw/prompts/` or admin override | Capabilities, tool guidance, memory instructions |
-| 3 | `USER.md` | Agent dir only | User-specific context (optional) |
-| 4 | `CUSTOM.md` | Agent dir only | Custom standing instructions the agent maintains via `update_system_prompt` (#24, optional) |
+| 1 | `AGENT.md` | `src/decafclaw/prompts/` or admin override | Behavioral core: identity, personality, capabilities, tool guidance, memory instructions |
+| 2 | `USER.md` | Agent dir only | User-specific context (optional) |
+| 3 | `CUSTOM.md` | Agent dir only | Custom standing instructions the agent maintains via `update_system_prompt` (#24, optional) |
 
-Override path: `data/{agent_id}/{SOUL,AGENT,USER,CUSTOM}.md`. All four are
+Override path: `data/{agent_id}/{AGENT,USER,CUSTOM}.md`. All three are
 admin-level (read-only to the agent via file tools), but `USER.md` and
 `CUSTOM.md` are additionally updatable by the agent through the
 confirmation-gated `update_system_prompt` tool
-([Tools → Prompt Sections](tools.md#prompt-sectionstoolsprompt_toolspy));
-`SOUL.md` is guarded against agent modification.
+([Tools → Prompt Sections](tools.md#prompt-sectionstoolsprompt_toolspy)).
+`AGENT.md` is the behavioral core; it holds identity and behavior together.
+(SOUL.md was retired in #1892; the user-context CUSTOM.md slot has stayed
+unused, so four files became three rather than a new file being added.)
 
 #### Section delimiters
 
 Each assembled section is wrapped in an XML tag at assembly time so the
-model can reliably distinguish identity from instructions from per-
-deployment facts from skill metadata from skill bodies. Source files
+model can reliably distinguish standing behavior from per-deployment
+facts from skill metadata from skill bodies. Source files
 stay plain markdown; wrapping happens in `load_system_prompt` (and the
 deferred-tool catalog is wrapped in `build_deferred_list_text`).
 
 | Tag | Source | Gating |
 |-----|--------|--------|
-| `<soul>` | `SOUL.md` | Always present (bundled default or admin override) |
 | `<agent_role>` | `AGENT.md` | Always present (bundled default or admin override) |
 | `<user_context>` | `USER.md` | Only when the file exists in the agent dir and has non-empty content |
 | `<custom_context>` | `CUSTOM.md` | Only when the file exists in the agent dir and has non-empty content (agent-maintained via `update_system_prompt`, #24) |
@@ -78,8 +78,8 @@ the slice guidance still lives in the system prompt via the addendum.
 ```
 ┌─────────────────────────────────────────┐
 │ SYSTEM PROMPT                           │
-│ - SOUL.md (identity, personality)       │
-│ - AGENT.md (tools, memory guidance)     │
+│ - AGENT.md (identity, behavior;         │
+│   tools and memory guidance)            │
 │ - USER.md (user context, if present)    │
 │ - CUSTOM.md (custom instructions, if    │
 │   present — agent-writable, #24)        │
@@ -554,7 +554,7 @@ The vault guide carries always-applies rules: vault folder layout, which paths a
 
 ### Role and trust
 
-The guide is injected as a **system** message, unlike retrieved vault content (remapped to `user`). This signals binding instructions, not advisory context. The trust assumption is that `AGENTS.md` is the user's own authored file — treat it the same way as `SOUL.md`/`AGENT.md`.
+The guide is injected as a **system** message, unlike retrieved vault content (remapped to `user`). This signals binding instructions, not advisory context. The trust assumption is that `AGENTS.md` is the user's own authored file — treat it the same way as `AGENT.md`.
 
 ### Independence from vault retrieval
 
@@ -783,8 +783,7 @@ preserve the reader's selection and panel dismissal state. The canvas state pers
 
 - `src/decafclaw/context_composer.py` — unified context assembly pipeline
 - `src/decafclaw/memory_context.py` — vault retrieval, graph expansion, scoring
-- `src/decafclaw/prompts/SOUL.md` — bundled identity prompt
-- `src/decafclaw/prompts/AGENT.md` — bundled capability/tool prompt
+- `src/decafclaw/prompts/AGENT.md` — bundled behavioral core prompt (identity + behavior)
 - `src/decafclaw/prompts/__init__.py` — prompt assembly logic
 - `src/decafclaw/agent.py` — agent loop, iteration-level tool list building
 - `src/decafclaw/tools/tool_registry.py` — tool classification and deferral

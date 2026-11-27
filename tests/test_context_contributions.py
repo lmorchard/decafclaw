@@ -66,7 +66,7 @@ def test_working_memory_envelope_normalizes_tags():
 @pytest.mark.asyncio
 async def test_slot_ordering_invariant(ctx, config, no_tail_notes):
     """HEAD precedes HISTORY, DELTA before TAIL, and working memory mounts last."""
-    config.system_prompt = "<soul>STATIC PREFIX</soul>"
+    config.system_prompt = "<agent_role>STATIC PREFIX</agent_role>"
 
     async def hook(context, user_msg):
         # Deliberately out of order: assembly, not hook result order, decides placement.
@@ -93,7 +93,7 @@ async def test_slot_ordering_invariant(ctx, config, no_tail_notes):
     memory = _index(messages, "MEMORY-MARKER")
 
     assert messages[0]["role"] == "system"
-    assert messages[0]["content"] == "<soul>STATIC PREFIX</soul>"
+    assert messages[0]["content"] == "<agent_role>STATIC PREFIX</agent_role>"
     assert head > 0
     assert head < history_idx < delta < tail < user < memory
     assert messages[memory]["role"] == "user"  # internal working_memory role remaps
@@ -118,7 +118,7 @@ async def test_head_prefix_stable_across_turns(ctx, config, no_tail_notes):
     so the test fails if HEAD lands in history (archived) or gets re-added per
     turn on top of an archived copy.
     """
-    config.system_prompt = "<soul>STATIC PREFIX</soul>"
+    config.system_prompt = "<agent_role>STATIC PREFIX</agent_role>"
 
     async def hook(context, user_msg):
         return ContextContribution(ContextSlot.HEAD, [{"role": "system", "content": "HEAD-STATIC"}])

@@ -376,9 +376,9 @@ def test_admin_read_config_json_invalid_json_refuses(ctx):
 
 def test_admin_read_normal_file_unchanged(ctx):
     """A normal markdown admin file returns exactly as-is (no redaction, no marker)."""
-    target = _ensure(ctx.config, "SOUL.md")
+    target = _ensure(ctx.config, "AGENT.md")
     target.write_text("I am decafclaw.\n")
-    r = tool_admin_read(ctx, "SOUL.md")
+    r = tool_admin_read(ctx, "AGENT.md")
     assert "I am decafclaw." in _text(r)
     assert REDACTED not in _text(r)
 
@@ -552,7 +552,7 @@ def test_is_refused_defaults(rel):
 
 @pytest.mark.parametrize(
     "rel",
-    ["SOUL.md", "AGENTS.md", "skills/demo/SKILL.md", "config.json", "mcp_servers.json", "schedules/task.md"],
+    ["AGENT.md", "AGENTS.md", "skills/demo/SKILL.md", "config.json", "mcp_servers.json", "schedules/task.md"],
 )
 def test_is_refused_allows_normal_admin(rel):
     assert not is_refused(rel, _cfg()), f"should NOT be refused: {rel}"
@@ -567,7 +567,7 @@ def test_refuse_admin_extension_glob():
     )
     assert is_refused("vault_backup/keys", cfg)
     assert is_refused("legacy_key.json", cfg)
-    assert not is_refused("SOUL.md", cfg)
+    assert not is_refused("AGENT.md", cfg)
 
 
 def test_redact_structural_env_and_skills():
