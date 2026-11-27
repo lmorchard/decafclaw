@@ -2397,6 +2397,42 @@ def test_browser_sidebar_collapse_button_visible_when_narrow(built_static, chrom
         assert_collapse_button_visible("narrow sidebar (160px drag-resize floor)")
 
 
+def test_browser_sidebar_kebab_vertically_centered(built_static, chromium, config):
+    """The row kebab shares the title's vertical center (#1940).
+
+    Pico gives every <details> a bottom margin, and its summary more when
+    open. As a flex item in the row, that margin makes the menu's margin box
+    taller than its content, so centering pushes the kebab above the title.
+    Measure the rendered boxes so the check fails if the margin returns.
+    """
+    seed_conversation(config, "Kebab alignment")
+    with browser_scenario(built_static, chromium, config, viewport={"width": 1280, "height": 800}) as scenario:
+        page = scenario.page
+        page.goto(scenario.base + "/")
+        page.wait_for_selector("conversation-sidebar .conv-item .conv-menu > summary", timeout=15000)
+        geometry = page.evaluate(
+            """() => {
+            const menu = document.querySelector('conversation-sidebar .conv-item .conv-menu');
+            const title = menu.closest('.conv-item').querySelector('.conv-title');
+            const summary = menu.querySelector('summary');
+            const center = (el) => {
+                const r = el.getBoundingClientRect();
+                return r.top + r.height / 2;
+            };
+            return {
+                titleCenter: center(title),
+                summaryCenter: center(summary),
+                titleHeight: title.getBoundingClientRect().height,
+                summaryHeight: summary.getBoundingClientRect().height,
+                menuMarginBottom: getComputedStyle(menu).marginBottom,
+            };
+        }"""
+        )
+        assert geometry["titleHeight"] > 0, geometry
+        assert geometry["summaryHeight"] > 0, geometry
+        assert abs(geometry["summaryCenter"] - geometry["titleCenter"]) <= 1, geometry
+
+
 def test_browser_calendar_tab(built_static, chromium, config):
     """Calendar tab: list, view switching, create for the current conversation, cancel."""
     conv_id = seed_conversation(config, "Browser calendar")

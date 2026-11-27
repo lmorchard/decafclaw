@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -478,3 +478,110 @@ async def test_occurrences_read_the_conversation_index_once(client, monkeypatch)
     # One load per ConversationIndex.get inside _title would be 30+. Allow a
     # small constant: the session-auth path may resolve the user too.
     assert calls["n"] <= 3, f"conversation index read {calls['n']} times"
+
+
+# -- tool policy and model pin (#1971, #1972) --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_accepts_a_tool_policy(client):
+    fire_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    resp = await client.post(
+        "/api/calendar/events",
+        json={
+            "conv_id": "conv-1",
+            "title": "Weekly notes",
+            "reason": "Draft the weeknotes",
+            "fire_at": fire_at,
+            "allowed_tools": ["shell(me-to-markdown *)", "vault_read"],
+            "disallowed_tools": ["admin_write"],
+            "required_skills": ["weeknotes-composer"],
+            "model": "vertex-gemini-3.8-flash",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    event = resp.json()["event"]
+    # The scoped shell(...) entry is preapproval, not a visible tool name.
+    assert event["allowed_tools"] == ["vault_read"]
+    assert event["shell_patterns"] == ["me-to-markdown *"]
+    assert event["disallowed_tools"] == ["admin_write"]
+    assert event["required_skills"] == ["weeknotes-composer"]
+    assert event["model"] == "vertex-gemini-3.8-flash"
+    # The authenticated route is the human surface, so it may grant.
+    assert event["policy_granted"] is True
+
+
+@pytest.mark.asyncio
+async def test_create_without_policy_grants_nothing(client):
+    fire_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    resp = await client.post(
+        "/api/calendar/events",
+        json={
+            "conv_id": "conv-1",
+            "title": "Plain reminder",
+            "reason": "Just a reminder",
+            "fire_at": fire_at,
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    event = resp.json()["event"]
+    assert event["policy_granted"] is False
+    assert event["allowed_tools"] == []
+    assert event["shell_patterns"] == []
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_a_shell_pattern_in_disallowed_tools(client):
+    fire_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    resp = await client.post(
+        "/api/calendar/events",
+        json={
+            "conv_id": "conv-1",
+            "title": "Bad policy",
+            "reason": "Nope",
+            "fire_at": fire_at,
+            "disallowed_tools": ["shell(git *)"],
+        },
+    )
+    assert resp.status_code == 400
+    assert "shell" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_update_can_add_and_clear_a_policy(client, http_config):
+    fire_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    created = await client.post(
+        "/api/calendar/events",
+        json={
+            "conv_id": "conv-1",
+            "title": "Editable",
+            "reason": "Change me",
+            "fire_at": fire_at,
+        },
+    )
+    event_id = created.json()["event"]["event_id"]
+
+    updated = await client.put(
+        f"/api/calendar/events/{event_id}",
+        json={
+            "allowed_tools": ["vault_read"],
+            "shell_patterns": ["git *"],
+            "model": "some-model",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    event = updated.json()["event"]
+    assert event["allowed_tools"] == ["vault_read"]
+    assert event["shell_patterns"] == ["git *"]
+    assert event["model"] == "some-model"
+    assert event["policy_granted"] is True
+
+    cleared = await client.put(
+        f"/api/calendar/events/{event_id}",
+        json={"allowed_tools": [], "shell_patterns": [], "model": ""},
+    )
+    assert cleared.status_code == 200, cleared.text
+    event = cleared.json()["event"]
+    assert event["allowed_tools"] == []
+    assert event["shell_patterns"] == []
+    assert event["model"] == ""

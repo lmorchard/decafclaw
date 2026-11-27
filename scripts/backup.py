@@ -15,7 +15,7 @@ Usage::
     python3 scripts/backup.py \\
         --data-home ~/.decafclaw/decafclaw \\
         --repo-dir ~/decafclaw \\
-        --backup-dir ~/.decafclaw/decafclaw/backups
+        --backup-dir /mnt/decafclaw-backups
 
 Outputs ``decafclaw-YYYYMMDD-HHMMSS.tar.gz`` plus a ``.json`` manifest in the
 backup directory. Retention keeps the 5 newest archives and never deletes the

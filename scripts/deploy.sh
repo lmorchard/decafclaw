@@ -17,7 +17,7 @@ echo "Backing up..."
 /usr/bin/python3 "$REPO_DIR/scripts/backup.py" --force \
     --data-home "$HOME/.decafclaw/decafclaw" \
     --repo-dir "$REPO_DIR" \
-    --backup-dir "$HOME/.decafclaw/decafclaw/backups" || {
+    --backup-dir "${BACKUP_DIR:-/mnt/decafclaw-backups}" || {
     echo "Backup failed; aborting deploy."
     exit 1
 }

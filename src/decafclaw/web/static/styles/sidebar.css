@@ -145,12 +145,16 @@ conversation-sidebar .conv-item {
 conversation-sidebar .conv-menu {
   position: relative;
   flex-shrink: 0;
+  margin: 0;
 }
 
 conversation-sidebar .conv-menu > summary {
+  display: flex;
+  align-items: center;
   list-style: none;
   cursor: pointer;
   padding: 0 0.3rem;
+  margin: 0;
   opacity: 0.6;
   line-height: 1;
 }

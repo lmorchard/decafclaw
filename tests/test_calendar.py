@@ -53,6 +53,12 @@ def _event(
     recurrence_start: str = "",
     occurrence_at: str = "",
     recurrence_until: str = "",
+    allowed_tools: list[str] | None = None,
+    disallowed_tools: list[str] | None = None,
+    shell_patterns: list[str] | None = None,
+    required_skills: list[str] | None = None,
+    policy_granted: bool = False,
+    model: str = "",
 ) -> CalendarEvent:
     ts = fire_at_ts if fire_at_ts is not None else time.time() + 3600
     now = _iso(time.time())
@@ -76,6 +82,12 @@ def _event(
         recurrence_start=recurrence_start,
         occurrence_at=occurrence_at,
         recurrence_until=recurrence_until,
+        allowed_tools=list(allowed_tools or []),
+        disallowed_tools=list(disallowed_tools or []),
+        shell_patterns=list(shell_patterns or []),
+        required_skills=list(required_skills or []),
+        policy_granted=policy_granted,
+        model=model,
     )
 
 
@@ -971,3 +983,121 @@ async def test_update_tool_reanchors_a_rescheduled_series(ctx, mock_manager):
     assert updated.data["recurrence_start"] == later.isoformat()
     assert updated.data["occurrence_at"] == later.isoformat()
     assert updated.data["fire_at_ts"] == pytest.approx(later.timestamp())
+
+
+# -- tool policy trust boundary (#1971) --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_agent_create_accepts_restricting_policy(ctx, mock_manager):
+    ctx.manager = mock_manager
+    ctx.conv_id = "conv-tools"
+    result = await tool_calendar_create(
+        ctx,
+        title="Restricted",
+        reason="Do the thing",
+        fire_at=_iso(time.time() + 3600),
+        allowed_tools=["vault_read"],
+        disallowed_tools=["admin_write"],
+        required_skills=["vault"],
+        model="some-model",
+    )
+    assert "[error" not in result.text
+    assert result.data["allowed_tools"] == ["vault_read"]
+    assert result.data["disallowed_tools"] == ["admin_write"]
+    assert result.data["required_skills"] == ["vault"]
+    assert result.data["model"] == "some-model"
+    # The agent is not a human control surface.
+    assert result.data["policy_granted"] is False
+
+
+@pytest.mark.asyncio
+async def test_agent_create_rejects_a_shell_pattern_in_allowed_tools(ctx, mock_manager):
+    """shell(...) is preapproval, so the agent path must refuse it outright.
+
+    Hard rejection beats silent dropping: the caller learns it cannot grant
+    preapproval rather than believing a pattern took effect.
+    """
+    ctx.manager = mock_manager
+    ctx.conv_id = "conv-tools"
+    result = await tool_calendar_create(
+        ctx,
+        title="Sneaky",
+        reason="Try to preapprove shell",
+        fire_at=_iso(time.time() + 3600),
+        allowed_tools=["shell(git *)"],
+    )
+    assert "[error" in result.text
+    assert result.data["error"] == "invalid_policy"
+    assert mock_manager.add.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_agent_update_does_not_grant_a_policy(ctx, mock_manager):
+    ctx.manager = mock_manager
+    ctx.conv_id = "conv-tools"
+    created = await tool_calendar_create(ctx, title="Plain", reason="Later", fire_at=_iso(time.time() + 3600))
+    assert created.data["policy_granted"] is False
+
+
+# -- the fired wake actually receives its policy (#1971, #1972) ---------------
+
+
+@pytest.mark.asyncio
+async def test_fire_applies_event_policy_to_the_wake_context(config, mock_manager):
+    """End-to-end: _fire's context_setup must put the policy on the real ctx.
+
+    apply_event_policy is unit-tested separately; this proves it is wired into
+    the fired turn rather than only being correct in isolation.
+    """
+    from decafclaw.calendar_policy import apply_event_policy
+    from decafclaw.context import Context
+
+    _make_conv_dir(config, "conv-policy")
+    event = _event(
+        "conv-policy",
+        fire_at_ts=time.time(),
+        allowed_tools=["vault_read"],
+        disallowed_tools=["admin_write"],
+        shell_patterns=["git *"],
+        policy_granted=True,
+        model="pinned-model",
+    )
+    added = await mock_manager.calendar.add(event)
+    await mock_manager.calendar._tasks[added.event_id]
+
+    setup = mock_manager.enqueue_turn.await_args.kwargs["context_setup"]
+    ctx = Context.for_task(config, event_bus=None, user_id="testuser", conv_id="conv-policy")
+    await setup(ctx)
+
+    assert ctx.active_model == "pinned-model"
+    assert "vault_read" in ctx.tools.allowed
+    assert "admin_write" not in ctx.tools.allowed or "admin_write" in ctx.tools.disallowed
+    assert ctx.tools.preapproved == {"vault_read"}
+    assert ctx.tools.preapproved_shell_patterns == ["git *"]
+    # Sanity: the applier is the thing that did it.
+    apply_event_policy(ctx, added)
+
+
+@pytest.mark.asyncio
+async def test_fire_withholds_preapproval_from_an_ungranted_event(config, mock_manager):
+    _make_conv_dir(config, "conv-ungranted")
+    event = _event(
+        "conv-ungranted",
+        fire_at_ts=time.time(),
+        allowed_tools=["shell(git *)", "vault_read"],
+        shell_patterns=["git *"],
+        policy_granted=False,
+    )
+    added = await mock_manager.calendar.add(event)
+    await mock_manager.calendar._tasks[added.event_id]
+
+    from decafclaw.context import Context
+
+    setup = mock_manager.enqueue_turn.await_args.kwargs["context_setup"]
+    ctx = Context.for_task(config, event_bus=None, user_id="testuser", conv_id="conv-ungranted")
+    await setup(ctx)
+
+    assert ctx.tools.preapproved == set()
+    assert ctx.tools.preapproved_shell_patterns == []
+    assert "vault_read" in ctx.tools.allowed

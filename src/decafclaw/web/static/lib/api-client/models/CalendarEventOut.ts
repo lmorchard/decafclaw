@@ -23,6 +23,12 @@ export type CalendarEventOut = {
     recurrence_start?: string;
     occurrence_at?: string;
     recurrence_until?: string;
+    allowed_tools?: Array<string>;
+    disallowed_tools?: Array<string>;
+    shell_patterns?: Array<string>;
+    required_skills?: Array<string>;
+    policy_granted?: boolean;
+    model?: string;
     origin_title?: string;
     target_title?: string;
     recurrence_summary?: string;

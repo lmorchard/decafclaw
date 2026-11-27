@@ -1468,6 +1468,30 @@ paths:
                   default: ''
                   title: Session Title
                   type: string
+                allowed_tools:
+                  items:
+                    type: string
+                  title: Allowed Tools
+                  type: array
+                disallowed_tools:
+                  items:
+                    type: string
+                  title: Disallowed Tools
+                  type: array
+                shell_patterns:
+                  items:
+                    type: string
+                  title: Shell Patterns
+                  type: array
+                required_skills:
+                  items:
+                    type: string
+                  title: Required Skills
+                  type: array
+                model:
+                  default: ''
+                  title: Model
+                  type: string
               required:
               - conv_id
               - title
@@ -1578,6 +1602,39 @@ paths:
                   - type: string
                   - type: 'null'
                   title: Session Title
+                allowed_tools:
+                  anyOf:
+                  - items:
+                      type: string
+                    type: array
+                  - type: 'null'
+                  title: Allowed Tools
+                disallowed_tools:
+                  anyOf:
+                  - items:
+                      type: string
+                    type: array
+                  - type: 'null'
+                  title: Disallowed Tools
+                shell_patterns:
+                  anyOf:
+                  - items:
+                      type: string
+                    type: array
+                  - type: 'null'
+                  title: Shell Patterns
+                required_skills:
+                  anyOf:
+                  - items:
+                      type: string
+                    type: array
+                  - type: 'null'
+                  title: Required Skills
+                model:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Model
               title: CalendarEventUpdateRequest
               type: object
     delete:
@@ -2545,6 +2602,34 @@ components:
         recurrence_until:
           type: string
           title: Recurrence Until
+          default: ''
+        allowed_tools:
+          items:
+            type: string
+          type: array
+          title: Allowed Tools
+        disallowed_tools:
+          items:
+            type: string
+          type: array
+          title: Disallowed Tools
+        shell_patterns:
+          items:
+            type: string
+          type: array
+          title: Shell Patterns
+        required_skills:
+          items:
+            type: string
+          type: array
+          title: Required Skills
+        policy_granted:
+          type: boolean
+          title: Policy Granted
+          default: false
+        model:
+          type: string
+          title: Model
           default: ''
         origin_title:
           type: string

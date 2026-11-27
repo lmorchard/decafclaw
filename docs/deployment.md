@@ -190,7 +190,7 @@ systemctl --user start decafclaw-backup.service
 /usr/bin/python3 ~/decafclaw/scripts/backup.py \
     --data-home ~/.decafclaw/decafclaw \
     --repo-dir ~/decafclaw \
-    --backup-dir ~/.decafclaw/decafclaw/backups
+    --backup-dir /mnt/decafclaw-backups
 ```
 
 Install the daily timer:
