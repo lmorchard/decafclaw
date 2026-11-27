@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from unittest.mock import patch
 
@@ -89,6 +90,53 @@ def test_resolve_recipe_finds_bundled_recipe_from_any_cwd(tmp_path):
     assert kind == "dockerfile"
 
 
+def test_bundled_decafclaw_test_recipe_resolves(tmp_path):
+    """The test-gate recipe must stay reachable from the bundled dockerfiles dir.
+
+    It is only discovered through the SCRIPT_DIR fallback (no fleet
+    `recipes_dir`), so a rename or a move out of this directory makes it
+    silently unreachable rather than loudly broken.
+    """
+    resolved = sc.resolve_recipe("decafclaw-test", str(tmp_path / "empty"))
+    assert resolved is not None
+    path, kind = resolved
+    assert path.endswith("decafclaw-test.Dockerfile")
+    assert kind == "dockerfile"
+
+
+def test_decafclaw_test_recipe_keeps_its_load_bearing_packages():
+    """Pin the packages that only exist to stop false test failures.
+
+    Each of these was added because its absence produced failures that looked
+    like code bugs (see the Dockerfile header). Dropping one is invisible until
+    a remote run reports 4-30 red tests, so guard them here where it is cheap.
+
+    Scoped to the apt-get install line on purpose: a whole-file substring search
+    also matches the explanatory header and the ENTRYPOINT path, so it would
+    pass with the packages removed. That false pass was observed, not assumed.
+    """
+    resolved = sc.resolve_recipe("decafclaw-test", "")
+    assert resolved is not None
+    body = open(resolved[0], encoding="utf-8").read()
+
+    # Join continuation lines and drop comments, so the install command reads as
+    # one string instead of being matched against prose in the header.
+    code = re.sub(r"\\\n\s*", " ", body)
+    code = "\n".join(line for line in code.splitlines() if not line.lstrip().startswith("#"))
+
+    install = re.search(r"apt-get install[^\n]*", code)
+    assert install is not None, "no apt-get install line found"
+    installed = install.group(0)
+
+    for package in ("git", "tini", "openssh-client"):
+        assert package in installed, f"{package} missing from the apt-get install line"
+
+    # tini must actually be PID 1, not merely installed.
+    assert 'ENTRYPOINT ["/usr/bin/tini", "--"]' in body
+    # A uv-managed interpreter is required for a SQLite that sqlite-vec accepts.
+    assert "uv python install 3.13" in body
+
+
 def test_no_hardcoded_home_path_in_scavenger_sources():
     for name in ("scavenger.py", "tools.py"):
         with open(f"{sc.SCRIPT_DIR}/{name}", encoding="utf-8") as f:
@@ -119,12 +167,43 @@ def test_cli_env_create_uses_fleet_recipes_dir(tmp_path, leases_file, monkeypatc
         code, out, _ = run_cli(capsys, "--config", cfg, "env-create", "e1", "--recipe", "custom")
 
     assert code == 0
-    assert json.loads(out)["image"] == "scavenger-recipe-custom:latest"
-    assert built == [("scavenger-recipe-custom:latest", str(recipes / "custom.Dockerfile"))]
+    # The tag is content-addressed, so an edited recipe builds instead of
+    # silently reusing a stale image (the bug that kept this image on the
+    # legacy 1.x OpenCode package).
+    image = json.loads(out)["image"]
+    assert image.startswith("scavenger-recipe-custom:")
+    assert image != "scavenger-recipe-custom:latest"
+    assert built == [(image, str(recipes / "custom.Dockerfile"))]
     create_script = ssh.call_args_list[-1].args[1]
     assert 'scavenger.env_id="e1"' in create_script
     assert "scavenger.expires_at=" in create_script
     assert "decafclaw." not in create_script
+
+
+def test_recipe_image_tag_changes_when_the_dockerfile_changes(tmp_path):
+    """Editing a recipe must produce a new tag, or the edit never reaches a container."""
+    recipe = tmp_path / "open-code.Dockerfile"
+    recipe.write_text("FROM alpine\n", encoding="utf-8")
+    first = sc.recipe_image_tag(str(recipe))
+
+    recipe.write_text("FROM alpine\nRUN true\n", encoding="utf-8")
+    second = sc.recipe_image_tag(str(recipe))
+
+    assert first != second
+    assert not first.endswith(":latest")
+    assert first.startswith("scavenger-recipe-open-code:")
+
+
+def test_recipe_image_tag_is_stable_for_identical_content(tmp_path):
+    """Re-creating an unchanged recipe reuses the cached image instead of rebuilding."""
+    one = tmp_path / "a" / "same.Dockerfile"
+    two = tmp_path / "b" / "same.Dockerfile"
+    one.parent.mkdir()
+    two.parent.mkdir()
+    one.write_text("FROM alpine\n", encoding="utf-8")
+    two.write_text("FROM alpine\n", encoding="utf-8")
+
+    assert sc.recipe_image_tag(str(one)) == sc.recipe_image_tag(str(two))
 
 
 # --- labels ------------------------------------------------------------------

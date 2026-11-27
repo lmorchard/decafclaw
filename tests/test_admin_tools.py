@@ -622,6 +622,43 @@ async def test_admin_delete_denied(ctx):
 
 
 # ---------------------------------------------------------------------------
+# Shared mutation executor (issue #1342)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mutation_tools_route_through_shared_executor(ctx, monkeypatch):
+    """The four mutating tools must share one executor.
+
+    Spying on ``_run_admin_mutation`` intercepts every tool; a tool that
+    re-inlines the write ritual would bypass the spy and fail the assertion.
+    """
+    import decafclaw.tools.admin_tools as admin_mod
+
+    routed: list[str] = []
+
+    async def spy_run(ctx_, tool_name, path_str, preview, *, payload=None, snapshot=None, apply):
+        routed.append(tool_name)
+        return f"routed:{tool_name}"
+
+    monkeypatch.setattr(admin_mod, "_run_admin_mutation", spy_run)
+    ctx.request_confirmation = _mock_confirm(approved=True)
+
+    target = ctx.config.agent_path / "skills" / "spy" / "SKILL.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("old line\n")
+
+    await tool_admin_write(ctx, "skills/spy/SKILL.md", "new line\n")
+    await tool_admin_replace_lines(ctx, "skills/spy/SKILL.md", 1, 1, "new line\n")
+    await tool_admin_edit(ctx, "skills/spy/SKILL.md", "old line", "new line")
+    await tool_admin_delete(ctx, "skills/spy/SKILL.md")
+
+    assert routed == ["admin_write", "admin_replace_lines", "admin_edit", "admin_delete"]
+    # The spy never applied a mutation: the file is untouched on disk.
+    assert target.read_text() == "old line\n"
+
+
+# ---------------------------------------------------------------------------
 # Delegation isolation test
 # ---------------------------------------------------------------------------
 

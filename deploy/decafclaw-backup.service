@@ -5,6 +5,14 @@ After=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=%h/decafclaw
+# Stop the daily run before the deploy runner's watchdog would. systemd marks the
+# unit failed at this point, which is visible in `systemctl --user --failed`,
+# instead of sitting at the default TimeoutStartSec=infinity forever.
+#
+# Sized from measurement: the data home is ~16 GB and gzip runs ~25 MB/s
+# single-threaded here, so a full backup is ~11 minutes. 45 minutes leaves 4x
+# headroom for a cold cache or a busy host before the bound bites.
+TimeoutStartSec=45min
 # System Python, not the project venv: the backup must run when the app's
 # environment is broken.
 ExecStart=/usr/bin/python3 %h/decafclaw/scripts/backup.py \

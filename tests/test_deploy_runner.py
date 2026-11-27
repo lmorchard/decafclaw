@@ -13,6 +13,7 @@ import json
 import pathlib
 import re
 import sys
+import time
 
 import pytest
 
@@ -57,6 +58,7 @@ class FakeWorld:
         ancestor: bool = True,
         health_script: list[dict | None] | None = None,
         fail_prefixes: list[list[str]] | None = None,
+        git_outputs: dict[tuple[str, ...], str] | None = None,
     ):
         self.candidate = candidate
         self.head = head
@@ -67,12 +69,15 @@ class FakeWorld:
         self.calls: list[list[str]] = []
         self.notifications: list[dict] = []
         self.fail_prefixes = fail_prefixes or []
+        self.git_outputs = git_outputs or {}
 
     def run(self, cmd, cwd=None):
         self.calls.append(list(cmd))
         for prefix in self.fail_prefixes:
             if cmd[: len(prefix)] == prefix:
                 return dr.CommandResult(1, "", f"{' '.join(prefix)} failed")
+        if tuple(cmd) in self.git_outputs:
+            return dr.CommandResult(0, self.git_outputs[tuple(cmd)])
         if cmd[:2] == ["git", "fetch"]:
             return dr.CommandResult(0)
         if cmd[:2] == ["git", "rev-parse"]:
@@ -167,6 +172,41 @@ def test_guard_attempt_limit_blocks(tmp_path):
     result = runner.guard(state, CANDIDATE, HEAD)
     assert result.action == "blocked"
     assert "failed 3 time(s)" in result.reason
+
+
+def test_guard_manual_action_blocks_with_reason(tmp_path):
+    git_outputs = {
+        ("git", "log", f"{HEAD}..{CANDIDATE}", "--format=%(trailers:key=Deploy-Action,valueonly=true)"): "manual\n",
+        (
+            "git",
+            "log",
+            f"{HEAD}..{CANDIDATE}",
+            "--format=%(trailers:key=Deploy-Note,valueonly=true)",
+        ): "Run db migration\n",
+    }
+    world = FakeWorld(git_outputs=git_outputs)
+    runner = make_runner(tmp_path, world)
+    result = runner.guard(dr.DeployState(), CANDIDATE, HEAD)
+    assert result.action == "blocked"
+    assert result.manual_required is True
+    assert "Run db migration" in result.reason
+
+
+def test_guard_manual_action_allowed_with_ack_manual(tmp_path):
+    git_outputs = {
+        ("git", "log", f"{HEAD}..{CANDIDATE}", "--format=%(trailers:key=Deploy-Action,valueonly=true)"): "manual\n",
+        (
+            "git",
+            "log",
+            f"{HEAD}..{CANDIDATE}",
+            "--format=%(trailers:key=Deploy-Note,valueonly=true)",
+        ): "Run db migration\n",
+    }
+    world = FakeWorld(git_outputs=git_outputs)
+    runner = make_runner(tmp_path, world, ack_manual=True)
+    result = runner.guard(dr.DeployState(), CANDIDATE, HEAD)
+    assert result.action == "deploy"
+    assert result.manual_required is False
 
 
 # -- End-to-end decisions ----------------------------------------------------
@@ -437,3 +477,161 @@ def test_deploy_attempt_clears_deferral_state(tmp_path):
     state = dr.DeployState.load(tmp_path / "state.json")
     assert CANDIDATE not in state.first_seen
     assert CANDIDATE not in state.deferral_notified
+
+
+def test_manual_action_notifies_once_and_blocks(tmp_path):
+    changelog_content = (
+        "# Changelog\n\n"
+        "## [Unreleased]\n\n"
+        "### ⚠️ Deployment Notes\n"
+        "- Run db migration manually with `uv run scripts/migrate.py`\n\n"
+        "### Added\n- New feature\n"
+    )
+    git_outputs = {
+        ("git", "log", f"{HEAD}..{CANDIDATE}", "--format=%(trailers:key=Deploy-Action,valueonly=true)"): "manual\n",
+        (
+            "git",
+            "log",
+            f"{HEAD}..{CANDIDATE}",
+            "--format=%(trailers:key=Deploy-Note,valueonly=true)",
+        ): "Run db migration\n",
+        ("git", "show", f"{CANDIDATE}:CHANGELOG.md"): changelog_content,
+    }
+    world = FakeWorld(git_outputs=git_outputs)
+    runner = make_runner(tmp_path, world)
+
+    # First run: blocked, sends high-priority notification with notes
+    assert runner.run() == dr.EXIT_BLOCKED
+    assert len(world.notifications) == 1
+    notif = world.notifications[0]
+    assert "Deploy blocked: manual action required" in notif["title"]
+    assert notif["priority"] == "high"
+    assert "Run db migration" in notif["body"]
+    assert "- Run db migration manually with `uv run scripts/migrate.py`" in notif["body"]
+
+    # Verify state saved
+    state = dr.DeployState.load(tmp_path / "state.json")
+    assert state.manual_notified[CANDIDATE]
+
+    # Second run: blocked, does NOT send duplicate notification
+    assert runner.run() == dr.EXIT_BLOCKED
+    assert len(world.notifications) == 1
+
+
+def test_manual_action_proceeds_with_ack_manual(tmp_path):
+    git_outputs = {
+        ("git", "log", f"{HEAD}..{CANDIDATE}", "--format=%(trailers:key=Deploy-Action,valueonly=true)"): "manual\n",
+        (
+            "git",
+            "log",
+            f"{HEAD}..{CANDIDATE}",
+            "--format=%(trailers:key=Deploy-Note,valueonly=true)",
+        ): "Run db migration\n",
+    }
+    world = FakeWorld(
+        git_outputs=git_outputs,
+        health_script=[
+            _health(commit=HEAD),
+            _health(commit=CANDIDATE),
+        ],
+    )
+    runner = make_runner(tmp_path, world, ack_manual=True)
+
+    assert runner.run() == dr.EXIT_OK
+    state = dr.DeployState.load(tmp_path / "state.json")
+    assert state.last_good == CANDIDATE
+    assert world.notifications[-1]["title"] == "Deploy succeeded"
+
+
+# -- command watchdog -------------------------------------------------------
+
+
+def test_command_watchdog_abandons_a_child_that_ignores_signals(monkeypatch, tmp_path):
+    """The bound must work against a process that cannot be killed.
+
+    This is the failure the watchdog exists for. A child wedged in a `hard` NFS
+    mount sits in uninterruptible sleep: SIGTERM and even SIGKILL are deferred
+    until the syscall returns. `subprocess.run(timeout=...)` would call kill()
+    then wait(), and that wait() blocks forever -- presenting a bound that does
+    not exist. Here the child traps SIGTERM and blocks; the runner must still
+    return promptly with the timeout code.
+
+    A plain `sleep` would not prove anything: it dies on SIGKILL, so even a naive
+    implementation would appear to work.
+    """
+    monkeypatch.setenv("DECAFCLAW_DEPLOY_COMMAND_TIMEOUT", "1")
+
+    script = tmp_path / "stubborn.py"
+    script.write_text(
+        "import signal, time\n"
+        "signal.signal(signal.SIGTERM, lambda *a: None)\n"
+        "print('started', flush=True)\n"
+        "time.sleep(120)\n"
+    )
+
+    started = time.monotonic()
+    result = dr._run_command([sys.executable, str(script)])
+    elapsed = time.monotonic() - started
+
+    assert result.returncode == dr.COMMAND_TIMEOUT_EXIT
+    assert "watchdog" in result.stderr
+    # Comfortably below the child's own 120s sleep, and above the 1s bound.
+    assert elapsed < 30, f"watchdog did not return promptly (took {elapsed:.1f}s)"
+
+
+def test_command_watchdog_passes_through_a_normal_exit(monkeypatch):
+    """A fast, successful command must be unaffected by the watchdog."""
+    monkeypatch.setenv("DECAFCLAW_DEPLOY_COMMAND_TIMEOUT", "30")
+
+    result = dr._run_command([sys.executable, "-c", "print('hello')"])
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "hello"
+
+
+def test_command_watchdog_can_be_disabled(monkeypatch):
+    """A zero or negative value means 'no watchdog', for an operator debugging."""
+    monkeypatch.setenv("DECAFCLAW_DEPLOY_COMMAND_TIMEOUT", "0")
+    assert dr._command_timeout() is None
+
+    monkeypatch.setenv("DECAFCLAW_DEPLOY_COMMAND_TIMEOUT", "-5")
+    assert dr._command_timeout() is None
+
+
+def test_command_watchdog_ignores_garbage_and_keeps_the_default(monkeypatch):
+    """A typo must not silently disable the bound."""
+    monkeypatch.setenv("DECAFCLAW_DEPLOY_COMMAND_TIMEOUT", "fifteen")
+    assert dr._command_timeout() == dr.DEFAULT_COMMAND_TIMEOUT_SEC
+
+
+def test_default_command_watchdog_allows_a_full_backup():
+    """16 GB at the measured ~25 MB/s is ~11 minutes; the default must clear it.
+
+    A bound that kills real backups would turn healthy deploys into refusals,
+    which is why this is asserted rather than left to whoever edits the number.
+    """
+    assert dr.DEFAULT_COMMAND_TIMEOUT_SEC >= 600
+
+
+def test_backup_watchdog_refuses_instead_of_stopping_the_service(tmp_path):
+    """A watchdog hit on the backup must be treated as a refusal, not a failure.
+
+    The backup step runs before `systemctl stop`. If the backup directory is
+    unreachable, deploying anyway would stop a healthy service with no recovery
+    point, so the runner must bail out here.
+    """
+
+    class WatchdogWorld(FakeWorld):
+        def run(self, cmd, cwd=None):
+            self.calls.append(list(cmd))
+            if cmd[:1] == ["backup.sh"]:
+                return dr.CommandResult(dr.COMMAND_TIMEOUT_EXIT, "", "watchdog tripped")
+            return super().run(cmd, cwd)
+
+    world = WatchdogWorld(health_script=[_health(commit=HEAD)])
+    runner = make_runner(tmp_path, world, backup_cmd=["backup.sh"])
+
+    assert runner.run() == dr.EXIT_REFUSED
+
+    commands = _commands(world)
+    assert not any("systemctl --user stop" in command for command in commands)

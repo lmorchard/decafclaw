@@ -2506,3 +2506,43 @@ def test_browser_calendar_tab(built_static, chromium, config):
         assert any(
             request.method == "DELETE" and "/api/calendar/events/" in request.path for request in scenario.requests
         )
+
+
+def test_browser_host_gauges_vertically_centered(built_static, chromium, config):
+    """Host gauges share their siblings' vertical center (#1942).
+
+    The gauge block uses role="group" for its accessible grouping, and Pico
+    gives [role=group] a bottom margin. That margin inflates the host element
+    and pushes the visible block to the top of the control strip even though
+    the strip centers its items. Measure the rendered boxes so the test fails
+    if the margin returns.
+    """
+    seed_conversation(config, "Gauge alignment")
+    with browser_scenario(built_static, chromium, config, viewport={"width": 1280, "height": 800}) as scenario:
+        page = scenario.page
+        page.goto(scenario.base + "/")
+        page.wait_for_selector("chat-controls host-gauges .host-gauges", timeout=15000)
+        page.wait_for_function(
+            "() => document.querySelectorAll('chat-controls host-gauges .gauge').length >= 4",
+            timeout=15000,
+        )
+        geometry = page.evaluate(
+            """() => {
+            const strip = document.querySelector('chat-controls');
+            const block = strip.querySelector('host-gauges .host-gauges');
+            const sibling = strip.querySelector('.control');
+            const center = (el) => {
+                const r = el.getBoundingClientRect();
+                return r.top + r.height / 2;
+            };
+            return {
+                blockCenter: center(block),
+                siblingCenter: center(sibling),
+                blockMarginBottom: getComputedStyle(block).marginBottom,
+                siblingHeight: sibling.getBoundingClientRect().height,
+            };
+        }"""
+        )
+        assert geometry["siblingHeight"] > 0, geometry
+        assert geometry["blockMarginBottom"] == "0px", geometry
+        assert abs(geometry["blockCenter"] - geometry["siblingCenter"]) <= 1, geometry
