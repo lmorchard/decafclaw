@@ -274,5 +274,26 @@ describe('model-picker', () => {
       expect(handler).toHaveBeenCalledTimes(1);
       expect(handler.mock.calls[0][0].detail).toEqual({ value: '' });
     });
+
+    it('moves through the flat rows with Arrow keys and selects with Enter', async () => {
+      const el = await mountSelection();
+      const handler = vi.fn();
+      document.addEventListener('model-select', handler);
+      await open(el);
+      const search = /** @type {HTMLInputElement} */ (el.querySelector('.model-picker-search'));
+
+      // The empty/inherit row is highlighted when the pointer is empty.
+      expect(el.querySelector('.model-picker-option.highlighted').dataset.model).toBe('');
+      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      await el.updateComplete;
+      expect(el.querySelector('.model-picker-option.highlighted').dataset.model).toBe('hand-model');
+
+      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await el.updateComplete;
+      document.removeEventListener('model-select', handler);
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][0].detail).toEqual({ value: 'hand-model' });
+    });
   });
 });
