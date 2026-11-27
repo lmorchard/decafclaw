@@ -84,4 +84,29 @@ describe('calendar-sidebar', () => {
     await vi.waitFor(() => expect(sidebar.querySelector('.calendar-month-grid')).not.toBeNull());
     expect(sidebar.querySelector('.calendar-month-cell')).not.toBeNull();
   });
+
+  it('shows the target conversation name on a clickable chip', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ occurrences: [OCCURRENCE] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const sidebar = document.createElement('calendar-sidebar');
+    document.body.append(sidebar);
+    sidebar.active = true;
+    await sidebar.updateComplete;
+    await vi.waitFor(() => expect(sidebar.querySelector('.calendar-open-conv')).not.toBeNull());
+
+    const chip = sidebar.querySelector('.calendar-open-conv');
+    // The name has to be on the chip, not only in an aria-label: a lone arrow
+    // gave no indication of where it led.
+    expect(chip.textContent).toContain(OCCURRENCE.target_title);
+    expect(chip.getAttribute('aria-label')).toBeTruthy();
+
+    // Clicking must open the conversation, not the event editor: the row itself
+    // opens the editor, so this needs stopPropagation to stay distinct.
+    const opened = [];
+    sidebar.addEventListener('calendar-open', (ev) => opened.push(ev.detail.eventId));
+    const parent = /** @type {any} */ (sidebar.closest('conversation-sidebar'));
+    expect(parent).toBeNull(); // no sidebar ancestor in this fixture
+    chip.click();
+    expect(opened).toEqual([]);
+  });
 });

@@ -4,6 +4,22 @@ FROM node:22-bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install essential dev tools, runtimes, build utilities, and gh CLI
+#
+# openssh-client and procps are load-bearing for unattended worker sessions:
+#
+# - ssh: the scavenger fleet is driven over SSH. Without a client, a worker
+#   cannot reach the fleet at all, and five scavenger tests skip rather than
+#   run. More importantly, a worker asked to verify host-level behavior has no
+#   way to do it and will substitute a plausible inference for a measurement
+#   (see #1787 / PR #1996, where the worker "fixed" a Podman incompatibility
+#   that does not exist because it could not run `podman` or reach a host).
+# - procps (ps/pgrep/pkill): a worker that backgrounds a process has no way to
+#   confirm it is alive or to stop it. `kill` on a shell PID does not reach the
+#   child, so verifying death matters as much as sending the signal.
+#
+# Container engines (podman/docker) are deliberately NOT installed: running a
+# container engine inside the worker container is not sound. Host-level checks
+# belong to `scavenger_exec_native`, which the controller runs, not a worker.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
@@ -12,6 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     jq \
     make \
+    openssh-client \
+    procps \
     python3 \
     python3-pip \
     python3-venv \

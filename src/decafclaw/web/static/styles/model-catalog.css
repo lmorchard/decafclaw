@@ -173,6 +173,9 @@ button.model-catalog-bulk-btn {
   color: var(--pico-primary);
 }
 
+/* Settings model pointers (#2011) are <model-select>, whose own stylesheet
+   makes the trigger fill the block. */
+
 /* Reflection/verifier judge pickers (#1212) — same container idiom as the
    default-model row, one bordered block per judge. */
 .model-catalog-judge {

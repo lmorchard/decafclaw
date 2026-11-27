@@ -14,6 +14,7 @@ from tabstack import APIStatusError
 from tabstack.types import GeotargetGeoTarget
 
 from decafclaw.media import ToolResult
+from decafclaw.skill_state import skill_state
 from decafclaw.skills.tabstack import tools
 
 # -- Fakes ------------------------------------------------------------------
@@ -103,10 +104,10 @@ def ctx():
 
 @pytest.fixture
 def use_client(monkeypatch):
-    """Install a fake tabstack client as the module-global _client."""
+    """Install a fake tabstack client into the module's _client holder."""
 
     def _install(client):
-        monkeypatch.setattr(tools, "_client", client)
+        monkeypatch.setattr(tools, "_client", skill_state(None, client))
         return client
 
     return _install
@@ -186,7 +187,7 @@ async def test_automate_non_interactive_drops_data(ctx, use_client):
 async def test_automate_uninitialized_client_returns_error(ctx, monkeypatch):
     """A missing/unactivated skill must return a formatted error like the other
     tabstack tools, not raise out of the tool call."""
-    monkeypatch.setattr(tools, "_client", None)
+    monkeypatch.setattr(tools, "_client", skill_state(None))  # no value stored
 
     result = await tools.tool_tabstack_automate(ctx, task="t")
     assert result.startswith("[error:")

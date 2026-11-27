@@ -118,6 +118,10 @@ All of this is managed in the web UI's **⚙ Agent Config → Models** tab:
   typed text. Esc clears the field.
 - Set the global default model from any enabled model (discovered or
   hand-configured), or clear the pointer to fall back to `config.json`.
+  The default, auto-approval, reflection, and verifier pointers all use a
+  `<model-select>` (#2011) — the settings consumer of the shared
+  `<picker-popup>` primitive, in a flat list. Its empty row restores that
+  field's inherit/default behavior.
 
 State lives in the `data/{agent_id}/model_catalog.json` sidecar —
 `config.json` is never written by the UI. Entries are keyed
@@ -218,9 +222,10 @@ Model selection is **user-only** — the agent cannot change its own model (cost
 
 ### Web UI
 
-The conversation controls use a searchable `<model-picker>` popup (the same
-element on the desktop control strip, the mobile conversation menu, and the
-sidebar fallback when the strip is hidden). Selecting a model applies it for
+The conversation controls use a searchable popup — `<model-picker>`, the
+conversation consumer of the `<picker-popup>` primitive (#2011) — on the
+desktop control strip, the mobile conversation menu, and the sidebar fallback
+when the strip is hidden. Selecting a model applies it for
 the rest of the conversation. The picker lists enabled models discovered from
 providers, grouped by provider, with a final `Custom` group for hand-authored
 policy entries; search matches model keys and provider names — manage discovery

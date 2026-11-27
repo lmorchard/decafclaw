@@ -1,0 +1,23 @@
+/* Settings model-pointer selector (#2011) — the settings consumer of the
+   generic <picker-popup>. The popup chrome is in picker-popup.css; this file
+   only makes the trigger fill its settings block the way the native <select>
+   it replaced did. Tag-qualified so it applies wherever the consumer is
+   mounted, and ties the popup's own class specificity per the cascade rule
+   in docs/web-ui-design.md. */
+
+model-select {
+  display: block;
+  min-width: 0;
+}
+
+model-select .picker-popup-root {
+  display: block;
+  max-width: none;
+}
+
+model-select button.picker-popup-trigger {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  background: var(--pico-form-element-background-color);
+  font-size: 0.9rem;
+}

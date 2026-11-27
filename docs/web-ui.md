@@ -377,11 +377,11 @@ The tab auto-refreshes on activation. Save/reset actions dispatch a `schedule-sa
 
 The **Calendar** tab lists the user's pending calendar events across conversations, grouped by date. Each row shows the time, title, and target session. **New event** opens the editor in the shared `#wiki-main` side panel.
 
-The editor has title, reason, date/time, timezone, an optional RRULE, an optional repeat-until, and a target selector. The target defaults to the selected conversation; **Dedicated session** takes a session key and title. Existing events can be saved, snoozed (15 minutes, 1 hour, 1 day), or cancelled.
+The editor has title, reason, date/time, timezone, an optional RRULE, an optional repeat-until, and a target selector. The target defaults to the selected conversation; **Dedicated session** takes a session key and title. Existing events can be saved, snoozed (15 minutes, 1 hour, 1 day), cancelled, or **run now**. Run now rehearses the event immediately and returns without advancing its schedule, so it is safe to press repeatedly on a recurring event; it is a fire-and-forget action, so open the target conversation to watch the turn. It is disabled for events that are no longer pending.
 
 The tab has four views: **Day**, **Week**, **Month**, and **Agenda**. Previous, next, and today move the range for the selected view. The Month view is a grid; clicking a day opens that day in the Day view. The selected view and date live in the URL (`?calendar_view=week&calendar_date=2026-11-25`), so a reload or deep link restores them.
 
-Occurrences are expanded from recurring events, so every occurrence in the range appears. Clicking an occurrence opens the event editor; the `↗` action opens its target conversation. On narrow screens, Day and Agenda are the practical views; Week and Month may scroll horizontally.
+Occurrences are expanded from recurring events, so every occurrence in the range appears. Clicking an occurrence opens the event editor; the conversation chip on each row opens its target conversation, and the editor carries the same chip under **Runs in**. On narrow screens, Day and Agenda are the practical views; Week and Month may scroll horizontally.
 
 The tab refreshes when it becomes active and after each mutation. Agent tool changes publish `calendar_changed`; every open tab refreshes without a page reload. See [Calendar](calendar.md#web-ui) for the API.
 
@@ -430,8 +430,21 @@ The sidebar list rows in the Chats, Vault, Files, Tags, and Schedules tabs work 
 
 ### Model picker
 
-When model configs are available, one shared `<model-picker>` element
-(`components/model-picker.js`) serves every conversation model selector:
+Model selection splits into a generic popup primitive and two thin consumers
+(#2011). The primitive knows nothing about models or conversations; each
+consumer owns its own semantics and event.
+
+**`<picker-popup>`** (`components/picker-popup.js`) owns the mechanism: the
+trigger, the viewport-anchored panel with flip/clamp placement, the search
+field, row rendering, keyboard navigation, and open/close lifecycle. It takes
+`items` (flat) or `groups` (with headings), plus an optional `emptyItem`
+pinned above the list while the search box is empty, and dispatches one
+bubbling `pick` with `{ value, item }` per chosen row — including the
+already-selected row and including `emptyItem`. It decides nothing about what
+a value means; a caller's `""` passes through like any other. It performs no
+fetches and holds no caller domain state.
+
+**`<model-picker>`** is the conversation consumer:
 
 - The desktop control strip above the composer.
 - The mobile conversation menu (rendered inline, without a popup).
@@ -449,9 +462,17 @@ closes the panel and returns focus to the trigger. A click outside also closes
 it. The panel is anchored below the trigger on wide screens and becomes a
 viewport-bounded sheet on narrow screens. Picking a different model dispatches
 one bubbling `set-model` event; picking the current model only closes the
-panel. All visible state re-renders from properties, so session switches and
-mid-session model changes stay in sync (#1440). See
-[Model Selection](model-selection.md).
+panel. A conversation switch closes the panel. All visible state re-renders
+from properties, so session switches and mid-session model changes stay in
+sync (#1440). See [Model Selection](model-selection.md).
+
+**`<model-select>`** is the settings consumer, used by the four model pointers
+in **⚙ Agent Config → Models** (default, auto-approval, reflection, verifier).
+It renders a flat `picker_models` list plus that field's own empty/inherit
+label, and dispatches `model-select` with `{ value }`. Because it is a
+separate element with no `convId`, a settings pointer has no path to
+`store.setModel` — the two concerns cannot be crossed by getting a mode flag
+wrong.
 
 ### Context inspector
 

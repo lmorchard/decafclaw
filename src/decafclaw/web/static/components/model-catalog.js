@@ -15,6 +15,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
+import './model-select.js';
 
 export class ModelCatalog extends LitElement {
   static properties = {
@@ -298,32 +299,73 @@ export class ModelCatalog extends LitElement {
     `;
   }
 
-  /** @param {import('../lib/api-client/index.js').ModelCatalogResponse} catalog */
-  #renderDefaultPicker(catalog) {
+  /**
+   * One settings model pointer: a `<model-select>` (#2011) plus its hint and
+   * any warning the pointer raises.
+   *
+   * The four pointers differ only in label, pointer field, inherit label,
+   * hint, and setter, so they share this renderer. The override warning text
+   * is passed already-computed by the caller — the judgment it encodes
+   * (tool support, self-grading) is catalog policy, not selector behavior.
+   *
+   * @param {{
+   *   id: string,
+   *   blockClass: string,
+   *   label: string,
+   *   options: string[],
+   *   pointer: string,
+   *   effective: string,
+   *   emptyLabel: string,
+   *   hintTitle: string,
+   *   onSelect: (value: string) => void,
+   *   warning?: string,
+   * }} opts
+   */
+  #renderPointerPicker(opts) {
     return html`
-      <div class="model-catalog-default">
-        <label class="model-catalog-default-label" for="catalog-default-select">Default model</label>
-        <select
-          id="catalog-default-select"
-          class="model-catalog-default-select"
+      <div class=${opts.blockClass}>
+        <span class="model-catalog-default-label">${opts.label}</span>
+        <model-select
+          id=${opts.id}
+          class="model-catalog-picker"
+          label=${opts.label}
+          .options=${opts.options}
+          .value=${opts.pointer || ''}
+          .emptyLabel=${opts.emptyLabel}
           ?disabled=${this._busy}
-          @change=${(e) => void this.#setDefault(e.target.value)}
-        >
-          <option value="" ?selected=${catalog.default_pointer === ''}>
-            (config.json default)
-          </option>
-          ${repeat(catalog.picker_models, m => m, m => html`
-            <option value="${m}" ?selected=${m === catalog.default_pointer}>${m}</option>
-          `)}
-        </select>
-        <span class="model-catalog-default-hint" title="Used for conversations with no model selected">
-          effective: ${catalog.default_model || '(none)'}
-        </span>
+          @model-select=${(e) => void opts.onSelect(e.detail.value)}
+        ></model-select>
+        <span class="model-catalog-default-hint" title=${opts.hintTitle}>${opts.effective}</span>
+        ${opts.warning ? html`
+          <div class="model-catalog-judge-warning" role="status">
+            ${opts.warning}
+          </div>
+        ` : nothing}
       </div>
     `;
   }
 
-  /** Auto-approval-model picker (#1213): enabled catalog models + explicit "use conversation model". */
+  /**
+   * Settings model pointers use `<model-select>` (#2011): a flat
+   * `picker_models` list plus the field's own empty/inherit choice. The
+   * setters and endpoints are unchanged.
+   * @param {import('../lib/api-client/index.js').ModelCatalogResponse} catalog
+   */
+  #renderDefaultPicker(catalog) {
+    return this.#renderPointerPicker({
+      id: 'catalog-default-picker',
+      blockClass: 'model-catalog-default',
+      label: 'Default model',
+      options: catalog.picker_models,
+      pointer: catalog.default_pointer,
+      effective: `effective: ${catalog.default_model || '(none)'}`,
+      emptyLabel: '(config.json default)',
+      hintTitle: 'Used for conversations with no model selected',
+      onSelect: (value) => void this.#setDefault(value),
+    });
+  }
+
+  /** Auto-approval-model pointer (#1213): enabled catalog models + explicit "use conversation model". */
   #renderAuxApprovalPicker(catalog) {
     // The approval judgment is a forced-tool structured-output call, so a
     // model known to lack tool support cannot do the job. `tools: null`
@@ -332,79 +374,57 @@ export class ModelCatalog extends LitElement {
       ? Object.values(catalog.providers).flatMap(p => p.models).find(m => m.key === catalog.aux_approval_pointer)
       : null;
     const toolsWarning = Boolean(selected && selected.tools === false);
-    return html`
-      <div class="model-catalog-judge">
-        <label class="model-catalog-default-label" for="catalog-aux-approval-select">Auto-approval model</label>
-        <select
-          id="catalog-aux-approval-select"
-          class="model-catalog-default-select"
-          ?disabled=${this._busy}
-          @change=${(e) => void this.#setAuxApproval(e.target.value)}
-        >
-          <option value="" ?selected=${!catalog.aux_approval_pointer}>${'(use conversation model)'}</option>
-          ${repeat(catalog.picker_models, m => m, m => html`
-            <option value="${m}" ?selected=${m === catalog.aux_approval_pointer}>${m}</option>
-          `)}
-        </select>
-        <span class="model-catalog-default-hint" title="Judge that grades shell auto-approvals; empty = ride on the active conversation model">${catalog.aux_approval_model || '(use conversation model)'}</span>
-        ${toolsWarning ? html`
-          <div class="model-catalog-judge-warning" role="status">
-            Selected auto-approval model reports no tool support — the approval judgment needs structured output.
-          </div>
-        ` : nothing}
-      </div>
-    `;
+    return this.#renderPointerPicker({
+      id: 'catalog-aux-approval-picker',
+      blockClass: 'model-catalog-judge',
+      label: 'Auto-approval model',
+      options: catalog.picker_models,
+      pointer: catalog.aux_approval_pointer,
+      effective: catalog.aux_approval_model || '(use conversation model)',
+      emptyLabel: '(use conversation model)',
+      hintTitle: 'Judge that grades shell auto-approvals; empty = ride on the active conversation model',
+      onSelect: (value) => void this.#setAuxApproval(value),
+      warning: toolsWarning
+        ? 'Selected auto-approval model reports no tool support — the approval judgment needs structured output.'
+        : '',
+    });
   }
 
-  /** Reflection-model picker (#1212): enabled catalog models + explicit inherit. */
+  /** Reflection-model pointer (#1212): enabled catalog models + explicit inherit. */
   #renderReflectionPicker(catalog) {
     // #1212: an explicitly selected judge equal to the active conversation
     // model means the author grades its own homework — allowed, but surfaced
     // as a warning (#591).
     const judgeWarning = Boolean(catalog.reflection_pointer) && catalog.reflection_pointer === this._activeModel;
-    return html`
-      <div class="model-catalog-judge">
-        <label class="model-catalog-default-label" for="catalog-reflection-select">Reflection model</label>
-        <select
-          id="catalog-reflection-select"
-          class="model-catalog-default-select"
-          ?disabled=${this._busy}
-          @change=${(e) => void this.#setReflection(e.target.value)}
-        >
-          <option value="" ?selected=${!catalog.reflection_pointer}>${'(config.json reflection / inherit)'}</option>
-          ${repeat(catalog.picker_models, m => m, m => html`
-            <option value="${m}" ?selected=${m === catalog.reflection_pointer}>${m}</option>
-          `)}
-        </select>
-        <span class="model-catalog-default-hint" title="Judge that grades each turn; empty = inherit">${catalog.reflection_model || '(inherit)'}</span>
-        ${judgeWarning ? html`
-          <div class="model-catalog-judge-warning" role="status">
-            Reflection model is the active conversation model — the author would grade its own homework.
-          </div>
-        ` : nothing}
-      </div>
-    `;
+    return this.#renderPointerPicker({
+      id: 'catalog-reflection-picker',
+      blockClass: 'model-catalog-judge',
+      label: 'Reflection model',
+      options: catalog.picker_models,
+      pointer: catalog.reflection_pointer,
+      effective: catalog.reflection_model || '(inherit)',
+      emptyLabel: '(config.json reflection / inherit)',
+      hintTitle: 'Judge that grades each turn; empty = inherit',
+      onSelect: (value) => void this.#setReflection(value),
+      warning: judgeWarning
+        ? 'Reflection model is the active conversation model — the author would grade its own homework.'
+        : '',
+    });
   }
 
-  /** Verifier-model picker (#1212): enabled catalog models + explicit inherit. */
+  /** Verifier-model pointer (#1212): enabled catalog models + explicit inherit. */
   #renderVerifierPicker(catalog) {
-    return html`
-      <div class="model-catalog-judge">
-        <label class="model-catalog-default-label" for="catalog-verifier-select">Verifier model</label>
-        <select
-          id="catalog-verifier-select"
-          class="model-catalog-default-select"
-          ?disabled=${this._busy}
-          @change=${(e) => void this.#setVerifier(e.target.value)}
-        >
-          <option value="" ?selected=${!catalog.verifier_pointer}>${'(config.json verifier / inherit)'}</option>
-          ${repeat(catalog.picker_models, m => m, m => html`
-            <option value="${m}" ?selected=${m === catalog.verifier_pointer}>${m}</option>
-          `)}
-        </select>
-        <span class="model-catalog-default-hint" title="Second-opinion judge; empty = inherit">${catalog.verifier_model || '(inherit)'}</span>
-      </div>
-    `;
+    return this.#renderPointerPicker({
+      id: 'catalog-verifier-picker',
+      blockClass: 'model-catalog-judge',
+      label: 'Verifier model',
+      options: catalog.picker_models,
+      pointer: catalog.verifier_pointer,
+      effective: catalog.verifier_model || '(inherit)',
+      emptyLabel: '(config.json verifier / inherit)',
+      hintTitle: 'Second-opinion judge; empty = inherit',
+      onSelect: (value) => void this.#setVerifier(value),
+    });
   }
 
   /**

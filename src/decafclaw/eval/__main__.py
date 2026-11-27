@@ -14,11 +14,13 @@ import yaml
 
 from ..config import load_config
 from .history import HISTORY_PATH, append_run, build_run_record, read_history, render_table
+from .inventory import build_inventory, render_json
+from .inventory import render_table as render_inventory_table
 from .reflect import reflect_on_failure
 from .runner import run_eval
 
 
-def main():
+def main(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(description="DecafClaw eval runner — test prompts and tools with real LLM calls")
     parser.add_argument("path", nargs="?", help="YAML file or directory of YAML files")
     parser.add_argument("--model", help="Override LLM model")
@@ -33,7 +35,29 @@ def main():
     parser.add_argument(
         "--history-limit", type=int, default=20, help="With --history, show this many most-recent runs (default: 20)"
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--inventory",
+        action="store_true",
+        help="Print the generated eval-suite inventory and exit (no eval run; default path: evals/)",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="With --inventory, emit stable machine-readable JSON instead of a table"
+    )
+    args = parser.parse_args(argv)
+
+    if args.json and not args.inventory:
+        parser.error("--json requires --inventory")
+
+    # --inventory is read-only reporting derived from the YAML, git, and
+    # history at read time; it never writes and is not part of `make check`.
+    if args.inventory:
+        root = Path(args.path) if args.path else Path("evals")
+        suites = build_inventory(root)
+        if args.json:
+            sys.stdout.write(render_json(suites))
+        else:
+            sys.stdout.write(render_inventory_table(suites))
+        sys.exit(0)
 
     # --history reads evals/history.jsonl and prints the trend table; no eval run.
     if args.history:
@@ -42,7 +66,7 @@ def main():
         sys.exit(0)
 
     if not args.path:
-        parser.error("the following arguments are required: path (or use --history)")
+        parser.error("the following arguments are required: path (or use --history / --inventory)")
 
     logging.basicConfig(
         level=logging.WARNING,

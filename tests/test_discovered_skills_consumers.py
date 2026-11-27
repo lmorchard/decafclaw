@@ -106,6 +106,12 @@ REVIEWED_CONSUMERS: dict[tuple[str, str], str] = {
     "schedules.py setup_schedule_ctx (#731 vector 5). Note the preapproval "
     "grant in apply_event_policy is a separate decision, keyed on event "
     "provenance (policy_granted) rather than skill tier.",
+    (
+        "calendar_policy.py",
+        "resolve_event_skill_dir",
+    ): "GATE (#2007): grants_capability filter; only trusted-tier skills (admin, "
+    "bundled, extra) may anchor $SKILL_DIR in an event reason or shell patterns. "
+    "Workspace-tier skills are agent-writable and ignored, mirroring schedules._resolve_skill_dir (#739).",
     ("tools/skill_tools.py", "tool_activate_skill"): "GATE (#649): the confirmation gate itself lives here — "
     "is_trusted_tier = trust_tier != 'workspace', denied outright on an "
     "unattended turn. NOTE the gate is in this wrapper, not in "

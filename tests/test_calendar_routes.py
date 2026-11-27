@@ -585,3 +585,92 @@ async def test_update_can_add_and_clear_a_policy(client, http_config):
     assert event["allowed_tools"] == []
     assert event["shell_patterns"] == []
     assert event["model"] == ""
+
+
+# -- run now (rehearsal) ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_requires_authentication(app):
+    """The endpoint must not be reachable without a session cookie."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as anon:
+        resp = await anon.post("/api/calendar/events/cal_whatever/run")
+    assert resp.status_code in (401, 403), resp.text
+
+
+@pytest.mark.asyncio
+async def test_run_rejects_an_unknown_event(client):
+    resp = await client.post("/api/calendar/events/cal_nope/run")
+    assert resp.status_code == 404, resp.text
+
+
+@pytest.mark.asyncio
+async def test_run_refuses_a_non_pending_event(client, app):
+    created = await client.post("/api/calendar/events", json=_body())
+    event_id = created.json()["event"]["event_id"]
+    cancelled = await client.delete(f"/api/calendar/events/{event_id}")
+    assert cancelled.status_code == 200, cancelled.text
+
+    resp = await client.post(f"/api/calendar/events/{event_id}/run")
+    assert resp.status_code == 409, resp.text
+    assert "cancelled" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_run_reports_503_when_the_wake_cannot_start(client):
+    """No ConversationManager attached: the event cannot be enqueued."""
+    created = await client.post("/api/calendar/events", json=_body())
+    event_id = created.json()["event"]["event_id"]
+
+    resp = await client.post(f"/api/calendar/events/{event_id}/run")
+    assert resp.status_code == 503, resp.text
+
+
+def test_there_is_no_agent_tool_to_run_a_calendar_event():
+    """Run-now must stay off the agent tool catalog (#731, #2018).
+
+    Careful about what this test actually guarantees. It is NOT "the agent cannot
+    start an unattended turn" — `calendar_update` reaches the same turn by setting
+    `fire_at` to the near future. The narrower property enforced here is that the
+    agent has no *frictionless, repeatable* way to re-fire a live grant: no tool
+    binds `fire_now`, so triggering requires editing the event, which is visible
+    and (per #2018) strips the preapproval the run would have used.
+    """
+    from decafclaw.tools import calendar_tools
+
+    tool_names = {tool["function"]["name"] for tool in calendar_tools.CALENDAR_TOOL_DEFINITIONS}
+    assert tool_names, "the tool list moved; this guard is no longer checking anything"
+    assert not any("run" in name for name in tool_names), tool_names
+    # The manager method must not be bound into any exposed tool.
+    assert not any(fn == "fire_now" for fn in vars(calendar_tools).values())
+
+
+def test_the_reschedule_route_to_an_unattended_run_is_bounded():
+    """Document the residual path, so nobody re-reads /run as a full barrier (#2018).
+
+    The agent CAN reach an unattended wake early — via `calendar_update(fire_at=...)`.
+    That is acceptable only while three things stay true, and this test fails if any
+    of them regresses:
+
+    1. `tool_calendar_create` / `tool_calendar_update` cannot set `policy_granted`.
+    2. Any agent edit of a granted event clears the grant.
+    3. The trigger is a visible field change, not a side effect.
+    """
+    import inspect
+
+    from decafclaw.tools import calendar_tools
+
+    for fn in (calendar_tools.tool_calendar_create, calendar_tools.tool_calendar_update):
+        params = inspect.signature(fn).parameters
+        assert "policy_granted" not in params, (
+            f"{fn.__name__} must not accept policy_granted; the grant is a human-authored "
+            "provenance flag, not an agent input (#1971)"
+        )
+
+    update_src = inspect.getsource(calendar_tools.tool_calendar_update)
+    assert 'changes["policy_granted"] = False' in update_src, (
+        "tool_calendar_update must invalidate the human grant on every agent edit (#2018); "
+        "without it, an agent can rewrite `reason` — the instructions the wake turn runs — "
+        "under a grant written for the old text"
+    )

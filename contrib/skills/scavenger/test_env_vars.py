@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import stat
 
 import pytest
@@ -158,6 +159,49 @@ def test_env_exec_quotes_values_with_spaces(monkeypatch, env_store):
     sc.env_exec(fleet, _lease(), "true")
 
     assert "-e 'MSG=hello world'" in seen["cmd"]
+
+
+def test_env_exec_survives_embedded_single_quotes(monkeypatch, env_store):
+    """A command containing single quotes must reach the remote shell intact.
+
+    Regression: env_exec wrapped the command in literal single quotes with no
+    escaping, so `python3 -c "print('x')"` or `awk '{print $1}'` arrived
+    truncated and failed with "unterminated quoted string". The error pointed
+    at the caller's quoting, not at this builder.
+    """
+    seen = {}
+
+    def fake_run_ssh(alias, cmd, **kwargs):
+        seen["cmd"] = cmd
+        return sc.subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(sc, "run_ssh", fake_run_ssh)
+    fleet = {"box": HostConfig(name="box", ssh_alias="scavenger-box", engine="docker")}
+    command = "awk '{print $1}' /tmp/x && python3 -c \"print('ok')\""
+    sc.env_exec(fleet, _lease(), command)
+
+    # The remote shell must receive exactly one shell-quoted argument, so
+    # evaluating it reproduces the original command byte for byte.
+    prefix = "docker exec -i scavenger-env-e1 sh -c "
+    assert seen["cmd"].startswith(prefix)
+    quoted = seen["cmd"][len(prefix) :]
+    assert shlex.split(quoted) == [command]
+
+
+def test_env_exec_cmd_is_not_double_wrapped(monkeypatch, env_store):
+    """A plain command must not be quoted in a way that changes its meaning."""
+    seen = {}
+
+    def fake_run_ssh(alias, cmd, **kwargs):
+        seen["cmd"] = cmd
+        return sc.subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(sc, "run_ssh", fake_run_ssh)
+    fleet = {"box": HostConfig(name="box", ssh_alias="scavenger-box", engine="docker")}
+    sc.env_exec(fleet, _lease(), "true")
+
+    prefix = "docker exec -i scavenger-env-e1 sh -c "
+    assert shlex.split(seen["cmd"][len(prefix) :]) == ["true"]
 
 
 def test_env_exec_bg_carries_vars_for_native(monkeypatch, env_store):

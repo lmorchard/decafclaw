@@ -57,10 +57,12 @@ describe('chat-controls', () => {
      expect(el.querySelector('#cc-context-progress')).toBeTruthy();
    });
 
-  /** Wait for the nested picker to render, then return it. */
+  /** Wait for the nested picker and its popup to render, then return it. */
   async function pickerOf(el) {
     const picker = /** @type {any} */ (el.querySelector('model-picker'));
     await picker.updateComplete;
+    // #2011: the trigger and rows live in the nested <picker-popup>.
+    await picker.querySelector('picker-popup')?.updateComplete;
     return picker;
   }
 
@@ -69,10 +71,10 @@ describe('chat-controls', () => {
     const picker = await pickerOf(el);
     const handler = vi.fn();
     document.addEventListener('set-model', handler);
-    picker.querySelector('.model-picker-trigger').click();
+    picker.querySelector('.picker-popup-trigger').click();
     await picker.updateComplete;
-    const option = [...picker.querySelectorAll('.model-picker-option')]
-      .find((row) => row.dataset.model === 'anthropic-claude-3.5-sonnet');
+    const option = [...picker.querySelectorAll('.picker-popup-option')]
+      .find((row) => row.dataset.value === 'anthropic-claude-3.5-sonnet');
     option.click();
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0][0].detail).toEqual({ model: 'anthropic-claude-3.5-sonnet' });
@@ -112,7 +114,7 @@ describe('chat-controls', () => {
       defaultModel: 'vertex-gemini-flash-3.8',
       availableModels: ['anthropic-claude-3.5-sonnet', 'vertex-gemini-flash-3.8'],
     });
-    const trigger = (await pickerOf(el)).querySelector('.model-picker-trigger');
+    const trigger = (await pickerOf(el)).querySelector('.picker-popup-trigger');
     expect(trigger.textContent).toContain('vertex-gemini-flash-3.8');
 
     // Setting an explicit activeModel selects it
@@ -135,7 +137,7 @@ describe('chat-controls', () => {
       activeModel: 'legacy-model-v1',
       availableModels: ['anthropic-claude-3.5-sonnet', 'vertex-gemini-flash-3.8'],
     });
-    const trigger = (await pickerOf(el)).querySelector('.model-picker-trigger');
+    const trigger = (await pickerOf(el)).querySelector('.picker-popup-trigger');
     expect(trigger.textContent).toContain('legacy-model-v1');
     expect(trigger.textContent).toContain('not configured');
   });
@@ -143,20 +145,20 @@ describe('chat-controls', () => {
   it('disables the picker while busy or read-only', async () => {
     const { el, store } = await mount();
     const picker = await pickerOf(el);
-    expect(picker.querySelector('.model-picker-trigger').disabled).toBe(false);
+    expect(picker.querySelector('.picker-popup-trigger').disabled).toBe(false);
 
     store.isBusy = true;
     store.dispatchEvent(new Event('change'));
     await el.updateComplete;
     await picker.updateComplete;
-    expect(picker.querySelector('.model-picker-trigger').disabled).toBe(true);
+    expect(picker.querySelector('.picker-popup-trigger').disabled).toBe(true);
 
     store.isBusy = false;
     store.isReadOnly = true;
     store.dispatchEvent(new Event('change'));
     await el.updateComplete;
     await picker.updateComplete;
-    expect(picker.querySelector('.model-picker-trigger').disabled).toBe(true);
+    expect(picker.querySelector('.picker-popup-trigger').disabled).toBe(true);
   });
 
    it('dispatches toggle-context-inspector when the context meter is clicked', async () => {
