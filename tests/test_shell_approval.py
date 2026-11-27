@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from decafclaw.security_monitor import SecurityDecision, SecurityStatus
 from decafclaw.tools.shell_tools import (
     _command_matches_pattern,
     _has_shell_metacharacters,
@@ -652,3 +653,194 @@ async def test_shell_denial_carries_decision_and_reason(ctx):
 
     assert result.details["purpose"] == "clean up"
     assert result.details["approval"] == {"decision": "deny", "tier": "human", "reason": "not now"}
+
+
+# -- Tier precedence (#1344) -----------------------------------------------
+#
+# `check_shell_approval` evaluates its tiers in a fixed order. These cases pin
+# the boundary between adjacent tiers so the per-tier split cannot silently
+# reorder them: each asserts which tier decides, and (where a model is involved)
+# that the earlier tier short-circuits before the later one runs.
+
+
+@pytest.mark.asyncio
+async def test_tier1_block_beats_allow_patterns(ctx):
+    """Tier 1 (security monitor) blocks a catastrophic command even when it matches an allow pattern."""
+    _save_allow_pattern(ctx.config, "rm *")
+    result = await check_shell_approval(ctx, "rm -rf /")
+    assert result["approved"] is False
+    assert result["tier"] == "tier1_block"
+
+
+@pytest.mark.asyncio
+async def test_allow_patterns_beat_read_only_tier(ctx):
+    """Explicit allow patterns are checked before the read-only tier."""
+    _save_allow_pattern(ctx.config, "ls *")  # `ls -la` is read-only AND matches this pattern
+    result = await check_shell_approval(ctx, "ls -la")
+    assert result["approved"] is True
+    assert result["tier"] == "persisted_pattern"
+
+
+@pytest.mark.asyncio
+async def test_read_only_tier_beats_security_monitor_llm(ctx):
+    """The read-only tier short-circuits before the security monitor's LLM classifier."""
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.evaluate_command_llm",
+            new_callable=AsyncMock,
+            return_value=SecurityDecision(SecurityStatus.ASK, "ambiguous"),
+        ) as mock_eval,
+        # If the read-only tier were bypassed the ASK would prompt a human; mock it
+        # so a regression fails fast instead of blocking on a real confirmation.
+        patch(
+            "decafclaw.tools.shell_tools.request_confirmation",
+            new_callable=AsyncMock,
+            return_value={"approved": False},
+        ) as mock_confirm,
+    ):
+        # `grep foo src/` is read-only; if it reached the LLM it would be ASK.
+        result = await check_shell_approval(ctx, "grep foo src/")
+    assert result["approved"] is True
+    assert result["tier"] == "read_only"
+    mock_eval.assert_not_called()
+    mock_confirm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_security_monitor_llm_ask_prompts_before_later_tiers(ctx):
+    """A security-monitor ASK decision prompts a human before the later tiers run."""
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.evaluate_command_llm",
+            new_callable=AsyncMock,
+            return_value=SecurityDecision(SecurityStatus.ASK, "sensitive"),
+        ),
+        patch(
+            "decafclaw.tools.shell_tools.request_confirmation",
+            new_callable=AsyncMock,
+            return_value={"approved": False},
+        ) as mock_confirm,
+    ):
+        result = await check_shell_approval(ctx, "python scripts/foo.py --arg val")
+    assert result["approved"] is False
+    mock_confirm.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_blanket_preapproval_beats_aux_judge(ctx):
+    """Blanket tool pre-approval (tier 5) fires before the aux judge (tier 7)."""
+    ctx.tools.preapproved = {"shell"}
+    ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)  # established, so direction would not prompt and the judge is reachable
+    mock_judge_call = AsyncMock(return_value={"content": "{}"})
+    ctx.aux_approval_llm = MagicMock(return_value=mock_judge_call)
+
+    with patch(
+        "decafclaw.tools.shell_tools.evaluate_command_llm",
+        new_callable=AsyncMock,
+        return_value=SecurityDecision(SecurityStatus.ALLOW, "ok"),
+    ):
+        result = await check_shell_approval(ctx, "python scripts/foo.py --arg val")
+
+    assert result["approved"] is True
+    assert result["tier"] == "blanket_preapproval"
+    mock_judge_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_direction_prompts_before_aux_judge(ctx):
+    """A command that starts a new activity prompts (direction) before the aux judge runs."""
+    ctx.config.shell.aux_approval_enabled = True
+    # No seeded history: a fresh activity, so direction must prompt.
+    mock_judge_call = AsyncMock(return_value={"content": "{}"})
+    ctx.aux_approval_llm = MagicMock(return_value=mock_judge_call)
+
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.evaluate_command_llm",
+            new_callable=AsyncMock,
+            return_value=SecurityDecision(SecurityStatus.ALLOW, "ok"),
+        ),
+        patch(
+            "decafclaw.tools.shell_tools.request_confirmation",
+            new_callable=AsyncMock,
+            return_value={"approved": False},
+        ) as mock_confirm,
+    ):
+        result = await check_shell_approval(ctx, "python scripts/foo.py --arg val")
+
+    assert result["approved"] is False
+    mock_confirm.assert_awaited_once()  # direction asked the human
+    mock_judge_call.assert_not_awaited()  # ...and the judge never ran
+
+
+@pytest.mark.asyncio
+async def test_aux_memory_beats_fresh_judge_call(ctx):
+    """A command in the session's aux-LLM memory is allowed without a fresh judge call."""
+    ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)  # established, so direction does not prompt first
+    ctx.tools.llm_approved_shell_patterns = ["python scripts/foo.py *"]
+
+    mock_judge_call = AsyncMock(return_value={"content": "{}"})
+    ctx.aux_approval_llm = MagicMock(return_value=mock_judge_call)
+
+    with patch(
+        "decafclaw.tools.shell_tools.evaluate_command_llm",
+        new_callable=AsyncMock,
+        return_value=SecurityDecision(SecurityStatus.ALLOW, "ok"),
+    ):
+        result = await check_shell_approval(ctx, "python scripts/foo.py --arg val")
+
+    assert result["approved"] is True
+    assert result["tier"] == "aux_memory"
+    mock_judge_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_aux_judge_allow_and_decline_precedence(ctx):
+    """Once earlier tiers pass, the aux judge's allow/decline decision drives the outcome."""
+    ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)  # established, so direction does not prompt first
+
+    # Allow: no named risk category -> the command runs.
+    allow_call = AsyncMock(
+        return_value={"content": json.dumps({"auto_approve": True, "reason": "safe", "risk": "low"})}
+    )
+    ctx.aux_approval_llm = MagicMock(return_value=allow_call)
+    with patch(
+        "decafclaw.tools.shell_tools.evaluate_command_llm",
+        new_callable=AsyncMock,
+        return_value=SecurityDecision(SecurityStatus.ALLOW, "ok"),
+    ):
+        result = await check_shell_approval(ctx, "python scripts/foo.py --arg val")
+    assert result["approved"] is True
+    assert result["tier"] == "aux_allow"
+
+    # The allow case minted a session pattern for this command; clear it so the
+    # decline case reaches the judge instead of matching aux memory.
+    ctx.tools.llm_approved_shell_patterns = []
+
+    # Decline: a named risk category -> falls through to a human confirmation.
+    decline_call = AsyncMock(
+        return_value={
+            "content": json.dumps(
+                {"auto_approve": False, "reason": "risky", "risk": "high", "risk_category": "irreversible"}
+            )
+        }
+    )
+    ctx.aux_approval_llm = MagicMock(return_value=decline_call)
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.evaluate_command_llm",
+            new_callable=AsyncMock,
+            return_value=SecurityDecision(SecurityStatus.ALLOW, "ok"),
+        ),
+        patch(
+            "decafclaw.tools.shell_tools.request_confirmation",
+            new_callable=AsyncMock,
+            return_value={"approved": False},
+        ) as mock_confirm,
+    ):
+        result = await check_shell_approval(ctx, "python scripts/foo.py --arg val")
+    assert result["approved"] is False
+    mock_confirm.assert_awaited_once()
