@@ -133,6 +133,16 @@ everything; a manual run without it waits up to `--idle-timeout`. A candidate
 that stays busy past `--deferral-cap-hours` (default 6) produces exactly one
 notification, so starvation is loud rather than silent.
 
+**Manual intervention guard.** When changes require pre- or post-deployment steps
+(migrations, systemd unit updates, new credentials, embedding reindexing), the
+runner halts before stopping the service:
+- **Git Commit Trailer**: Any commit in `HEAD..candidate` carrying `Deploy-Action: manual`
+  causes the runner to return exit code 5 (`EXIT_BLOCKED`) and emit a high-priority
+  alert with the `Deploy-Note` and `CHANGELOG.md` notes.
+- **CHANGELOG.md**: Steps must be documented under `### ⚠️ Deployment Notes` in `CHANGELOG.md`.
+- **Throttling**: The alert is posted once per candidate SHA in `state.json`'s `manual_notified`.
+- **Overriding**: Run `./scripts/deploy.sh` or `deploy_runner.py --ack-manual` to proceed with deployment once manual steps are completed.
+
 `~/.local/state/decafclaw-deploy/state.json` holds `last_good` (the rollback
 target), `quarantined` (SHA → reason), `last_attempt` (SHA + consecutive
 failures), `first_seen` (when a busy candidate was first skipped), and
@@ -173,7 +183,7 @@ the SHA mismatch. Both timeout paths are separate code paths: no answer
 **Exit codes.** `0` success or already at the candidate; `1` configuration
 error; `2` refused before stopping the service (guard, health, backup); `3`
 deployed and rolled back; `4` deploy and rollback both failed (a human is
-needed); `5` blocked by another run's lock or a quarantined SHA.
+needed); `5` blocked by another run's lock, a quarantined SHA, or required manual action.
 
 ### Backups
 
