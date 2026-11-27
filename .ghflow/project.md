@@ -1,6 +1,6 @@
 ---
 ghflow_project_facts: 1
-written: 2026-11-26
+written: 2026-11-27
 sources:
   - AGENTS.md 2b8c7b9510883792dc97ce3bcf05e7925d1c463a
   - CLAUDE.md 2b8c7b9510883792dc97ce3bcf05e7925d1c463a
@@ -11,7 +11,7 @@ sources:
   - tests/web/conftest.py 10cc18c08878e55b406bd3c1d6ed80e8baae60b8
   - pyproject.toml a134c95c5be68ff5feeef66b56ed85bfa9353347
   - scripts/gen_message_types.py 06a0ab1456ab2e0655d70eab5e68f24a2eda9be9
-  - docs/config.md c2b1dce35052989122e98519f103998a2148e1d1
+  - docs/config.md 7bdf349dfc7738642c70bf773bdbfa5f085e3d40
   - docs/testing.md 162454c9807cfed6ae7fb45399b31cfb891ed600
 worktree:
   copy:
