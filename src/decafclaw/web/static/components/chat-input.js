@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
-import { uploadFile } from '../lib/upload-client.js';
+import { uploadFileWithProgress } from '../lib/upload-client.js';
 import {
   PREFERENCE_EVENT,
   broadcastShowContextProvenance,
@@ -10,9 +10,14 @@ import {
 import './model-picker.js';
 
 /** @typedef {import('../lib/api-client/index.js').AutocompleteResponse['results'][number]} Completion */
-/** @typedef {import('../lib/api-client/index.js').AttachmentResponse} AttachmentResponse */
-/** @typedef {AttachmentResponse & {previewUrl: string | null}} UploadedAttachment */
 /** @typedef {{filename: string, mime_type: string, file: File, previewUrl: string | null}} PendingAttachment */
+/**
+ * A chip in the composer's preview strip: either a local file awaiting a
+ * conversation, or an upload in flight (with `uploading`/`progress`), or a
+ * server-side attachment (with `path`).
+ * @typedef {{id?: number, filename: string, mime_type: string, previewUrl: string | null,
+ *            uploading?: boolean, progress?: number, file?: File, path?: string}} AttachmentChip
+ */
 /** @typedef {{name: string, description: string, argument_hint: string}} Command */
 
 /** A `/` or `!` command token filling the current line up to the caret. */
@@ -160,8 +165,10 @@ export class ChatInput extends LitElement {
     this._defaultModel = '';
     this._isBusy = false;
     this._hasText = false;
-    /** @type {Array<UploadedAttachment | PendingAttachment>} */
+    /** @type {AttachmentChip[]} */
     this._pendingAttachments = [];
+    /** Monotonic id for uploads that are still in flight. */
+    this._uploadSeq = 0;
     this._dragOver = false;
     /** @type {{prefix: string, query: string, start: number}|null} */
     this._trigger = null;
@@ -506,11 +513,17 @@ export class ChatInput extends LitElement {
     }
   }
 
+  /** True while any selected file is still travelling to the server. */
+  #isUploading() {
+    return this._pendingAttachments.some(a => a.uploading);
+  }
+
   #handleSend() {
     const textarea = this.querySelector('textarea');
     const text = textarea?.value?.trim();
     const hasAttachments = this._pendingAttachments.length > 0;
-    if ((!text && !hasAttachments) || this.disabled) return;
+    // Sending now would post a message without the files still in flight.
+    if ((!text && !hasAttachments) || this.disabled || this.#isUploading()) return;
 
     const attachments = this._pendingAttachments.map(a => {
       if ('path' in a) {
@@ -578,19 +591,23 @@ export class ChatInput extends LitElement {
   // -- File handling ----------------------------------------------------------
 
   /** @param {FileList|File[]} files */
-  async #handleFiles(files) {
+  #handleFiles(files) {
     if (this.disabled) return;
     for (const file of Array.from(files)) {
       const previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
       if (this.convId) {
-        // Upload immediately when conversation exists
-        try {
-          const result = await uploadFile(this.convId, file);
-          this._pendingAttachments = [...this._pendingAttachments, { ...result, previewUrl }];
-        } catch (err) {
-          console.warn('Upload failed:', err.message);
-          if (previewUrl) URL.revokeObjectURL(previewUrl);
-        }
+        // Show the chip immediately with progress; it becomes a normal
+        // attachment when the server answers (#136).
+        const id = ++this._uploadSeq;
+        this._pendingAttachments = [...this._pendingAttachments, {
+          id,
+          filename: file.name,
+          mime_type: file.type || 'application/octet-stream',
+          previewUrl,
+          uploading: true,
+          progress: 0,
+        }];
+        this.#startUpload(id, file);
       } else {
         // No conversation yet — hold the File object for later upload
         this._pendingAttachments = [...this._pendingAttachments, {
@@ -601,6 +618,30 @@ export class ChatInput extends LitElement {
         }];
       }
     }
+  }
+
+  /** @param {number} id @param {File} file */
+  async #startUpload(id, file) {
+    try {
+      const result = await uploadFileWithProgress(this.convId, file, (fraction) => {
+        this.#updateAttachment(id, { progress: fraction });
+      });
+      // A chip removed mid-upload takes its result with it.
+      if (!this._pendingAttachments.some(a => a.id === id)) return;
+      this.#updateAttachment(id, { ...result, uploading: false, progress: 1 });
+    } catch (err) {
+      console.warn('Upload failed:', err.message);
+      const removed = this._pendingAttachments.find(a => a.id === id);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      this._pendingAttachments = this._pendingAttachments.filter(a => a.id !== id);
+    }
+  }
+
+  /** @param {number} id @param {Partial<AttachmentChip>} patch */
+  #updateAttachment(id, patch) {
+    this._pendingAttachments = this._pendingAttachments.map(
+      a => (a.id === id ? { ...a, ...patch } : a),
+    );
   }
 
   /** @param {number} index */
@@ -708,10 +749,12 @@ export class ChatInput extends LitElement {
 
   render() {
     const hasAttachments = this._pendingAttachments.length > 0;
+    const isUploading = this.#isUploading();
     // While busy, the merged primary action is Stop only when there is
-    // nothing to steer with. Text or an attachment means the operator has
-    // something to say, so the same button sends (#1666).
-    const isStop = this.busy && !this._hasText && !hasAttachments;
+    // nothing to steer with. Text or a ready attachment means the operator has
+    // something to say, so the same button sends (#1666); an in-flight upload
+    // is neither sendable nor stoppable, so keep Stop (#136).
+    const isStop = this.busy && !this._hasText && !this._pendingAttachments.some(a => !a.uploading);
     const isMention = this._trigger?.prefix === '@';
     const matchCount = isMention ? this._mentionMatches.length : this.#matchingCommands().length;
     const highlight = Math.min(this._highlight, matchCount - 1);
@@ -726,11 +769,22 @@ export class ChatInput extends LitElement {
       ${hasAttachments ? html`
         <div class="attachment-preview-strip">
           ${this._pendingAttachments.map((a, i) => html`
-            <div class="attachment-preview">
+            <div class="attachment-preview ${a.uploading ? 'uploading' : ''}">
               ${a.previewUrl
                 ? html`<img src=${a.previewUrl} class="attachment-thumb" alt=${a.filename}>`
                 : html`<span class="attachment-file-icon">${a.filename}</span>`
               }
+              ${a.uploading ? html`
+                <div class="attachment-upload-progress"
+                  role="progressbar"
+                  aria-label="Uploading ${a.filename}"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow=${Math.round((a.progress || 0) * 100)}>
+                  <span class="attachment-upload-spinner" aria-hidden="true"></span>
+                  <span class="attachment-upload-percent">${Math.round((a.progress || 0) * 100)}%</span>
+                </div>
+              ` : nothing}
               <button class="attachment-remove" @click=${() => this.#removeAttachment(i)}
                 title="Remove" aria-label="Remove attachment">&times;</button>
             </div>
@@ -835,9 +889,9 @@ export class ChatInput extends LitElement {
           type="button"
           class="composer-primary-btn ${isStop ? 'stop-btn' : ''}"
           @click=${isStop ? this.#handleStop : this.#handleSend}
-          ?disabled=${!isStop && this.disabled}
+          ?disabled=${!isStop && (this.disabled || isUploading)}
           aria-label=${isStop ? 'Stop generation' : 'Send message'}
-          title=${isStop ? 'Stop generation' : 'Send message'}
+          title=${isStop ? 'Stop generation' : (isUploading ? 'Uploading…' : 'Send message')}
         >
           <span class="composer-primary-icon" aria-hidden="true">${isStop ? '\u25A0' : '\u27A4'}</span>
           <span class="composer-primary-label">${isStop ? 'Stop' : 'Send'}</span>
