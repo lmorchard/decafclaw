@@ -195,6 +195,14 @@ fmt-check:
 test:
 	uv run pytest tests/ contrib/skills/
 
+# The non-browser half of CI's `lint-and-test` job. `check` deliberately does
+# not run the suite (it is lint/type/artifact verification), so a policy or
+# guard test that only fails on the full corpus — test_discovered_skills_consumers,
+# tier-trust, module-graph — was invisible locally until CI. Run this before
+# pushing. Excludes browser and integration, matching CI exactly.
+check-tests:
+	uv run pytest -m "not integration and not browser" tests/ contrib/skills/
+
 # Run the Playwright browser tests only (separate CI job; local runs need
 # `uv run playwright install chromium`). The explicit marker expression
 # overrides the default from addopts, so integration stays excluded here.

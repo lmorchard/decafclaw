@@ -14,7 +14,7 @@ import logging
 import os
 import re
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -61,6 +61,21 @@ class CalendarEvent:
     recurrence_start: str = ""
     occurrence_at: str = ""
     recurrence_until: str = ""
+    # Tool policy for the wake turn (#1971). A schedule's frontmatter can carry
+    # these; an event could not, so a calendar fire ran with the full
+    # interactive toolset and no preapproval — over- and under-privileged at
+    # once. See apply_event_policy for the trust rule.
+    allowed_tools: list[str] = field(default_factory=list)
+    disallowed_tools: list[str] = field(default_factory=list)
+    shell_patterns: list[str] = field(default_factory=list)
+    required_skills: list[str] = field(default_factory=list)
+    # Provenance flag. Only a human-controlled creation path (the authenticated
+    # web route) may set this. Preapproval is granted *only* when it is true,
+    # mirroring _PREAPPROVAL_TIERS in schedules.py (#731).
+    policy_granted: bool = False
+    # Model pin (#1972). Empty means inherit the target conversation's current
+    # model, which is what every event did before this field existed.
+    model: str = ""
 
 
 def new_event_id() -> str:

@@ -1328,6 +1328,11 @@ export class DefaultService {
             session_mode?: 'current' | 'dedicated';
             session_key?: string;
             session_title?: string;
+            allowed_tools?: Array<string>;
+            disallowed_tools?: Array<string>;
+            shell_patterns?: Array<string>;
+            required_skills?: Array<string>;
+            model?: string;
         },
     ): CancelablePromise<CalendarEventResponse> {
         return __request(OpenAPI, {
@@ -1382,6 +1387,11 @@ export class DefaultService {
             session_mode?: ('current' | 'dedicated' | null);
             session_key?: (string | null);
             session_title?: (string | null);
+            allowed_tools?: (Array<string> | null);
+            disallowed_tools?: (Array<string> | null);
+            shell_patterns?: (Array<string> | null);
+            required_skills?: (Array<string> | null);
+            model?: (string | null);
         },
     ): CancelablePromise<CalendarEventResponse> {
         return __request(OpenAPI, {

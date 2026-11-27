@@ -27,6 +27,7 @@ from .calendar_events import (
     parse_fire_at,
     save_calendar_events,
 )
+from .calendar_policy import activate_required_skills, apply_event_policy
 from .calendar_recurrence import next_occurrence
 from .conversation_paths import conversation_dir
 
@@ -322,13 +323,29 @@ class CalendarManager:
         from .conversation_manager import TurnKind
         from .scheduled_wakes import compose_wake_context_setup
 
-        context_setup = compose_wake_context_setup(
+        base_setup = compose_wake_context_setup(
             self.manager,
             target_conv_id,
             channel_id=current.channel_id,
             thread_id=current.thread_id,
             transport=current.transport,
         )
+
+        async def context_setup(ctx) -> None:
+            """Inherited wake setup, then this event's own policy (#1971).
+
+            Order matters: the inherited setup replays the conversation's
+            ``last_context_setup``, which restores the previous turn's tool
+            policy. Applying the event's policy first would let that stale
+            policy win.
+
+            Async because skill activation is async; ``_start_turn`` awaits a
+            coroutine ``context_setup``.
+            """
+            base_setup(ctx)
+            apply_event_policy(ctx, current)
+            await activate_required_skills(ctx, current)
+
         try:
             future = await self.manager.enqueue_turn(
                 conv_id=target_conv_id,
