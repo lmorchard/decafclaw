@@ -2971,7 +2971,9 @@ class ConversationManager:
         Returns the number of recovered confirmations.
         """
         started = time.monotonic()
-        stale_cutoff = (datetime.now() - _CONFIRMATION_MAX_AGE).isoformat()
+        # Aware UTC cutoff (#2026). Archive timestamps carry an offset; a naive
+        # local cutoff compared against them is wrong by the host's UTC offset.
+        stale_cutoff = datetime.now(timezone.utc) - _CONFIRMATION_MAX_AGE
         mtime_cutoff = (datetime.now() - _CONFIRMATION_MAX_AGE - _CONFIRMATION_MTIME_MARGIN).timestamp()
         recovered = 0
         inbox_resumed = 0
@@ -3193,7 +3195,9 @@ class ConversationManager:
             return 0
         return 1
 
-    def _scan_archive_for_pending(self, archive_path, stale_cutoff: str, conv_id: str) -> ConfirmationRequest | None:
+    def _scan_archive_for_pending(
+        self, archive_path, stale_cutoff: datetime | None, conv_id: str
+    ) -> ConfirmationRequest | None:
         """Read the tail of an archive file looking for an unresolved confirmation."""
         import json
 
@@ -3245,9 +3249,16 @@ class ConversationManager:
         if not last_request:
             return None
 
-        # Check staleness
+        # Check staleness. Compare parsed instants, not strings (#2026): the
+        # request timestamp is aware UTC while this cutoff used to be naive
+        # local, and lexicographic order across those shapes is wrong by the
+        # host's UTC offset — a fresh request could read as stale and be
+        # dropped, or a stale one read as fresh and be resumed.
+        from .archive import parse_timestamp
+
         ts = last_request.get("timestamp", "")
-        if ts and ts < stale_cutoff:
+        ts_parsed = parse_timestamp(ts) if ts else None
+        if ts_parsed is not None and stale_cutoff is not None and ts_parsed < stale_cutoff:
             log.debug("Skipping stale confirmation in %s (from %s)", conv_id, ts)
             return None
 

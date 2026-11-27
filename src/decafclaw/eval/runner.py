@@ -4,7 +4,7 @@ import dataclasses
 import logging
 import time
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypeVar
 
@@ -141,14 +141,16 @@ def _seed_conversation_history(config, test_case: dict) -> list[dict]:
         return []
 
     from ..archive import append_message  # local to avoid top-level dep cycle
+    from ..archive import now_iso as archive_now_iso
 
-    now_iso = datetime.now().isoformat()
+    seed_ts = archive_now_iso()
     out: list[dict] = []
     for i, msg in enumerate(seed):
         if not isinstance(msg, dict) or "role" not in msg:
             raise ValueError(f"setup.conversation_history[{i}] must be a dict with a 'role' key")
-        # Stamp upfront so the returned list and on-disk archive agree.
-        stamped = {**msg, "timestamp": msg.get("timestamp") or now_iso}
+        # Stamp upfront so the returned list and on-disk archive agree. Use the
+        # canonical aware-UTC stamp (#2026) so seeded eval rows match live ones.
+        stamped = {**msg, "timestamp": msg.get("timestamp") or seed_ts}
         append_message(config, "eval", stamped)
         out.append(stamped)
     return out
@@ -984,7 +986,9 @@ async def run_eval(
 
     # Print results in order
     results = {
-        "timestamp": datetime.now().isoformat(),
+        # Aware UTC (#2026) so a results artifact reads consistently with the
+        # eval archives it summarizes.
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "model": effective_model,
         "tests": [],
         "summary": {"total": 0, "passed": 0, "failed": 0, "duration_sec": 0, "total_tokens": 0},

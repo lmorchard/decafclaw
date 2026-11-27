@@ -3,10 +3,11 @@
 import dataclasses
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Protocol
 from uuid import uuid4
+
+from .archive import now_iso
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class ConfirmationRequest:
     tool_call_id: str = ""
     timeout: float | None = None
     confirmation_id: str = field(default_factory=lambda: uuid4().hex[:12])
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=now_iso)
 
     def to_archive_message(self) -> dict:
         """Serialize to a dict suitable for JSONL archive."""
@@ -86,7 +87,12 @@ class ConfirmationResponse:
     # surfaced to the agent in the tool result so it can self-correct.
     feedback: str = ""
     data: dict = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    # Canonical aware-UTC stamp, matching ConfirmationRequest (#2026). This
+    # row lands in the archive via to_archive_message(), and append_message
+    # only stamps rows that arrive without a timestamp — so a naive local
+    # value here bypasses now_iso() and re-dirties the archive on every
+    # approval the user clicks.
+    timestamp: str = field(default_factory=now_iso)
 
     def to_archive_message(self) -> dict:
         """Serialize to a dict suitable for JSONL archive."""
