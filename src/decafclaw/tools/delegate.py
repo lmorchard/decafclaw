@@ -211,6 +211,20 @@ def _parse_structured_output(text: str) -> tuple[Any | None, str]:
     return parsed, prose
 
 
+def _resolve_child_max_iterations(config, max_iterations: int) -> int:
+    """Resolve a child's tool-iteration budget (#1827).
+
+    ``max_iterations <= 0`` keeps the historical default
+    (``agent.child_max_tool_iterations``). An explicit budget is clamped
+    to the parent's ``agent.max_tool_iterations`` so a caller cannot
+    authorize a child more expensive than a parent turn — a batch of N
+    children should not be able to exceed one parent-equivalent cost each.
+    """
+    if max_iterations and max_iterations > 0:
+        return min(max_iterations, config.agent.max_tool_iterations)
+    return config.agent.child_max_tool_iterations
+
+
 async def run_child_turn(
     parent_ctx: "Context",
     task,
@@ -233,7 +247,10 @@ async def run_child_turn(
 
     Args:
         model: Override model for the child. Empty = inherit parent's.
-        max_iterations: Override max tool iterations. 0 = use child_max_tool_iterations.
+        max_iterations: Override max tool iterations. 0 = use
+            child_max_tool_iterations. Positive values are clamped to the
+            parent's ``agent.max_tool_iterations`` so a child cannot cost
+            more than a parent turn (#1827).
         allowed_tools: Optional explicit allowlist for the child. When
             provided, the child sees ONLY these tools (still minus the
             categorical excludes: ``delegate_task``,
@@ -331,7 +348,10 @@ async def run_child_turn(
 
     child_config = replace(
         config,
-        agent=replace(config.agent, max_tool_iterations=(max_iterations or config.agent.child_max_tool_iterations)),
+        agent=replace(
+            config.agent,
+            max_tool_iterations=_resolve_child_max_iterations(config, max_iterations),
+        ),
         system_prompt=child_system_prompt,
     )
     # Children don't discover or activate skills — they inherit parent's
@@ -524,6 +544,7 @@ async def tool_delegate_task(
     task: str | list[str] | None = None,
     tasks: list[str] | None = None,
     model: str = "",
+    max_iterations: int = 0,
     allow_vault_retrieval: bool = False,
     allow_vault_read: bool = False,
     allow_vault_write: bool = False,
@@ -574,6 +595,14 @@ async def tool_delegate_task(
     missing field, mistyped field, or unparseable block becomes an explicit
     ``[error: structured return validation failed: ...]`` instead of the
     permissive prose fallback. Corrections stay inside the same child turn.
+
+    Use ``max_iterations`` to size a known-expensive child's tool-iteration
+    budget. Omit it for the default ``agent.child_max_tool_iterations``
+    (cheap, focused subtasks). Raise it for research children that fetch
+    several sources or do multi-step investigation, where the default cap
+    truncates work mid-stream. Values above the parent's
+    ``agent.max_tool_iterations`` are clamped to that ceiling so a batch
+    cannot authorize runaway fan-out (#1827).
     """
     if tasks is not None:
         batch = tasks
@@ -596,6 +625,7 @@ async def tool_delegate_task(
             ctx,
             batch,
             model=model,
+            max_iterations=max_iterations,
             allow_vault_retrieval=allow_vault_retrieval,
             allow_vault_read=allow_vault_read,
             allow_vault_write=allow_vault_write,
@@ -634,6 +664,7 @@ async def tool_delegate_task(
         ctx,
         task,
         model=model,
+        max_iterations=max_iterations,
         allow_vault_retrieval=allow_vault_retrieval,
         allow_vault_read=allow_vault_read,
         allow_vault_write=allow_vault_write,
@@ -667,6 +698,7 @@ async def _run_one_delegated(
     progress_lock: asyncio.Lock,
     total: int,
     model: str,
+    max_iterations: int,
     allow_vault_retrieval: bool,
     allow_vault_read: bool,
     allow_vault_write: bool,
@@ -689,6 +721,7 @@ async def _run_one_delegated(
                 parent_ctx,
                 task,
                 model=model,
+                max_iterations=max_iterations,
                 allow_vault_retrieval=allow_vault_retrieval,
                 allow_vault_read=allow_vault_read,
                 allow_vault_write=allow_vault_write,
@@ -754,6 +787,7 @@ async def tool_delegate_tasks(
     ctx: "Context",
     tasks: list[str],
     model: str = "",
+    max_iterations: int = 0,
     allow_vault_retrieval: bool = False,
     allow_vault_read: bool = False,
     allow_vault_write: bool = False,
@@ -770,10 +804,12 @@ async def tool_delegate_tasks(
     ``config.agent.max_tasks_per_delegate_call``.
 
     All non-``tasks`` parameters are shared across the batch — same
-    model, same vault flags, same return schema. (For per-task
-    overrides, fall back to multiple ``delegate_task`` calls.)
-    ``allow_vault_write`` threads the scoped authoring-write opt-in
-    through every child in the batch (#1113).
+    model, same iteration budget, same vault flags, same return schema.
+    (For per-task overrides, fall back to multiple ``delegate_task``
+    calls.) ``allow_vault_write`` threads the scoped authoring-write
+    opt-in through every child in the batch (#1113). ``max_iterations``
+    sizes every child's tool-iteration budget (0 = the child default,
+    clamped to the parent's ceiling per #1827).
 
     Per-child progress events are NOT routed to the parent UI; the
     parent emits one aggregate ``tool_status`` event per completion.
@@ -827,6 +863,7 @@ async def tool_delegate_tasks(
             progress_lock=progress_lock,
             total=total,
             model=model,
+            max_iterations=max_iterations,
             allow_vault_retrieval=allow_vault_retrieval,
             allow_vault_read=allow_vault_read,
             allow_vault_write=allow_vault_write,
@@ -950,6 +987,17 @@ DELEGATE_TOOL_DEFINITIONS = [
                     "model": {
                         "type": "string",
                         "description": ("Named model config for the subtask. Omit to inherit parent's model."),
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": (
+                            "Tool-iteration budget for each child. Omit (or 0) for the "
+                            "default child_max_tool_iterations (10), which suits focused "
+                            "subtasks that read a few files and report. Raise it for "
+                            "research-heavy children that fetch multiple sources or run "
+                            "multi-step investigation, where the default cap truncates work "
+                            "mid-stream. Clamped to the parent's agent.max_tool_iterations."
+                        ),
                     },
                     "allow_vault_retrieval": {
                         "type": "boolean",
