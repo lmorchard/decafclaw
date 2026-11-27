@@ -811,11 +811,19 @@ def container_limit_flags(host: HostConfig, network: str = "default") -> List[st
     json-file log size cap. Join with spaces to embed in a remote shell script.
 
     network: "none" (no network access at all) or "default" (engine default).
+
+    Docker accepts "default" as a network mode (an alias for bridge), but
+    Podman treats it as a network *name* and fails when no network called
+    "default" exists. For Podman, omit the flag so the engine default applies.
     """
     if network not in ("none", "default"):
         raise ValueError(f"Unsupported network mode: {network!r} (expected 'none' or 'default')")
 
-    flags = [f"--network={network}"]
+    flags: List[str] = []
+    if network == "none":
+        flags.append("--network=none")
+    elif host.engine != "podman":
+        flags.append("--network=default")
     if host.pids_limit is not None:
         flags.append(f"--pids-limit={host.pids_limit}")
     if host.engine in LOG_OPT_ENGINES and host.log_max_size:

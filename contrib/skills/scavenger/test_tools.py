@@ -671,9 +671,22 @@ def test_container_limit_flags_network_none():
     assert "--network=none" in flags
 
 
-def test_container_limit_flags_network_default():
-    flags = container_limit_flags(_host(), network="default")
+def test_container_limit_flags_network_default_docker():
+    flags = container_limit_flags(_host(engine="docker"), network="default")
     assert "--network=default" in flags
+
+
+def test_container_limit_flags_network_default_podman_omits_flag():
+    # Podman reads "default" as a network name, not a mode. Omit the flag and
+    # let the engine apply its own default network instead.
+    flags = container_limit_flags(_host(engine="podman"), network="default")
+    assert not any(flag.startswith("--network") for flag in flags)
+    assert "--pids-limit=4096" in flags
+
+
+def test_container_limit_flags_network_none_podman():
+    flags = container_limit_flags(_host(engine="podman"), network="none")
+    assert "--network=none" in flags
 
 
 def test_container_limit_flags_rejects_unknown_network():
@@ -752,13 +765,23 @@ def test_execute_job_network_none_in_remote_script():
     assert "--pids-limit=4096" in script
 
 
-def test_execute_job_default_network_in_remote_script():
-    host = _host(engine="podman")
+def test_execute_job_default_network_docker_in_remote_script():
+    host = _host(engine="docker")
     with patch("contrib.skills.scavenger.scavenger.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
         execute_job(host, command="true")
     script = mock_run.call_args[0][0][-1]
     assert "--network=default" in script
+
+
+def test_execute_job_default_network_podman_omits_flag():
+    host = _host(engine="podman")
+    with patch("contrib.skills.scavenger.scavenger.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
+        execute_job(host, command="true")
+    script = mock_run.call_args[0][0][-1]
+    assert "--network" not in script
+    assert "--pids-limit=4096" in script
 
 
 def test_env_create_container_limit_flags_in_script(mock_fleet, cache):
@@ -772,6 +795,17 @@ def test_env_create_container_limit_flags_in_script(mock_fleet, cache):
     assert "--network=none" in create_script
     assert "--pids-limit=4096" in create_script
     assert create_script.count('scavenger.env_id="limit-env"') == 2
+
+
+def test_env_create_default_network_podman_omits_flag(mock_fleet, cache):
+    ssh = FakeSSH({"scavenger-desktop": _listing(), "scavenger-laptop": _listing()})
+    with (
+        patch.object(sc, "probe_host", return_value=HostStatus(name="desktop-linux", eligible=True)),
+        patch.object(sc, "run_ssh", ssh),
+    ):
+        env_create(fleet=mock_fleet, env_id="default-net-env", host_name="desktop-linux")
+    create_script = next(command for _, command in ssh.commands if "run -d" in command)
+    assert "--network" not in create_script
 
 
 def test_scavenger_run_tool_network_none(mock_fleet):
