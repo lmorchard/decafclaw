@@ -106,7 +106,7 @@ The startup scan reads every `data/{agent_id}/calendar/*.json` file and resumes 
 
 ## Web UI
 
-The **Calendar** tab in the Web UI lists the user's pending events across conversations, grouped by date. It can create, edit, snooze, and cancel events, and target the current conversation or a dedicated session. Agent tool changes publish `calendar_changed`, so an open tab refreshes without a page reload.
+The **Calendar** tab in the Web UI lists the user's pending events across conversations, grouped by date. It can create, edit, snooze, cancel, and run events, and target the current conversation or a dedicated session. Agent tool changes publish `calendar_changed`, so an open tab refreshes without a page reload.
 
 The REST API lives under `/api/calendar`:
 
@@ -118,6 +118,7 @@ The REST API lives under `/api/calendar`:
 | `PUT` | `/api/calendar/events/{event_id}` | Update a pending event |
 | `DELETE` | `/api/calendar/events/{event_id}` | Cancel an event or series |
 | `POST` | `/api/calendar/events/{event_id}/snooze` | Move the next occurrence |
+| `POST` | `/api/calendar/events/{event_id}/run` | Rehearse a pending event now, without advancing it |
 
 `/api/calendar/events` defaults to upcoming events. Pass an explicit `from` to read a past window — the editor uses `from=1970-01-01T00:00:00.000Z` so a fired event can be opened and snoozed.
 
@@ -126,6 +127,14 @@ The REST API lives under `/api/calendar`:
 Creation requires the caller to be able to read the origin conversation. A cross-user `conv_id` returns 404. System conversations (schedule, heartbeat, delegated children) remain valid origins, matching `can_read_conversation`.
 
 The route module is `src/decafclaw/web/calendar_routes.py`. It uses the same session-cookie auth as the rest of the Web UI; unauthenticated requests return 401 and unknown event ids return 404.
+
+### Run now, and what it does not do
+
+`POST /api/calendar/events/{event_id}/run` enqueues the event's wake turn immediately and returns without touching `status`, `fire_at`, `occurrence_at`, or `recurrence_start`. It is a rehearsal, not a fire: `_fire` advances a recurring series, so a fire-shaped version of this endpoint would silently skip a week whenever someone tested a weekly event mid-week. Only `last_fired_at` is updated. A non-pending event is refused with 409; an event whose wake cannot be enqueued returns 503.
+
+There is deliberately **no agent tool** for it. The reason is narrower than "the agent cannot start unattended turns" — that would be false, because `calendar_update` can set `fire_at` to the near future and let the scheduler do it. The reason is that a `fire_now` tool would let the agent re-fire an already-granted event on demand, repeatedly, with no visible change to the event. The `calendar_update` route to the same turn is bounded instead of closed: the time change is visible, rescheduling a recurring series consumes that occurrence, and — per #2018 — any agent edit of a `policy_granted` event first strips the grant, so the turn it triggers no longer runs under human-authored preapprovals.
+
+An agent editing a granted event therefore drops it back to un-preapproved. That is intentional: the grant was authored for specific content, and `reason` and `title` are the text the wake turn reads as its instructions. A human re-grants from the editor after reviewing the edit.
 
 ## Limits
 
