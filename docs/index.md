@@ -88,4 +88,5 @@ These docs are as much for me as they are for agents working on this project. Th
 - [Context Composer](context-composer.md) — Context assembly, vault retrieval, relevance scoring, token budget
 - [Original Agent Spec](original-agent-spec.md) — The original design sketch
 
+- [Scavenger Mode B Runbook](scavenger-mode-b-runbook.md) — Local orchestrator, remote worker: driving ghflow's `--worker-cmd` seam against the scavenger fleet, credential injection, and known gaps
 - [SSH tools](ssh.md)
