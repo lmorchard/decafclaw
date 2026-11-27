@@ -13,6 +13,7 @@ import shlex
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -487,6 +488,51 @@ async def _record_approval(
         )
 
 
+async def record_shell_approval(
+    ctx: "Context",
+    *,
+    command: str,
+    risk: str,
+    reason: str,
+    approved: bool,
+    purpose: str = "",
+    tool_label: str,
+    extra_lines: tuple[str, ...] = (),
+) -> None:
+    """Write the shell_approval archive entry and publish its event.
+
+    Shared by the aux-LLM allow/decline branches, which otherwise repeat the
+    same archive write and publish. ``tool_label`` is the human-facing verdict
+    ("shell auto-approval: ALLOWED" / "DECLINED"); ``extra_lines`` are the
+    branch-specific additions (advisory, risk category). The archive write is
+    skipped when ``ctx.skip_archive``; the publish always runs.
+    """
+    msg_content = f"Command: {command}\nRisk: {risk}\nReason: {reason}"
+    if _single_line(purpose):
+        msg_content += f"\nPurpose: {_single_line(purpose)}"
+    for line in extra_lines:
+        if line:
+            msg_content += f"\n{line}"
+    if not ctx.skip_archive:
+        try:
+            from decafclaw.archive import append_message
+
+            append_message(
+                ctx.config,
+                ctx.conv_id,
+                {"role": "shell_approval", "tool": tool_label, "content": msg_content},
+            )
+        except Exception as e:
+            log.error(f"Archive write failed for shell_approval: {e}")
+    await ctx.publish(
+        "shell_approval",
+        command=command,
+        risk=risk,
+        reason=reason,
+        approved=approved,
+    )
+
+
 async def _request_confirmation_timed(
     ctx: "Context",
     *,
@@ -878,105 +924,83 @@ def build_aux_approval_prompt(
     )
 
 
-async def check_shell_approval(
-    ctx: "Context",
-    command: str,
-    tool_name: str = "shell",
-    message: str = "",
-    cwd: str | None = None,
-    purpose: str = "",
-) -> dict:
-    """Check whether a shell command is approved (shared by shell + background tools).
+@dataclass
+class _AuxOutcome:
+    """Result of the aux-LLM judge attempt.
 
-    ``cwd`` is the directory the command will run in, when known. It does not
-    change the workspace boundary the security monitor enforces; it is shown to
-    the auto-approval judge and the human so the same command text in a
-    different directory is evaluated in context.
-
-    ``purpose`` is the agent's stated intent (#1559). It is untrusted metadata:
-    Tier 1 blocks ignore it, the Tier 2 classifier and the aux auto-approval
-    judge use it to check command/purpose congruence, and the confirmation card
-    shows it to the human. A denial may carry ``feedback`` — the aux judge's
-    safer-alternative advice or the human reviewer's — which the tool result
-    surfaces back to the agent.
-
-    Optional return ``{"approved": False, "redirected": True, "feedback": ...}``
-    means the aux judge declined with actionable advice and nobody was
-    prompted: the caller must return the redirect text, not execute the
-    command. Everything else is ``{"approved": True}`` or the user's
-    confirmation result.
+    ``decision`` is a final approval decision to return (an aux allow or an
+    aux-judge redirect), or None when the judge declined and the command must
+    fall through to a human confirmation. The ``decline_*`` fields carry the
+    judge's advice for that fall-through path; they are empty when the judge
+    allowed, errored without a named risk, or aux approval is disabled.
     """
-    # Show the working directory only when it differs from the workspace root:
-    # the same command text means something different in a subproject. It rides
-    # in the message for transports that show it, and in action_data so the web
-    # and Mattermost confirm cards can render it next to the command.
-    cwd_note = ""
-    cwd_action: dict = {}
-    if cwd:
-        try:
-            differs = Path(cwd).resolve() != ctx.config.workspace_path.resolve()
-        except OSError:
-            differs = True
-        if differs:
-            cwd_note = f"\nWorking directory: `{cwd}`"
-            cwd_action = {"action_data": {"cwd": cwd}}
 
-    # Direction is derived once for every decision below so audit events carry
-    # it and the judge sees the same activity the read-only/ask tiers did.
-    activity = derive_activity(ctx, command, cwd)
-    if getattr(ctx.config.shell, "direction_shadow_mode", False):
-        # Shadow mode (#1661): observe what direction would do, change nothing.
-        # `defer` is the unattended case (no human can answer); `pass` means the
-        # command is in an established activity and would proceed to the judge.
-        if activity.established:
-            would_decide = "pass"
-        elif ctx.is_unattended:
-            would_decide = "defer"
-        else:
-            would_decide = "prompt"
-        await _publish_approval_event(
-            ctx,
-            "direction_shadow",
-            command=_single_line(command),
-            cwd=_single_line(cwd or ""),
-            would_decide=would_decide,
-            tier="activity_new" if not activity.established else "aux_judge",
-            **_activity_fields(activity),
-        )
-    try:
-        shell_cwd = _resolve_shell_cwd(ctx, cwd) if cwd else ctx.config.workspace_path.resolve()
-    except ValueError:
-        shell_cwd = ctx.config.workspace_path.resolve()
-    # Kill switch for the silent read-only tier. Defaults to enabled when the
-    # key is absent or unreadable, but an explicit False always wins — an
-    # operator turning this off must never be overridden by a config typo.
-    read_only_enabled = getattr(ctx.config.shell, "read_only_enabled", True) is not False
+    decision: dict | None = None
+    decline_reason: str = ""
+    decline_risk: str = ""
+    decline_feedback: str = ""
 
-    # 1. Tier 1 fast path: Immediately block catastrophically dangerous commands
+
+async def _approve_by_security_monitor(
+    ctx: "Context",
+    *,
+    command: str,
+    cwd: str | None,
+    activity: Activity,
+    tool_name: str,
+) -> dict | None:
+    """Tier 1 fast path: block catastrophically dangerous commands.
+
+    Runs the security monitor's synchronous pattern checks before any model
+    call, so a catastrophic command never spends LLM latency. Returns the block
+    decision, or None when the command is not blocked and evaluation continues
+    to the next tier.
+    """
     tier1 = evaluate_command(
         command,
         workspace_path=ctx.config.workspace_path,
         is_autonomous=ctx.is_unattended,
     )
-    if tier1.status == SecurityStatus.BLOCK:
-        log.warning(f"[{tool_name}] blocked by security monitor: {command} (reason: {tier1.reason})")
-        await _record_approval(
-            ctx,
-            command=command,
-            cwd=cwd,
-            decision="block",
-            tier="tier1_block",
-            reason=tier1.reason,
-            activity=activity,
-        )
-        return {
-            "approved": False,
-            "decision": "block",
-            "tier": "tier1_block",
-            "reason": f"Blocked by security monitor: {tier1.reason}",
-        }
+    if tier1.status != SecurityStatus.BLOCK:
+        return None
+    log.warning(f"[{tool_name}] blocked by security monitor: {command} (reason: {tier1.reason})")
+    await _record_approval(
+        ctx,
+        command=command,
+        cwd=cwd,
+        decision="block",
+        tier="tier1_block",
+        reason=tier1.reason,
+        activity=activity,
+    )
+    return {
+        "approved": False,
+        "decision": "block",
+        "tier": "tier1_block",
+        "reason": f"Blocked by security monitor: {tier1.reason}",
+    }
 
-    # 2. Explicit allow patterns take precedence and bypass Tier 2 LLM latency (#966)
+
+async def _approve_by_patterns(
+    ctx: "Context",
+    *,
+    command: str,
+    cwd: str | None,
+    activity: Activity,
+    shell_cwd: Path,
+    read_only_enabled: bool,
+    tool_name: str,
+) -> dict | None:
+    """Deterministic allow tiers: explicit patterns, then the read-only tier.
+
+    Explicit allow patterns take precedence and bypass Tier 2 LLM latency
+    (#966). The read-only tier runs before the security monitor's soft LLM
+    classifier: a provably read-only command whose paths stay inside the
+    workspace never reaches a model. It is gated by ``shell.read_only_enabled``
+    (kill switch) — the only tier that executes with no human and no model.
+    Returns an allow decision, or None when nothing matched and evaluation
+    continues to the next tier.
+    """
     if _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns):
         log.info(f"[{tool_name}] pre-approved by scoped pattern: {command}")
         await _record_approval(
@@ -992,25 +1016,33 @@ async def check_shell_approval(
         )
         return {"approved": True, "decision": "allow", "tier": "persisted_pattern"}
 
-    # 3. Deterministic read-only tier (#1641 Phase 1): a provably read-only
-    # command whose paths stay inside the workspace never reaches a model.
-    #
-    # This deliberately runs BEFORE the security monitor. The monitor's Tier 2
-    # classifier is soft and stateless: `is_ambiguous_command` treats any `#` as
-    # ambiguous, so `grep '#1641' src/` would spend a model call and could come
-    # back ASK — costing a human prompt in exactly the category this tier
-    # exists to silence. Tier 1's hard BLOCK above still wins, and allow
-    # patterns are unchanged; only the soft classifier is bypassed.
-    #
-    # Gated by `shell.read_only_enabled` (kill switch): this is the only tier
-    # that executes with no human and no model, so a suspect classifier must be
-    # neutralizable by config rather than by reverting a deploy.
     if read_only_enabled and is_read_only_command(command, cwd=shell_cwd, workspace=ctx.config.workspace_path):
         log.info(f"[{tool_name}] auto-approved as read-only: {command}")
         await _record_approval(ctx, command=command, cwd=cwd, decision="allow", tier="read_only", activity=activity)
         return {"approved": True, "decision": "allow", "tier": "read_only"}
 
-    # 4. Security monitor evaluation (Tier 1 sensitive patterns + Tier 2 LLM classification)
+    return None
+
+
+async def _tier2_llm(
+    ctx: "Context",
+    *,
+    command: str,
+    cwd: str | None,
+    purpose: str,
+    activity: Activity,
+    message: str,
+    tool_name: str,
+    cwd_note: str,
+    cwd_action: dict,
+) -> dict | None:
+    """Security monitor evaluation (Tier 1 sensitive patterns + Tier 2 LLM).
+
+    Runs the full security monitor, which re-checks sensitive patterns and then
+    classifies ambiguous commands with an LLM. A BLOCK returns a block decision;
+    an ASK resolves to a venv redirect, an unattended denial, or a human prompt;
+    an ALLOW returns None so evaluation continues to the next tier.
+    """
     decision = await evaluate_command_llm(
         command,
         ctx=ctx,
@@ -1036,117 +1068,141 @@ async def check_shell_approval(
             "reason": f"Blocked by security monitor: {decision.reason}",
         }
 
-    if decision.status == SecurityStatus.ASK:
-        log.info(
-            f"[{tool_name}] security monitor requires explicit confirmation: {command} (reason: {decision.reason})"
-        )
-        venv_path = venv_executable_path(command, ctx.config.workspace_path)
-        if venv_path and _claim_shell_redirect(ctx, command=command, cwd=cwd, purpose=purpose):
-            log.info(f"[{tool_name}] redirecting virtualenv invocation to uv run: {command}")
-            await _record_approval(
-                ctx,
-                command=command,
-                cwd=cwd,
-                decision="redirect",
-                tier="venv_redirect",
-                reason=f"virtualenv binary: {venv_path}",
-                activity=activity,
-            )
-            return {
-                "approved": False,
-                "decision": "redirect",
-                "tier": "venv_redirect",
-                "redirected": True,
-                "feedback": _VENV_REDIRECT_FEEDBACK,
-            }
-        if ctx.is_unattended:
-            log.warning(f"[{tool_name}] denied on unattended turn (security monitor ASK decision): {command}")
-            await _record_approval(
-                ctx,
-                command=command,
-                cwd=cwd,
-                decision="deny",
-                tier="security_monitor_unattended",
-                reason=decision.reason,
-                activity=activity,
-            )
-            denial: dict = {
-                "approved": False,
-                "decision": "deny",
-                "tier": "security_monitor_unattended",
-                "reason": f"Security monitor requires explicit confirmation: {decision.reason}",
-            }
-            if venv_path:
-                denial["feedback"] = _VENV_REDIRECT_FEEDBACK
-            return denial
-        suggested_pattern = _suggest_pattern(command)
-        ask_message = f"Shell command (security review requested): `{command}`{cwd_note}"
-        if decision.reason:
-            ask_message += f"\nReason: {decision.reason}"
-        if venv_path:
-            ask_message += f"\nSuggestion: {_VENV_REDIRECT_FEEDBACK}"
+    if decision.status != SecurityStatus.ASK:
+        return None
+
+    log.info(f"[{tool_name}] security monitor requires explicit confirmation: {command} (reason: {decision.reason})")
+    venv_path = venv_executable_path(command, ctx.config.workspace_path)
+    if venv_path and _claim_shell_redirect(ctx, command=command, cwd=cwd, purpose=purpose):
+        log.info(f"[{tool_name}] redirecting virtualenv invocation to uv run: {command}")
         await _record_approval(
             ctx,
             command=command,
             cwd=cwd,
-            decision="prompt",
-            tier="security_monitor_ask",
-            reason=decision.reason,
+            decision="redirect",
+            tier="venv_redirect",
+            reason=f"virtualenv binary: {venv_path}",
             activity=activity,
         )
-        action_data = dict(cwd_action.get("action_data", {}))
-        action_data.update(
-            {
-                "tier": "security_monitor_ask",
-                "decline_reason": decision.reason,
-                "reason": decision.reason,
-            }
-        )
-        result = await _request_confirmation_timed(
+        return {
+            "approved": False,
+            "decision": "redirect",
+            "tier": "venv_redirect",
+            "redirected": True,
+            "feedback": _VENV_REDIRECT_FEEDBACK,
+        }
+    if ctx.is_unattended:
+        log.warning(f"[{tool_name}] denied on unattended turn (security monitor ASK decision): {command}")
+        await _record_approval(
             ctx,
-            tier="security_monitor_ask",
             command=command,
             cwd=cwd,
-            activity=activity,
-            tool_name=tool_name,
-            message=message or ask_message,
-            suggested_pattern=suggested_pattern,
-            decline_reason=decision.reason,
+            decision="deny",
+            tier="security_monitor_unattended",
             reason=decision.reason,
-            purpose=purpose,
-            feedback=_VENV_REDIRECT_FEEDBACK if venv_path else "",
-            action_data=action_data,
+            activity=activity,
         )
-        result.setdefault("tier", "security_monitor_ask")
-        if result.get("approved") and result.get("add_pattern"):
-            _save_allow_pattern(ctx.config, suggested_pattern)
-        return _finalize_denial(
-            ctx,
-            result,
-            command=command,
-            purpose=purpose,
-            fallback_feedback=_VENV_REDIRECT_FEEDBACK if venv_path else "",
-        )
+        denial: dict = {
+            "approved": False,
+            "decision": "deny",
+            "tier": "security_monitor_unattended",
+            "reason": f"Security monitor requires explicit confirmation: {decision.reason}",
+        }
+        if venv_path:
+            denial["feedback"] = _VENV_REDIRECT_FEEDBACK
+        return denial
+    suggested_pattern = _suggest_pattern(command)
+    ask_message = f"Shell command (security review requested): `{command}`{cwd_note}"
+    if decision.reason:
+        ask_message += f"\nReason: {decision.reason}"
+    if venv_path:
+        ask_message += f"\nSuggestion: {_VENV_REDIRECT_FEEDBACK}"
+    await _record_approval(
+        ctx,
+        command=command,
+        cwd=cwd,
+        decision="prompt",
+        tier="security_monitor_ask",
+        reason=decision.reason,
+        activity=activity,
+    )
+    action_data = dict(cwd_action.get("action_data", {}))
+    action_data.update(
+        {
+            "tier": "security_monitor_ask",
+            "decline_reason": decision.reason,
+            "reason": decision.reason,
+        }
+    )
+    result = await _request_confirmation_timed(
+        ctx,
+        tier="security_monitor_ask",
+        command=command,
+        cwd=cwd,
+        activity=activity,
+        tool_name=tool_name,
+        message=message or ask_message,
+        suggested_pattern=suggested_pattern,
+        decline_reason=decision.reason,
+        reason=decision.reason,
+        purpose=purpose,
+        feedback=_VENV_REDIRECT_FEEDBACK if venv_path else "",
+        action_data=action_data,
+    )
+    result.setdefault("tier", "security_monitor_ask")
+    if result.get("approved") and result.get("add_pattern"):
+        _save_allow_pattern(ctx.config, suggested_pattern)
+    return _finalize_denial(
+        ctx,
+        result,
+        command=command,
+        purpose=purpose,
+        fallback_feedback=_VENV_REDIRECT_FEEDBACK if venv_path else "",
+    )
 
-    # 5. Blanket tool pre-approval (e.g. allowed-tools: shell without scoped patterns)
+
+async def _blanket_preapproval(
+    ctx: "Context",
+    *,
+    command: str,
+    cwd: str | None,
+    activity: Activity,
+    tool_name: str,
+) -> dict | None:
+    """Blanket tool pre-approval (e.g. allowed-tools: shell without scoped patterns).
+
+    Returns an allow decision when the tool is pre-approved, else None.
+    """
     if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved:
         log.info(f"[{tool_name}] pre-approved by command: {command}")
         await _record_approval(
             ctx, command=command, cwd=cwd, decision="allow", tier="blanket_preapproval", activity=activity
         )
         return {"approved": True, "decision": "allow", "tier": "blanket_preapproval"}
+    return None
 
-    # 6. Direction (#1641 Phase 3): a command that starts a new activity asks
-    # once, with the direction stated. Drift is priced at one prompt, never
-    # blocked; once the operator answers, the activity is established.
-    #
-    # Unattended turns have nobody to ask, but they must NOT hard-deny here:
-    # scheduled work legitimately starts fresh activity every run (a new
-    # newsletter, a new ingest target), and this tier's whole premise is that
-    # the command is plausible-but-unfamiliar, not risky. A deny would be
-    # strictly worse than the judge decline it replaced — that at least fed a
-    # redirect back to the agent. So on unattended turns direction abstains and
-    # the command proceeds to the judge, which keeps the last word on risk.
+
+async def _direction_decision(
+    ctx: "Context",
+    *,
+    command: str,
+    cwd: str | None,
+    purpose: str,
+    activity: Activity,
+    message: str,
+    tool_name: str,
+    cwd_note: str,
+    cwd_action: dict,
+) -> dict | None:
+    """Direction (#1641 Phase 3): a command that starts a new activity asks once.
+
+    A command outside the conversation's established activity prompts with the
+    direction stated; drift is priced at one prompt, never blocked. Unattended
+    turns have nobody to ask, so direction abstains (recording a defer) and the
+    command proceeds to the judge, which keeps the last word on risk. Returns the
+    prompt result when it asked, or None to continue (established activity, or an
+    unattended turn that deferred).
+    """
     if not activity.established and not ctx.is_unattended:
         reason = activity.reason()
         suggested_pattern = _suggest_pattern(command)
@@ -1204,141 +1260,152 @@ async def check_shell_approval(
             reason=activity.reason(),
             activity=activity,
         )
+    return None
+
+
+async def _aux_llm_attempt(
+    ctx: "Context",
+    *,
+    command: str,
+    cwd: str | None,
+    purpose: str,
+    activity: Activity,
+    tool_name: str,
+) -> _AuxOutcome:
+    """The aux-LLM auto-approval judge (#1641 Phase 2).
+
+    Gated by ``shell.aux_approval_enabled``. A command already in the session's
+    aux-LLM memory is allowed without a model call; otherwise the judge decides.
+    A decline needs a named, concrete risk — a judge that merely prefers a native
+    tool is advisory and the command runs. Returns an ``_AuxOutcome``: a final
+    decision (aux allow) to return, or the decline advice for the fall-through
+    confirmation. A judge error falls through with a synthesized reason.
+    """
+    if not ctx.config.shell.aux_approval_enabled:
+        return _AuxOutcome()
+
+    if _command_matches_pattern(command, ctx.tools.llm_approved_shell_patterns):
+        log.info(f"[{tool_name}] auto-approved by session aux-LLM memory: {command}")
+        await _record_approval(ctx, command=command, cwd=cwd, decision="allow", tier="aux_memory", activity=activity)
+        return _AuxOutcome(decision={"approved": True, "decision": "allow", "tier": "aux_memory"})
 
     decline_reason = ""
-    decline_risk = ""
-    decline_feedback = ""
-    if ctx.config.shell.aux_approval_enabled:
-        if _command_matches_pattern(command, ctx.tools.llm_approved_shell_patterns):
-            log.info(f"[{tool_name}] auto-approved by session aux-LLM memory: {command}")
-            await _record_approval(
-                ctx, command=command, cwd=cwd, decision="allow", tier="aux_memory", activity=activity
-            )
-            return {"approved": True, "decision": "allow", "tier": "aux_memory"}
+    try:
+        had_guidance = bool(resolve_scope_rule_guidance(ctx, command=command, activity=activity))
+        prompt = build_aux_approval_prompt(ctx, command, cwd=cwd, purpose=purpose, activity=activity)
+        messages = [{"role": "user", "content": prompt}]
+        response = await ctx.aux_approval_llm()(messages)
+        raw_text = response.get("content", "").strip()
 
-        try:
-            had_guidance = bool(resolve_scope_rule_guidance(ctx, command=command, activity=activity))
-            prompt = build_aux_approval_prompt(ctx, command, cwd=cwd, purpose=purpose, activity=activity)
-            messages = [{"role": "user", "content": prompt}]
-            response = await ctx.aux_approval_llm()(messages)
-            raw_text = response.get("content", "").strip()
+        if "```" in raw_text:
+            raw_text = re.sub(r"^```(?:json)?\n?", "", raw_text, flags=re.MULTILINE)
+            raw_text = re.sub(r"```$", "", raw_text, flags=re.MULTILINE).strip()
 
-            import re as re_mod
+        data = json.loads(raw_text)
 
-            if "```" in raw_text:
-                raw_text = re_mod.sub(r"^```(?:json)?\n?", "", raw_text, flags=re_mod.MULTILINE)
-                raw_text = re_mod.sub(r"```$", "", raw_text, flags=re_mod.MULTILINE).strip()
+        # A decline needs a named, concrete risk (#1641 Phase 2). A judge that
+        # merely prefers a native tool returns auto_approve false with no risk
+        # category; that is advisory, and the command runs.
+        raw_category = str(data.get("risk_category") or "").strip().lower()
+        risk_category = raw_category if raw_category in AUX_RISK_CATEGORIES else ""
+        advisory = str(data.get("feedback") or "").strip()
 
-            import json as json_mod
-
-            data = json_mod.loads(raw_text)
-
-            # A decline needs a named, concrete risk (#1641 Phase 2). A judge
-            # that merely prefers a native tool returns auto_approve false with
-            # no risk category; that is advisory, and the command runs.
-            raw_category = str(data.get("risk_category") or "").strip().lower()
-            risk_category = raw_category if raw_category in AUX_RISK_CATEGORIES else ""
-            advisory = str(data.get("feedback") or "").strip()
-
-            gap = data.get("tool_gap")
-            if isinstance(gap, dict) and str(gap.get("proposed_tool") or "").strip():
-                _record_tool_gap(
-                    ctx,
-                    command=command,
-                    purpose=purpose,
-                    proposed_tool=str(gap.get("proposed_tool")).strip(),
-                    rationale=str(gap.get("rationale") or "").strip(),
-                    trigger="shell_tool_review",
-                )
-
-            if not risk_category:
-                log.info(
-                    f"[{tool_name}] auto-approved by aux LLM (risk: {data.get('risk')}): {command} - {data.get('reason')}"
-                )
-                suggested_pattern = _suggest_aux_approval_pattern(command, has_guidance=had_guidance)
-                ctx.tools.llm_approved_shell_patterns.append(suggested_pattern)
-
-                msg_content = f"Command: {command}\nRisk: {data.get('risk')}\nReason: {data.get('reason')}"
-                if _single_line(purpose):
-                    msg_content += f"\nPurpose: {_single_line(purpose)}"
-                if advisory:
-                    msg_content += f"\nAdvisory: {advisory}"
-                if not ctx.skip_archive:
-                    try:
-                        from decafclaw.archive import append_message
-
-                        append_message(
-                            ctx.config,
-                            ctx.conv_id,
-                            {"role": "shell_approval", "tool": "shell auto-approval: ALLOWED", "content": msg_content},
-                        )
-                    except Exception as e:
-                        log.error(f"Archive write failed for shell_approval: {e}")
-                await ctx.publish(
-                    "shell_approval",
-                    command=command,
-                    risk=data.get("risk", ""),
-                    reason=data.get("reason", ""),
-                    approved=True,
-                )
-                await _record_approval(
-                    ctx, command=command, cwd=cwd, decision="allow", tier="aux_allow", activity=activity
-                )
-
-                allowed: dict = {"approved": True, "decision": "allow", "tier": "aux_allow"}
-                if advisory:
-                    allowed["advisory"] = advisory
-                return allowed
-
-            log.info(
-                f"[{tool_name}] aux LLM declined auto-approval ({risk_category}): {command} - {data.get('reason')}"
-            )
-
-            decline_reason = str(data.get("reason") or "").strip()
-            decline_risk = str(data.get("risk") or "").strip()
-            decline_feedback = advisory
-            await _record_approval(
+        gap = data.get("tool_gap")
+        if isinstance(gap, dict) and str(gap.get("proposed_tool") or "").strip():
+            _record_tool_gap(
                 ctx,
                 command=command,
-                cwd=cwd,
-                decision="decline",
-                tier="aux_decline",
-                reason=decline_reason or risk_category,
-                activity=activity,
+                purpose=purpose,
+                proposed_tool=str(gap.get("proposed_tool")).strip(),
+                rationale=str(gap.get("rationale") or "").strip(),
+                trigger="shell_tool_review",
             )
 
-            msg_content = f"Command: {command}\nRisk: {data.get('risk')}\nReason: {data.get('reason')}"
-            if _single_line(purpose):
-                msg_content += f"\nPurpose: {_single_line(purpose)}"
-            if risk_category:
-                msg_content += f"\nRisk category: {risk_category}"
-            if not ctx.skip_archive:
-                try:
-                    from decafclaw.archive import append_message
+        if not risk_category:
+            log.info(
+                f"[{tool_name}] auto-approved by aux LLM (risk: {data.get('risk')}): {command} - {data.get('reason')}"
+            )
+            suggested_pattern = _suggest_aux_approval_pattern(command, has_guidance=had_guidance)
+            ctx.tools.llm_approved_shell_patterns.append(suggested_pattern)
 
-                    append_message(
-                        ctx.config,
-                        ctx.conv_id,
-                        {"role": "shell_approval", "tool": "shell auto-approval: DECLINED", "content": msg_content},
-                    )
-                except Exception as e:
-                    log.error(f"Archive write failed for shell_approval: {e}")
-            await ctx.publish(
-                "shell_approval",
+            extra_lines = (f"Advisory: {advisory}",) if advisory else ()
+            await record_shell_approval(
+                ctx,
                 command=command,
                 risk=data.get("risk", ""),
                 reason=data.get("reason", ""),
-                approved=False,
+                approved=True,
+                purpose=purpose,
+                tool_label="shell auto-approval: ALLOWED",
+                extra_lines=extra_lines,
             )
-        except Exception as e:
-            log.warning(f"[{tool_name}] aux LLM approval failed, falling through: {e}")
-            if not decline_reason:
-                decline_reason = f"Auto-approval judge error ({e}); confirmation requested"
+            await _record_approval(ctx, command=command, cwd=cwd, decision="allow", tier="aux_allow", activity=activity)
 
-    # Self-correction before interruption (#1626): a judge decline carrying
-    # actionable advice returns a redirect instead of prompting a human. One
-    # redirect per (command, purpose) fingerprint per turn — a repeat, or a
-    # fourth unrelated redirect, falls through and the human decides.
+            allowed: dict = {"approved": True, "decision": "allow", "tier": "aux_allow"}
+            if advisory:
+                allowed["advisory"] = advisory
+            return _AuxOutcome(decision=allowed)
+
+        log.info(f"[{tool_name}] aux LLM declined auto-approval ({risk_category}): {command} - {data.get('reason')}")
+
+        decline_reason = str(data.get("reason") or "").strip()
+        decline_risk = str(data.get("risk") or "").strip()
+        await _record_approval(
+            ctx,
+            command=command,
+            cwd=cwd,
+            decision="decline",
+            tier="aux_decline",
+            reason=decline_reason or risk_category,
+            activity=activity,
+        )
+
+        extra_lines = (f"Risk category: {risk_category}",) if risk_category else ()
+        await record_shell_approval(
+            ctx,
+            command=command,
+            risk=data.get("risk", ""),
+            reason=data.get("reason", ""),
+            approved=False,
+            purpose=purpose,
+            tool_label="shell auto-approval: DECLINED",
+            extra_lines=extra_lines,
+        )
+        return _AuxOutcome(
+            decline_reason=decline_reason,
+            decline_risk=decline_risk,
+            decline_feedback=advisory,
+        )
+    except Exception as e:
+        log.warning(f"[{tool_name}] aux LLM approval failed, falling through: {e}")
+        if not decline_reason:
+            decline_reason = f"Auto-approval judge error ({e}); confirmation requested"
+        return _AuxOutcome(decline_reason=decline_reason)
+
+
+async def _final_confirmation(
+    ctx: "Context",
+    *,
+    command: str,
+    cwd: str | None,
+    purpose: str,
+    activity: Activity,
+    message: str,
+    tool_name: str,
+    cwd_note: str,
+    cwd_action: dict,
+    decline_reason: str,
+    decline_risk: str,
+    decline_feedback: str,
+) -> dict:
+    """Last-resort confirmation after every auto-approval tier has passed.
+
+    A judge decline carrying actionable advice returns a redirect instead of
+    prompting (one per command/purpose fingerprint per turn, #1626). Unattended
+    turns deny rather than block on a prompt. Otherwise the human is asked, with
+    the judge's risk/reason/feedback surfaced; a denial keeps the human's
+    feedback, falling back to the judge's advice.
+    """
     if decline_feedback and _claim_shell_redirect(ctx, command=command, cwd=cwd, purpose=purpose):
         log.info(f"[{tool_name}] redirecting agent after aux-judge decline: {command}")
         await _record_approval(
@@ -1414,6 +1481,155 @@ async def check_shell_approval(
     # A human's denial feedback wins; otherwise pass along the judge's
     # safer-alternative advice so the agent can self-correct.
     return _finalize_denial(ctx, result, command=command, purpose=purpose, fallback_feedback=decline_feedback)
+
+
+async def check_shell_approval(
+    ctx: "Context",
+    command: str,
+    tool_name: str = "shell",
+    message: str = "",
+    cwd: str | None = None,
+    purpose: str = "",
+) -> dict:
+    """Check whether a shell command is approved (shared by shell + background tools).
+
+    ``cwd`` is the directory the command will run in, when known. It does not
+    change the workspace boundary the security monitor enforces; it is shown to
+    the auto-approval judge and the human so the same command text in a
+    different directory is evaluated in context.
+
+    ``purpose`` is the agent's stated intent (#1559). It is untrusted metadata:
+    Tier 1 blocks ignore it, the Tier 2 classifier and the aux auto-approval
+    judge use it to check command/purpose congruence, and the confirmation card
+    shows it to the human. A denial may carry ``feedback`` — the aux judge's
+    safer-alternative advice or the human reviewer's — which the tool result
+    surfaces back to the agent.
+
+    Optional return ``{"approved": False, "redirected": True, "feedback": ...}``
+    means the aux judge declined with actionable advice and nobody was
+    prompted: the caller must return the redirect text, not execute the
+    command. Everything else is ``{"approved": True}`` or the user's
+    confirmation result.
+    """
+    # Show the working directory only when it differs from the workspace root:
+    # the same command text means something different in a subproject. It rides
+    # in the message for transports that show it, and in action_data so the web
+    # and Mattermost confirm cards can render it next to the command.
+    cwd_note = ""
+    cwd_action: dict = {}
+    if cwd:
+        try:
+            differs = Path(cwd).resolve() != ctx.config.workspace_path.resolve()
+        except OSError:
+            differs = True
+        if differs:
+            cwd_note = f"\nWorking directory: `{cwd}`"
+            cwd_action = {"action_data": {"cwd": cwd}}
+
+    # Direction is derived once for every decision below so audit events carry
+    # it and the judge sees the same activity the read-only/ask tiers did.
+    activity = derive_activity(ctx, command, cwd)
+    if getattr(ctx.config.shell, "direction_shadow_mode", False):
+        # Shadow mode (#1661): observe what direction would do, change nothing.
+        # `defer` is the unattended case (no human can answer); `pass` means the
+        # command is in an established activity and would proceed to the judge.
+        if activity.established:
+            would_decide = "pass"
+        elif ctx.is_unattended:
+            would_decide = "defer"
+        else:
+            would_decide = "prompt"
+        await _publish_approval_event(
+            ctx,
+            "direction_shadow",
+            command=_single_line(command),
+            cwd=_single_line(cwd or ""),
+            would_decide=would_decide,
+            tier="activity_new" if not activity.established else "aux_judge",
+            **_activity_fields(activity),
+        )
+    try:
+        shell_cwd = _resolve_shell_cwd(ctx, cwd) if cwd else ctx.config.workspace_path.resolve()
+    except ValueError:
+        shell_cwd = ctx.config.workspace_path.resolve()
+    # Kill switch for the silent read-only tier. Defaults to enabled when the
+    # key is absent or unreadable, but an explicit False always wins — an
+    # operator turning this off must never be overridden by a config typo.
+    read_only_enabled = getattr(ctx.config.shell, "read_only_enabled", True) is not False
+
+    # 1. Tier 1 fast path: block catastrophically dangerous commands before any
+    # model call, so they never spend LLM latency.
+    if decision := await _approve_by_security_monitor(
+        ctx, command=command, cwd=cwd, activity=activity, tool_name=tool_name
+    ):
+        return decision
+
+    # 2-3. Deterministic allow tiers: explicit patterns, then the read-only tier.
+    if decision := await _approve_by_patterns(
+        ctx,
+        command=command,
+        cwd=cwd,
+        activity=activity,
+        shell_cwd=shell_cwd,
+        read_only_enabled=read_only_enabled,
+        tool_name=tool_name,
+    ):
+        return decision
+
+    # 4. Security monitor evaluation (sensitive patterns + LLM classification).
+    if decision := await _tier2_llm(
+        ctx,
+        command=command,
+        cwd=cwd,
+        purpose=purpose,
+        activity=activity,
+        message=message,
+        tool_name=tool_name,
+        cwd_note=cwd_note,
+        cwd_action=cwd_action,
+    ):
+        return decision
+
+    # 5. Blanket tool pre-approval (e.g. allowed-tools: shell without scoped patterns).
+    if decision := await _blanket_preapproval(ctx, command=command, cwd=cwd, activity=activity, tool_name=tool_name):
+        return decision
+
+    # 6. Direction (#1641 Phase 3): a command that starts a new activity asks once.
+    if decision := await _direction_decision(
+        ctx,
+        command=command,
+        cwd=cwd,
+        purpose=purpose,
+        activity=activity,
+        message=message,
+        tool_name=tool_name,
+        cwd_note=cwd_note,
+        cwd_action=cwd_action,
+    ):
+        return decision
+
+    # 7. Aux-LLM auto-approval judge (#1641 Phase 2).
+    outcome = await _aux_llm_attempt(
+        ctx, command=command, cwd=cwd, purpose=purpose, activity=activity, tool_name=tool_name
+    )
+    if outcome.decision is not None:
+        return outcome.decision
+
+    # 8. Last-resort confirmation (redirect / unattended denial / human prompt).
+    return await _final_confirmation(
+        ctx,
+        command=command,
+        cwd=cwd,
+        purpose=purpose,
+        activity=activity,
+        message=message,
+        tool_name=tool_name,
+        cwd_note=cwd_note,
+        cwd_action=cwd_action,
+        decline_reason=outcome.decline_reason,
+        decline_risk=outcome.decline_risk,
+        decline_feedback=outcome.decline_feedback,
+    )
 
 
 def _resolve_shell_cwd(ctx: "Context", cwd: str | None) -> Path:
