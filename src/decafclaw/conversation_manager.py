@@ -22,7 +22,7 @@ from .confirmations import (
     ConfirmationRequest,
     ConfirmationResponse,
 )
-from .context import TaskMode, TokenUsage
+from .context import Context, TaskMode, TokenUsage
 from .context_types import ROLE_REMAP, InjectionCursors
 from .conversation_paths import iter_conversation_archives, iter_conversation_dirs
 from .heartbeat import is_background_wake_ok
@@ -487,6 +487,20 @@ def _confirmation_request_payload(request: ConfirmationRequest) -> dict:
         "timeout": request.timeout,
         "timestamp": request.timestamp,
     }
+
+
+@dataclass
+class _TurnContext:
+    """Result of ``ConversationManager._build_context`` for one turn (#1347).
+
+    Bundles the wired runtime ``Context`` with the effective transport
+    ``user_id`` (WAKE turns may inherit it from the last USER turn) and the
+    history the turn will run against.
+    """
+
+    ctx: Context
+    user_id: str
+    history: list
 
 
 @dataclass
@@ -2057,6 +2071,10 @@ class ConversationManager:
     ) -> None:
         """Start an agent turn as an asyncio task.
 
+        Context construction and wiring live in ``_build_context`` (#1347);
+        this method handles the busy-state transition, dispatches the
+        agent task, and runs the turn.
+
         Caller must hold ``state.lock``. The lock is held across this
         method's synchronous setup (so ``state.busy = True`` is set
         before concurrent enqueues observe it) but is released before
@@ -2065,8 +2083,6 @@ class ConversationManager:
         block inside ``run()`` re-acquires the lock to reset
         ``busy`` / ``agent_task`` / ``cancel_event`` (issue #440).
         """
-        from .context import Context
-
         conv_id = state.conv_id
         state.busy = True
         state.busy_kind = kind
@@ -2079,178 +2095,20 @@ class ConversationManager:
             state.busy_kind = None
             state.agent_task = None
             raise
-        # -- Persist / inherit transport context --------------------------------
-        # USER turns save their user_id and context_setup so that subsequent
-        # WAKE turns (which have no transport of their own) can inherit them.
-        if kind is TurnKind.USER:
-            state.last_user_id = user_id
-            state.last_context_setup = context_setup
 
-        # WAKE turns with no explicit user_id / context_setup fall back to the
-        # last USER turn's values so transport fields (channel_id, thread_id,
-        # media_handler, etc.) propagate into the wake context.
-        if kind is TurnKind.WAKE:
-            if not user_id and state.last_user_id:
-                user_id = state.last_user_id
-            if context_setup is None and state.last_context_setup is not None:
-                context_setup = state.last_context_setup
-
-        # -- Build context based on turn kind -----------------------------------
-        if kind in TASK_KINDS:
-            # Background/task turns: use Context.for_task for sensible defaults
-            # (skip_reflection=True, skip_vault_retrieval=True by default).
-            effective_task_mode = task_mode if task_mode is not None else KIND_TASK_MODE[kind]
-            ctx = Context.for_task(
-                self.config,
-                self.event_bus,
-                user_id=user_id,
-                conv_id=conv_id,
-                channel_id=conv_id,
-                task_mode=effective_task_mode,
-            )
-            ctx.extension_manager = self.extension_manager
-            ctx.cancelled = state.cancel_event
-            ctx.steer_event = state.steer_event
-            ctx.wiki_page = wiki_page
-
-            # WAKE turns fire on user conversations — restore per-conv state
-            # so activated skills and preferences carry forward.
-            if kind is TurnKind.WAKE:
-                self._restore_per_conv_state(state, ctx)
-        else:
-            # USER (and WORKFLOW) turns — full interactive Context with
-            # per-conv state restored. WORKFLOW deliberately reuses this path
-            # for now: the orchestrator only needs ctx.config + ctx.conv_id,
-            # and running on the user conv keeps phases visible in the timeline.
-            # (Revisit after live smoke: WORKFLOW may want Context.for_task
-            # semantics — if so, add it to TASK_KINDS with a KIND_TASK_MODE entry.)
-            ctx = Context(config=self.config, event_bus=self.event_bus)
-            ctx.extension_manager = self.extension_manager
-            ctx.restart_coordinator = self.restart_coordinator
-            ctx.user_id = user_id
-            ctx.channel_id = conv_id
-            ctx.conv_id = conv_id
-            ctx.cancelled = state.cancel_event
-            ctx.steer_event = state.steer_event
-            ctx.wiki_page = wiki_page
-
-            # Restore per-conversation state from previous turns
-            self._restore_per_conv_state(state, ctx)
-
-        state.active_context = ctx
-        # Apply command context if provided
-        if command_ctx:
-            from .commands import apply_command_ctx
-
-            apply_command_ctx(ctx, command_ctx)
-            ctx.tools.extra_definitions = command_ctx.tools.extra_definitions
-
-        # Let the transport set transport-specific fields
-        if context_setup:
-            if asyncio.iscoroutinefunction(context_setup):
-                await context_setup(ctx)
-            else:
-                context_setup(ctx)
-
-        if kind is TurnKind.USER or kind is TurnKind.WAKE:
-            state.last_channel_id = getattr(ctx, "channel_id", "")
-            state.last_thread_id = getattr(ctx, "thread_id", "")
-            state.last_transport = getattr(ctx, "transport", "")
-
-        # Reset cancel/partial accounting so this turn starts clean and
-        # a subsequent cancel only persists what we actually streamed.
-        state.partial_assistant_chunks = []
-        state.partial_assistant_thinking_chunks = []
-        state.partial_assistant_archived = False
-        state.cancel_observed_by_agent = False
-        state.cancel_marker_written = False
-        state.turn_aborted_marker_written = False
-        state.current_iteration_assistant_chunks = []
-        state.current_iteration_thinking_chunks = []
-
-        # Set up streaming callback that emits to subscribers.
-        # WAKE turns don't stream: the agent may emit BACKGROUND_WAKE_OK to
-        # suppress the final message, and streaming would have already
-        # delivered the prefix before the suppression gate fires.
-        from .config import resolve_streaming
-
-        if kind is not TurnKind.WAKE and resolve_streaming(self.config, ctx.active_model):
-
-            async def on_stream_chunk(chunk_type, data):
-                if chunk_type == "text":
-                    if isinstance(data, str):
-                        state.partial_assistant_chunks.append(data)
-                        state.current_iteration_assistant_chunks.append(data)
-                    await self.emit(
-                        conv_id,
-                        {
-                            "type": "chunk",
-                            "text": data,
-                        },
-                    )
-                elif chunk_type == "thinking":
-                    if isinstance(data, str):
-                        state.partial_assistant_thinking_chunks.append(data)
-                        state.current_iteration_thinking_chunks.append(data)
-                    await self.emit(
-                        conv_id,
-                        {
-                            "type": "chunk",
-                            "thinking": data,
-                        },
-                    )
-                elif chunk_type == "done":
-                    await self.emit(conv_id, {"type": "stream_done"})
-                elif chunk_type == "tool_call_start":
-                    name = data.get("name", "") if isinstance(data, dict) else ""
-                    await self.emit(
-                        conv_id,
-                        {
-                            "type": "tool_call_start",
-                            "name": name,
-                        },
-                    )
-
-            ctx.on_stream_chunk = on_stream_chunk
-
-        # Set up manager-based confirmation on the context so tools
-        # route through the manager instead of the event bus
-        async def ctx_request_confirmation(request: ConfirmationRequest) -> ConfirmationResponse:
-            if getattr(ctx, "is_unattended", False):
-                action_name = (
-                    request.action_type.value if hasattr(request.action_type, "value") else str(request.action_type)
-                )
-                log.warning(
-                    "Confirmation requested on unattended turn (%s, action: %s); denying immediately",
-                    ctx.task_mode.value,
-                    action_name,
-                )
-                return ConfirmationResponse(
-                    confirmation_id=request.confirmation_id,
-                    approved=False,
-                    data={"reason": f"Interactive confirmation unavailable on unattended turn ({ctx.task_mode.value})"},
-                )
-            return await self.request_confirmation(conv_id, request)
-
-        ctx.request_confirmation = ctx_request_confirmation
-        ctx.manager = self
-
-        # Create the agent-facing terminal handle
-        if self.terminal_registry:
-            from decafclaw.terminals import AgentTerminalHandle
-
-            ctx.terminal_registry = AgentTerminalHandle(self.terminal_registry)
-        else:
-            ctx.terminal_registry = None
-
-        # Load history — use caller-supplied history if provided, otherwise
-        # load from archive for USER/WAKE, default to [] for other task kinds.
-        if history is None:
-            if kind in EPHEMERAL_TASK_KINDS:
-                history = []
-            else:
-                history = self.load_history(conv_id)
-        state.history = history
+        built = await self._build_context(
+            state,
+            kind=kind,
+            user_id=user_id,
+            context_setup=context_setup,
+            command_ctx=command_ctx,
+            wiki_page=wiki_page,
+            task_mode=task_mode,
+            history=history,
+        )
+        ctx = built.ctx
+        user_id = built.user_id
+        history = built.history
 
         # Emit turn_start
         await self.emit(conv_id, {"type": "turn_start"})
@@ -2460,6 +2318,205 @@ class ConversationManager:
                         await self._publish_status(conv_id, "finished")
 
         state.agent_task = asyncio.create_task(run())
+
+    async def _build_context(
+        self,
+        state: ConversationState,
+        *,
+        kind: TurnKind = TurnKind.USER,
+        user_id: str = "",
+        context_setup: Callable | None = None,
+        command_ctx: Any = None,
+        wiki_page: str | None = None,
+        task_mode: TaskMode | None = None,
+        history: list | None = None,
+    ) -> _TurnContext:
+        """Construct and wire the runtime context for one turn (#1347).
+
+        Extracted from ``_start_turn`` so context construction is separate
+        from streaming/confirmation wiring and turn execution. Caller must
+        hold ``state.lock`` and have set ``state.cancel_event`` /
+        ``state.steer_event`` (``_start_turn`` does both before calling).
+
+        Returns the assembled :class:`_TurnContext`. Also records
+        ``state.active_context`` and ``state.history`` so the rest of the
+        turn lifecycle observes them.
+        """
+        conv_id = state.conv_id
+        # -- Persist / inherit transport context --------------------------------
+        # USER turns save their user_id and context_setup so that subsequent
+        # WAKE turns (which have no transport of their own) can inherit them.
+        if kind is TurnKind.USER:
+            state.last_user_id = user_id
+            state.last_context_setup = context_setup
+
+        # WAKE turns with no explicit user_id / context_setup fall back to the
+        # last USER turn's values so transport fields (channel_id, thread_id,
+        # media_handler, etc.) propagate into the wake context.
+        if kind is TurnKind.WAKE:
+            if not user_id and state.last_user_id:
+                user_id = state.last_user_id
+            if context_setup is None and state.last_context_setup is not None:
+                context_setup = state.last_context_setup
+
+        # -- Build context based on turn kind -----------------------------------
+        if kind in TASK_KINDS:
+            # Background/task turns: use Context.for_task for sensible defaults
+            # (skip_reflection=True, skip_vault_retrieval=True by default).
+            effective_task_mode = task_mode if task_mode is not None else KIND_TASK_MODE[kind]
+            ctx = Context.for_task(
+                self.config,
+                self.event_bus,
+                user_id=user_id,
+                conv_id=conv_id,
+                channel_id=conv_id,
+                task_mode=effective_task_mode,
+            )
+            ctx.extension_manager = self.extension_manager
+            ctx.cancelled = state.cancel_event
+            ctx.steer_event = state.steer_event
+            ctx.wiki_page = wiki_page
+
+            # WAKE turns fire on user conversations — restore per-conv state
+            # so activated skills and preferences carry forward.
+            if kind is TurnKind.WAKE:
+                self._restore_per_conv_state(state, ctx)
+        else:
+            # USER (and WORKFLOW) turns — full interactive Context with
+            # per-conv state restored. WORKFLOW deliberately reuses this path
+            # for now: the orchestrator only needs ctx.config + ctx.conv_id,
+            # and running on the user conv keeps phases visible in the timeline.
+            # (Revisit after live smoke: WORKFLOW may want Context.for_task
+            # semantics — if so, add it to TASK_KINDS with a KIND_TASK_MODE entry.)
+            ctx = Context(config=self.config, event_bus=self.event_bus)
+            ctx.extension_manager = self.extension_manager
+            ctx.restart_coordinator = self.restart_coordinator
+            ctx.user_id = user_id
+            ctx.channel_id = conv_id
+            ctx.conv_id = conv_id
+            ctx.cancelled = state.cancel_event
+            ctx.steer_event = state.steer_event
+            ctx.wiki_page = wiki_page
+
+            # Restore per-conversation state from previous turns
+            self._restore_per_conv_state(state, ctx)
+
+        state.active_context = ctx
+        # Apply command context if provided
+        if command_ctx:
+            from .commands import apply_command_ctx
+
+            apply_command_ctx(ctx, command_ctx)
+            ctx.tools.extra_definitions = command_ctx.tools.extra_definitions
+
+        # Let the transport set transport-specific fields
+        if context_setup:
+            if asyncio.iscoroutinefunction(context_setup):
+                await context_setup(ctx)
+            else:
+                context_setup(ctx)
+
+        if kind is TurnKind.USER or kind is TurnKind.WAKE:
+            state.last_channel_id = getattr(ctx, "channel_id", "")
+            state.last_thread_id = getattr(ctx, "thread_id", "")
+            state.last_transport = getattr(ctx, "transport", "")
+
+        # Reset cancel/partial accounting so this turn starts clean and
+        # a subsequent cancel only persists what we actually streamed.
+        state.partial_assistant_chunks = []
+        state.partial_assistant_thinking_chunks = []
+        state.partial_assistant_archived = False
+        state.cancel_observed_by_agent = False
+        state.cancel_marker_written = False
+        state.turn_aborted_marker_written = False
+        state.current_iteration_assistant_chunks = []
+        state.current_iteration_thinking_chunks = []
+
+        # Set up streaming callback that emits to subscribers.
+        # WAKE turns don't stream: the agent may emit BACKGROUND_WAKE_OK to
+        # suppress the final message, and streaming would have already
+        # delivered the prefix before the suppression gate fires.
+        from .config import resolve_streaming
+
+        if kind is not TurnKind.WAKE and resolve_streaming(self.config, ctx.active_model):
+
+            async def on_stream_chunk(chunk_type, data):
+                if chunk_type == "text":
+                    if isinstance(data, str):
+                        state.partial_assistant_chunks.append(data)
+                        state.current_iteration_assistant_chunks.append(data)
+                    await self.emit(
+                        conv_id,
+                        {
+                            "type": "chunk",
+                            "text": data,
+                        },
+                    )
+                elif chunk_type == "thinking":
+                    if isinstance(data, str):
+                        state.partial_assistant_thinking_chunks.append(data)
+                        state.current_iteration_thinking_chunks.append(data)
+                    await self.emit(
+                        conv_id,
+                        {
+                            "type": "chunk",
+                            "thinking": data,
+                        },
+                    )
+                elif chunk_type == "done":
+                    await self.emit(conv_id, {"type": "stream_done"})
+                elif chunk_type == "tool_call_start":
+                    name = data.get("name", "") if isinstance(data, dict) else ""
+                    await self.emit(
+                        conv_id,
+                        {
+                            "type": "tool_call_start",
+                            "name": name,
+                        },
+                    )
+
+            ctx.on_stream_chunk = on_stream_chunk
+
+        # Set up manager-based confirmation on the context so tools
+        # route through the manager instead of the event bus
+        async def ctx_request_confirmation(request: ConfirmationRequest) -> ConfirmationResponse:
+            if getattr(ctx, "is_unattended", False):
+                action_name = (
+                    request.action_type.value if hasattr(request.action_type, "value") else str(request.action_type)
+                )
+                log.warning(
+                    "Confirmation requested on unattended turn (%s, action: %s); denying immediately",
+                    ctx.task_mode.value,
+                    action_name,
+                )
+                return ConfirmationResponse(
+                    confirmation_id=request.confirmation_id,
+                    approved=False,
+                    data={"reason": f"Interactive confirmation unavailable on unattended turn ({ctx.task_mode.value})"},
+                )
+            return await self.request_confirmation(conv_id, request)
+
+        ctx.request_confirmation = ctx_request_confirmation
+        ctx.manager = self
+
+        # Create the agent-facing terminal handle
+        if self.terminal_registry:
+            from decafclaw.terminals import AgentTerminalHandle
+
+            ctx.terminal_registry = AgentTerminalHandle(self.terminal_registry)
+        else:
+            ctx.terminal_registry = None
+
+        # Load history — use caller-supplied history if provided, otherwise
+        # load from archive for USER/WAKE, default to [] for other task kinds.
+        if history is None:
+            if kind in EPHEMERAL_TASK_KINDS:
+                history = []
+            else:
+                history = self.load_history(conv_id)
+        state.history = history
+
+        return _TurnContext(ctx=ctx, user_id=user_id, history=history)
 
     def _restore_per_conv_state(self, state: ConversationState, ctx) -> None:
         """Restore persisted per-conversation state onto ctx.
