@@ -2,6 +2,8 @@
 
 All built-in tools the agent can call, grouped by module. Skills and MCP servers provide additional tools on demand.
 
+Each module exports its tool functions (`*_TOOLS` dict) and schema definitions (`*_TOOL_DEFINITIONS` list). The registry in `tools/__init__.py` derives both the dispatch table and the definition list from one per-module source (`_TOOL_SOURCES`), so registering a module is a single entry and the two collections cannot silently diverge — tests assert every registered tool has a definition and vice versa. The one documented exception is the dispatch-only `delegate_tasks` alias (registered but definition-less after #1003 consolidated it into `delegate_task`; see [Sub-Agent Delegation](delegation.md)).
+
 Tools marked **critical** (✓) are always sent to the LLM — these are the minimum set needed for common tasks. Other tools are `normal` priority (filled in as budget allows) or `low` (fetched on demand via `tool_search`). See [Tool Priority System](tool-priority.md) and [Tool Search](tool-search.md).
 
 Tools can return rich visual presentations in the web UI via DecafClaw's widget framework (`dc-widget-host`). See [Widgets](widgets.md) and [Tool Widget Opportunities](tool-widget-opportunities.md) for the survey and integration patterns.

@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..media import ToolResult
 from ..reminders import check as check_reminders
@@ -53,62 +53,53 @@ log = logging.getLogger(__name__)
 # Combined registry. External MCP server tools are registered via
 # decafclaw.mcp_client. The `background` and `mcp` skills carry their
 # own tools — loaded on activation.
-TOOLS = {
-    **CORE_TOOLS,
-    **ADMIN_TOOLS,
-    **CHECKLIST_TOOLS,
-    **CONVERSATION_TOOLS,
-    **WORKSPACE_TOOLS,
-    **SHELL_TOOLS,
-    **TOOL_OUTPUT_TOOLS,
-    **HTTP_TOOLS,
-    **LLM_TOOLS,
-    **SKILL_TOOLS,
-    **HEARTBEAT_TOOLS,
-    **HEALTH_TOOLS,
-    **DELEGATE_TOOLS,
-    **SUBAGENT_TOOLS,
-    **ATTACHMENT_TOOLS,
-    **EMAIL_TOOLS,
-    **NOTIFICATION_TOOLS,
-    **CANVAS_TOOLS,
-    **CALENDAR_TOOLS,
-    **SSH_TOOLS,
-    **NOTES_TOOLS,
-    **PROMPT_TOOLS,
-    **SCHEDULE_TOOLS,
-    **SESSION_TOOLS,
-    **STICKY_TOOLS,
-    **WATCH_TOOLS,
-}
-TOOL_DEFINITIONS = (
-    CORE_TOOL_DEFINITIONS
-    + ADMIN_TOOL_DEFINITIONS
-    + CHECKLIST_TOOL_DEFINITIONS
-    + CONVERSATION_TOOL_DEFINITIONS
-    + WORKSPACE_TOOL_DEFINITIONS
-    + SHELL_TOOL_DEFINITIONS
-    + TOOL_OUTPUT_TOOL_DEFINITIONS
-    + HTTP_TOOL_DEFINITIONS
-    + LLM_TOOL_DEFINITIONS
-    + SKILL_TOOL_DEFINITIONS
-    + HEARTBEAT_TOOL_DEFINITIONS
-    + HEALTH_TOOL_DEFINITIONS
-    + DELEGATE_TOOL_DEFINITIONS
-    + SUBAGENT_TOOL_DEFINITIONS
-    + ATTACHMENT_TOOL_DEFINITIONS
-    + EMAIL_TOOL_DEFINITIONS
-    + NOTIFICATION_TOOL_DEFINITIONS
-    + CANVAS_TOOL_DEFINITIONS
-    + CALENDAR_TOOL_DEFINITIONS
-    + SSH_TOOL_DEFINITIONS
-    + NOTES_TOOL_DEFINITIONS
-    + PROMPT_TOOL_DEFINITIONS
-    + SCHEDULE_TOOL_DEFINITIONS
-    + SESSION_TOOL_DEFINITIONS
-    + STICKY_TOOL_DEFINITIONS
-    + WATCH_TOOL_DEFINITIONS
+#
+# One entry per module, pairing its tool functions with its schema
+# definitions (#1338). TOOLS and TOOL_DEFINITIONS are both derived from this
+# single source, so the two collections cannot silently diverge in coverage
+# or order. Entry order is the registry order: later modules override earlier
+# ones in TOOLS, and TOOL_DEFINITIONS concatenates entries in this order.
+_TOOL_SOURCES = (
+    (CORE_TOOLS, CORE_TOOL_DEFINITIONS),
+    (ADMIN_TOOLS, ADMIN_TOOL_DEFINITIONS),
+    (CHECKLIST_TOOLS, CHECKLIST_TOOL_DEFINITIONS),
+    (CONVERSATION_TOOLS, CONVERSATION_TOOL_DEFINITIONS),
+    (WORKSPACE_TOOLS, WORKSPACE_TOOL_DEFINITIONS),
+    (SHELL_TOOLS, SHELL_TOOL_DEFINITIONS),
+    (TOOL_OUTPUT_TOOLS, TOOL_OUTPUT_TOOL_DEFINITIONS),
+    (HTTP_TOOLS, HTTP_TOOL_DEFINITIONS),
+    (LLM_TOOLS, LLM_TOOL_DEFINITIONS),
+    (SKILL_TOOLS, SKILL_TOOL_DEFINITIONS),
+    (HEARTBEAT_TOOLS, HEARTBEAT_TOOL_DEFINITIONS),
+    (HEALTH_TOOLS, HEALTH_TOOL_DEFINITIONS),
+    (DELEGATE_TOOLS, DELEGATE_TOOL_DEFINITIONS),
+    (SUBAGENT_TOOLS, SUBAGENT_TOOL_DEFINITIONS),
+    (ATTACHMENT_TOOLS, ATTACHMENT_TOOL_DEFINITIONS),
+    (EMAIL_TOOLS, EMAIL_TOOL_DEFINITIONS),
+    (NOTIFICATION_TOOLS, NOTIFICATION_TOOL_DEFINITIONS),
+    (CANVAS_TOOLS, CANVAS_TOOL_DEFINITIONS),
+    (CALENDAR_TOOLS, CALENDAR_TOOL_DEFINITIONS),
+    (SSH_TOOLS, SSH_TOOL_DEFINITIONS),
+    (NOTES_TOOLS, NOTES_TOOL_DEFINITIONS),
+    (PROMPT_TOOLS, PROMPT_TOOL_DEFINITIONS),
+    (SCHEDULE_TOOLS, SCHEDULE_TOOL_DEFINITIONS),
+    (SESSION_TOOLS, SESSION_TOOL_DEFINITIONS),
+    (STICKY_TOOLS, STICKY_TOOL_DEFINITIONS),
+    (WATCH_TOOLS, WATCH_TOOL_DEFINITIONS),
 )
+
+# Registered for dispatch but intentionally without a schema definition: the
+# LLM never sees them in its tool list. #1003 consolidated delegate_tasks into
+# delegate_task (a 501-token schema saving) but kept the alias registered so
+# skills and workflows that name it keep working. Tests assert this allowlist
+# is the only TOOLS/TOOL_DEFINITIONS divergence (test_tool_registry.py).
+_DISPATCH_ONLY_TOOLS = frozenset({"delegate_tasks"})
+
+# Values are heterogeneous sync/async callables with no common signature, so
+# the value type is Any (as in context.ToolState.extra) rather than a callable
+# union pyright cannot collapse.
+TOOLS: dict[str, Any] = {name: fn for tools, _defs in _TOOL_SOURCES for name, fn in tools.items()}
+TOOL_DEFINITIONS = [defn for _tools, defs in _TOOL_SOURCES for defn in defs]
 
 
 def _to_tool_result(value) -> ToolResult:
