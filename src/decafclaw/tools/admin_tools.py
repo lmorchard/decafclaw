@@ -13,7 +13,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ..media import ToolResult, WidgetRequest
 from ..restart_wake import new_restart_wake
@@ -327,6 +327,55 @@ async def _confirm_admin_mutation(
     return None
 
 
+async def _run_admin_mutation(
+    ctx: "Context",
+    tool_name: str,
+    path_str: str,
+    preview: str,
+    *,
+    payload: dict | None = None,
+    snapshot: _AdminFileSnapshot,
+    apply: Callable[[Path], Awaitable[str | ToolResult]],
+) -> str | ToolResult:
+    """Shared executor for confirmation-gated admin mutations (issue #1342).
+
+    Runs the write ritual every mutating admin tool shares: interactive
+    confirmation gate, per-file lock (on ``snapshot.resolved``), cancellation
+    check, snapshot revalidation, then the mutation itself. ``apply`` receives
+    the revalidated path and performs the tool-specific write or delete,
+    returning the user-facing result (a summary string or a ToolResult with a
+    diff widget).
+
+    The pre-confirmation guards (path resolution, secret refusal, marker guard,
+    snapshot capture) stay in each tool because they vary per mutation; this
+    executor owns everything from the confirmation prompt onward.
+    """
+    gate = await _confirm_admin_mutation(
+        ctx,
+        tool_name,
+        path_str,
+        preview,
+        payload=payload,
+        snapshot=snapshot,
+    )
+    if gate is not None:
+        return gate
+
+    async with file_lock(snapshot.resolved):
+        if _is_cancelled(ctx):
+            return ToolResult(text="[tool interrupted: agent turn cancelled]")
+
+        re_resolved, reval_err = await _revalidate_snapshot(ctx.config, path_str, snapshot)
+        if reval_err:
+            return reval_err
+        assert re_resolved is not None
+
+        try:
+            return await apply(re_resolved)
+        except PermissionError as e:
+            return _file_error(e, path_str)
+
+
 def tool_admin_read(
     ctx: "Context",
     path: str,
@@ -521,54 +570,42 @@ async def tool_admin_write(ctx: "Context", path: str, content: str) -> str | Too
         diff = unified_diff("", content, path)
         preview = f"(new file, {len(content)} characters)\n\n" + (diff if diff else content)
 
-    gate = await _confirm_admin_mutation(
+    async def apply(re_resolved: Path) -> str | ToolResult:
+        await asyncio.to_thread(re_resolved.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(re_resolved.write_text, content, encoding="utf-8")
+        summary = f"Wrote {len(content)} characters to admin file '{path}'"
+        if snapshot.exists and diff:
+            oversized = (
+                len(snapshot.content or "") > MAX_DIFF_WIDGET_CHARS
+                or len(content) > MAX_DIFF_WIDGET_CHARS
+                or (snapshot.content or "").count("\n") > MAX_DIFF_WIDGET_LINES
+                or content.count("\n") > MAX_DIFF_WIDGET_LINES
+            )
+            if not oversized:
+                return ToolResult(
+                    text=f"{summary}\n\n{diff}",
+                    widget=WidgetRequest(
+                        widget_type="diff_view",
+                        data={
+                            "before": snapshot.content or "",
+                            "after": content,
+                            "filename": path,
+                            "view": "unified",
+                        },
+                        target="inline",
+                    ),
+                )
+        return summary
+
+    return await _run_admin_mutation(
         ctx,
         "admin_write",
         path,
         preview,
         payload={"content": content},
         snapshot=snapshot,
+        apply=apply,
     )
-    if gate is not None:
-        return gate
-
-    async with file_lock(resolved):
-        if _is_cancelled(ctx):
-            return ToolResult(text="[tool interrupted: agent turn cancelled]")
-
-        re_resolved, reval_err = await _revalidate_snapshot(ctx.config, path, snapshot)
-        if reval_err:
-            return reval_err
-        assert re_resolved is not None
-
-        try:
-            await asyncio.to_thread(re_resolved.parent.mkdir, parents=True, exist_ok=True)
-            await asyncio.to_thread(re_resolved.write_text, content, encoding="utf-8")
-            summary = f"Wrote {len(content)} characters to admin file '{path}'"
-            if snapshot.exists and diff:
-                oversized = (
-                    len(snapshot.content or "") > MAX_DIFF_WIDGET_CHARS
-                    or len(content) > MAX_DIFF_WIDGET_CHARS
-                    or (snapshot.content or "").count("\n") > MAX_DIFF_WIDGET_LINES
-                    or content.count("\n") > MAX_DIFF_WIDGET_LINES
-                )
-                if not oversized:
-                    return ToolResult(
-                        text=f"{summary}\n\n{diff}",
-                        widget=WidgetRequest(
-                            widget_type="diff_view",
-                            data={
-                                "before": snapshot.content or "",
-                                "after": content,
-                                "filename": path,
-                                "view": "unified",
-                            },
-                            target="inline",
-                        ),
-                    )
-            return summary
-        except PermissionError as e:
-            return _file_error(e, path)
 
 
 async def tool_admin_append(ctx: "Context", path: str, content: str) -> str | ToolResult:
@@ -696,58 +733,44 @@ async def tool_admin_replace_lines(
         "replacement_count": replacement_count,
     }
 
-    gate = await _confirm_admin_mutation(
+    async def apply(re_resolved: Path) -> str | ToolResult:
+        await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
+        if not content:
+            summary = f"Deleted lines {start_line}-{end_line} from admin file '{path}'"
+        else:
+            summary = f"Replaced lines {start_line}-{end_line} with {replacement_count} line(s) in admin file '{path}'"
+        if diff:
+            oversized = (
+                len(existing) > MAX_DIFF_WIDGET_CHARS
+                or len(new_content) > MAX_DIFF_WIDGET_CHARS
+                or existing.count("\n") > MAX_DIFF_WIDGET_LINES
+                or new_content.count("\n") > MAX_DIFF_WIDGET_LINES
+            )
+            if not oversized:
+                return ToolResult(
+                    text=f"{summary}\n\n{diff}",
+                    widget=WidgetRequest(
+                        widget_type="diff_view",
+                        data={
+                            "before": existing,
+                            "after": new_content,
+                            "filename": path,
+                            "view": "unified",
+                        },
+                        target="inline",
+                    ),
+                )
+        return summary
+
+    return await _run_admin_mutation(
         ctx,
         "admin_replace_lines",
         path,
         diff or "(no changes)",
         payload=payload,
         snapshot=snapshot,
+        apply=apply,
     )
-    if gate is not None:
-        return gate
-
-    async with file_lock(resolved):
-        if _is_cancelled(ctx):
-            return ToolResult(text="[tool interrupted: agent turn cancelled]")
-
-        re_resolved, reval_err = await _revalidate_snapshot(ctx.config, path, snapshot)
-        if reval_err:
-            return reval_err
-        assert re_resolved is not None
-
-        try:
-            await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
-            if not content:
-                summary = f"Deleted lines {start_line}-{end_line} from admin file '{path}'"
-            else:
-                summary = (
-                    f"Replaced lines {start_line}-{end_line} with {replacement_count} line(s) in admin file '{path}'"
-                )
-            if diff:
-                oversized = (
-                    len(existing) > MAX_DIFF_WIDGET_CHARS
-                    or len(new_content) > MAX_DIFF_WIDGET_CHARS
-                    or existing.count("\n") > MAX_DIFF_WIDGET_LINES
-                    or new_content.count("\n") > MAX_DIFF_WIDGET_LINES
-                )
-                if not oversized:
-                    return ToolResult(
-                        text=f"{summary}\n\n{diff}",
-                        widget=WidgetRequest(
-                            widget_type="diff_view",
-                            data={
-                                "before": existing,
-                                "after": new_content,
-                                "filename": path,
-                                "view": "unified",
-                            },
-                            target="inline",
-                        ),
-                    )
-            return summary
-        except PermissionError as e:
-            return _file_error(e, path)
 
 
 async def tool_admin_edit(
@@ -803,53 +826,41 @@ async def tool_admin_edit(
         "count": count,
     }
 
-    gate = await _confirm_admin_mutation(
+    async def apply(re_resolved: Path) -> str | ToolResult:
+        await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
+        summary = f"Edited admin file '{path}': replaced {count} occurrence(s)"
+        if diff:
+            oversized = (
+                len(content) > MAX_DIFF_WIDGET_CHARS
+                or len(new_content) > MAX_DIFF_WIDGET_CHARS
+                or content.count("\n") > MAX_DIFF_WIDGET_LINES
+                or new_content.count("\n") > MAX_DIFF_WIDGET_LINES
+            )
+            if not oversized:
+                return ToolResult(
+                    text=f"{summary}\n\n{diff}",
+                    widget=WidgetRequest(
+                        widget_type="diff_view",
+                        data={
+                            "before": content,
+                            "after": new_content,
+                            "filename": path,
+                            "view": "unified",
+                        },
+                        target="inline",
+                    ),
+                )
+        return summary
+
+    return await _run_admin_mutation(
         ctx,
         "admin_edit",
         path,
         diff or "(no changes)",
         payload=payload,
         snapshot=snapshot,
+        apply=apply,
     )
-    if gate is not None:
-        return gate
-
-    async with file_lock(resolved):
-        if _is_cancelled(ctx):
-            return ToolResult(text="[tool interrupted: agent turn cancelled]")
-
-        re_resolved, reval_err = await _revalidate_snapshot(ctx.config, path, snapshot)
-        if reval_err:
-            return reval_err
-        assert re_resolved is not None
-
-        try:
-            await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
-            summary = f"Edited admin file '{path}': replaced {count} occurrence(s)"
-            if diff:
-                oversized = (
-                    len(content) > MAX_DIFF_WIDGET_CHARS
-                    or len(new_content) > MAX_DIFF_WIDGET_CHARS
-                    or content.count("\n") > MAX_DIFF_WIDGET_LINES
-                    or new_content.count("\n") > MAX_DIFF_WIDGET_LINES
-                )
-                if not oversized:
-                    return ToolResult(
-                        text=f"{summary}\n\n{diff}",
-                        widget=WidgetRequest(
-                            widget_type="diff_view",
-                            data={
-                                "before": content,
-                                "after": new_content,
-                                "filename": path,
-                                "view": "unified",
-                            },
-                            target="inline",
-                        ),
-                    )
-            return summary
-        except PermissionError as e:
-            return _file_error(e, path)
 
 
 async def tool_admin_delete(ctx: "Context", path: str, recursive: bool = False) -> str | ToolResult:
@@ -886,38 +897,25 @@ async def tool_admin_delete(ctx: "Context", path: str, recursive: bool = False) 
         "recursive": recursive,
     }
 
-    gate = await _confirm_admin_mutation(
+    async def apply(re_resolved: Path) -> str | ToolResult:
+        if re_resolved.is_dir():
+            if recursive:
+                await asyncio.to_thread(shutil.rmtree, re_resolved)
+            else:
+                await asyncio.to_thread(re_resolved.rmdir)
+            return f"Deleted admin directory '{path}'"
+        await asyncio.to_thread(re_resolved.unlink)
+        return f"Deleted admin file '{path}'"
+
+    return await _run_admin_mutation(
         ctx,
         "admin_delete",
         path,
         preview,
         payload=payload,
         snapshot=snapshot,
+        apply=apply,
     )
-    if gate is not None:
-        return gate
-
-    async with file_lock(resolved):
-        if _is_cancelled(ctx):
-            return ToolResult(text="[tool interrupted: agent turn cancelled]")
-
-        re_resolved, reval_err = await _revalidate_snapshot(ctx.config, path, snapshot)
-        if reval_err:
-            return reval_err
-        assert re_resolved is not None
-
-        try:
-            if re_resolved.is_dir():
-                if recursive:
-                    await asyncio.to_thread(shutil.rmtree, re_resolved)
-                else:
-                    await asyncio.to_thread(re_resolved.rmdir)
-                return f"Deleted admin directory '{path}'"
-            else:
-                await asyncio.to_thread(re_resolved.unlink)
-                return f"Deleted admin file '{path}'"
-        except PermissionError as e:
-            return _file_error(e, path)
 
 
 def _restart_wake_for_ctx(ctx: "Context", reason: str):
