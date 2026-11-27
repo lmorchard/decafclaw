@@ -15,6 +15,13 @@ Calendar has no ``task.source`` to consult, so provenance stands in for it.
 The authenticated web route is the human control surface and may set
 ``policy_granted``; the agent tool may not. Without the flag an event can take
 capabilities away and nothing more.
+
+Skill bodies arrive by a different route than tools. ``required_skills``
+activates here, but the *body* is delivered by
+``context_composer.render_activated_skills`` as the transient
+``<activated_skills>`` block — not by this module. See the note in
+``activate_required_skills`` for why this differs from the schedule path, which
+builds its own ``<loaded_skills>`` block into the prompt instead (#2006).
 """
 
 from __future__ import annotations
@@ -129,9 +136,20 @@ async def activate_required_skills(ctx: "Context", event: "CalendarEvent") -> No
             )
             ctx.skills.activation_denials.append(skill_name)
             continue
-        # The wake prompt carries this skill's body; skip it in
-        # <activated_skills> so it is not sent twice (#1823).
-        ctx.skills.body_in_prompt.add(skill_name)
+        # Deliberately do NOT add to ctx.skills.body_in_prompt.
+        #
+        # That set means "this body is already part of this turn's prompt", and
+        # render_activated_skills skips anything in it. A schedule can set it
+        # because schedules.py builds a <loaded_skills> block into the prompt
+        # itself. A calendar wake has no equivalent: calendar_manager enqueues
+        # _build_prompt(event), which is the event's `reason` and nothing else.
+        # Marking it here therefore suppressed the body while delivering it
+        # nowhere, so `required_skills` did the opposite of what it names (#2006).
+        #
+        # Leaving it unset lets the composer render the body as the transient
+        # <activated_skills> block, which re-renders from ctx.skills.activated
+        # each turn and is never archived (#1823) — the right shape for a
+        # multi-turn composition, where an archived body would accumulate.
 
 
 def apply_event_policy(ctx: "Context", event: "CalendarEvent") -> None:
