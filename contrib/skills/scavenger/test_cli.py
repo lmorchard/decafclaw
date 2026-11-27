@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from unittest.mock import patch
 
@@ -87,6 +88,53 @@ def test_resolve_recipe_finds_bundled_recipe_from_any_cwd(tmp_path):
     path, kind = resolved
     assert path.endswith("node-dev.Dockerfile")
     assert kind == "dockerfile"
+
+
+def test_bundled_decafclaw_test_recipe_resolves(tmp_path):
+    """The test-gate recipe must stay reachable from the bundled dockerfiles dir.
+
+    It is only discovered through the SCRIPT_DIR fallback (no fleet
+    `recipes_dir`), so a rename or a move out of this directory makes it
+    silently unreachable rather than loudly broken.
+    """
+    resolved = sc.resolve_recipe("decafclaw-test", str(tmp_path / "empty"))
+    assert resolved is not None
+    path, kind = resolved
+    assert path.endswith("decafclaw-test.Dockerfile")
+    assert kind == "dockerfile"
+
+
+def test_decafclaw_test_recipe_keeps_its_load_bearing_packages():
+    """Pin the packages that only exist to stop false test failures.
+
+    Each of these was added because its absence produced failures that looked
+    like code bugs (see the Dockerfile header). Dropping one is invisible until
+    a remote run reports 4-30 red tests, so guard them here where it is cheap.
+
+    Scoped to the apt-get install line on purpose: a whole-file substring search
+    also matches the explanatory header and the ENTRYPOINT path, so it would
+    pass with the packages removed. That false pass was observed, not assumed.
+    """
+    resolved = sc.resolve_recipe("decafclaw-test", "")
+    assert resolved is not None
+    body = open(resolved[0], encoding="utf-8").read()
+
+    # Join continuation lines and drop comments, so the install command reads as
+    # one string instead of being matched against prose in the header.
+    code = re.sub(r"\\\n\s*", " ", body)
+    code = "\n".join(line for line in code.splitlines() if not line.lstrip().startswith("#"))
+
+    install = re.search(r"apt-get install[^\n]*", code)
+    assert install is not None, "no apt-get install line found"
+    installed = install.group(0)
+
+    for package in ("git", "tini", "openssh-client"):
+        assert package in installed, f"{package} missing from the apt-get install line"
+
+    # tini must actually be PID 1, not merely installed.
+    assert 'ENTRYPOINT ["/usr/bin/tini", "--"]' in body
+    # A uv-managed interpreter is required for a SQLite that sqlite-vec accepts.
+    assert "uv python install 3.13" in body
 
 
 def test_no_hardcoded_home_path_in_scavenger_sources():
