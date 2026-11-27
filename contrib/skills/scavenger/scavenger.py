@@ -150,6 +150,22 @@ LEGACY_LABEL_EXPIRES_AT = "decafclaw.expires_at"
 LEGACY_LABEL_CREATED_AT = "decafclaw.created_at"
 LEGACY_LABEL_TTL_SECONDS = "decafclaw.ttl_seconds"
 
+#: Environment ids become container names, volume names, and remote workspace paths.
+ENV_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$")
+
+
+def validate_env_id(env_id: str) -> str:
+    """Return env_id when it is a safe name component, else raise ValueError.
+
+    The id is interpolated into container/volume names and remote paths, so it
+    must not carry shell metacharacters, whitespace, or path separators.
+    """
+    if not isinstance(env_id, str) or not ENV_ID_PATTERN.fullmatch(env_id):
+        raise ValueError(
+            f"Invalid env_id {env_id!r}: use 1-63 letters, digits, '.', '_' or '-', starting with a letter or digit"
+        )
+    return env_id
+
 
 def read_env_labels(labels: Dict[str, str]) -> Tuple[Optional[str], Optional[int]]:
     """Read (env_id, expires_at) from container labels, accepting scavenger.* and legacy decafclaw.* names."""
@@ -450,13 +466,15 @@ def native_lease_json(res: EnvReservation) -> str:
     )
 
 
-def list_host_script(engine: str) -> str:
+def list_host_script(host: HostConfig) -> str:
     """Remote script that lists labelled containers, labelled volumes, and native lease files."""
+    containers = remote_argv(list_containers_args(host))
+    volumes = remote_argv(list_volumes_args(host))
     return f"""
 echo ---CONTAINERS---
-{engine} ps --all --format json || echo ---FAILED---
+{containers} || echo ---FAILED---
 echo ---VOLUMES---
-{engine} volume ls --format json || echo ---FAILED---
+{volumes} || echo ---FAILED---
 echo ---NATIVE---
 for f in "$HOME"/workspaces/*/{NATIVE_LEASE_FILE}; do
     if [ -f "$f" ]; then cat "$f"; echo; fi
@@ -539,7 +557,7 @@ def list_host_envs(host: HostConfig) -> Optional[List[EnvReservation]]:
     so callers keep their cached records instead of treating the host as empty.
     """
     try:
-        res = run_ssh(host.ssh_alias, list_host_script(host.engine), timeout=20)
+        res = run_ssh(host.ssh_alias, list_host_script(host), timeout=20)
     except subprocess.TimeoutExpired:
         log.warning("Timed out listing environments on %s", host.name)
         return None
@@ -808,9 +826,7 @@ def container_limit_flags(host: HostConfig, network: str = "default") -> List[st
 
     Pure function: reads no environment, runs nothing. Returns argv tokens
     for --network, --pids-limit, and (where the engine supports it) the
-    json-file log size cap. Join with spaces to embed in a remote shell script.
-
-    network: "none" (no network access at all) or "default" (engine default).
+    json-file log size cap.
     """
     if network not in ("none", "default"):
         raise ValueError(f"Unsupported network mode: {network!r} (expected 'none' or 'default')")
@@ -823,6 +839,205 @@ def container_limit_flags(host: HostConfig, network: str = "default") -> List[st
         if host.log_max_file:
             flags.extend(["--log-opt", f"max-file={host.log_max_file}"])
     return flags
+
+
+def remote_argv(argv: List[str]) -> str:
+    """Render an argument vector as one POSIX shell command word list for `ssh`."""
+    return shlex.join(argv)
+
+
+def home_shell_path(rel_path: str) -> str:
+    """Shell word for a path under the remote user's home directory.
+
+    ``$HOME`` stays outside the quoted segment so the remote shell expands it.
+    """
+    return '"$HOME"/' + shlex.quote(rel_path)
+
+
+def new_job_dir() -> str:
+    """A fresh literal remote scratch directory (no remote shell variable needed)."""
+    return f"/tmp/scavenger-job-{uuid.uuid4().hex[:12]}"
+
+
+def container_run_args(
+    host: HostConfig,
+    image: str,
+    container_command: List[str],
+    *,
+    volume: Optional[str] = None,
+    name: Optional[str] = None,
+    detached: bool = False,
+    remove: bool = True,
+    workdir: Optional[str] = None,
+    mem_limit: Optional[str] = None,
+    cpus: Optional[int] = None,
+    network: str = "default",
+    labels: Optional[Dict[str, str]] = None,
+) -> List[str]:
+    """Build container-engine argv for `run` / `run -d`.
+
+    Pure function: reads no environment, runs nothing. Every value is a single
+    argv token, so rendering with ``remote_argv`` quotes it exactly once.
+    """
+    argv = [host.engine, "run"]
+    if remove:
+        argv.append("--rm")
+    if detached:
+        argv.append("-d")
+    if name:
+        argv.extend(["--name", name])
+    if mem_limit is not None:
+        argv.append(f"--memory={mem_limit}")
+    if cpus is not None:
+        argv.append(f"--cpus={cpus}")
+    argv.extend(container_limit_flags(host, network))
+    argv.extend(host.device_flags)
+    for key, value in (labels or {}).items():
+        argv.extend(["--label", f"{key}={value}"])
+    if volume:
+        argv.extend(["-v", volume])
+    if workdir:
+        argv.extend(["-w", workdir])
+    argv.append(image)
+    argv.extend(container_command)
+    return argv
+
+
+def _container_exec_prefix(
+    host: HostConfig,
+    container: str,
+    *,
+    env_vars: Optional[Dict[str, str]] = None,
+    interactive: bool = False,
+    detach: bool = False,
+) -> List[str]:
+    argv = [host.engine, "exec"]
+    if detach:
+        argv.append("-d")
+    if interactive:
+        argv.append("-i")
+    for key, value in sorted((env_vars or {}).items()):
+        argv.extend(["-e", f"{key}={value}"])
+    argv.append(container)
+    return argv
+
+
+def container_exec_args(
+    host: HostConfig,
+    container: str,
+    command: str,
+    *,
+    env_vars: Optional[Dict[str, str]] = None,
+    interactive: bool = False,
+    detach: bool = False,
+) -> List[str]:
+    """Build argv for `exec ... sh -c COMMAND` inside a container."""
+    return _container_exec_prefix(host, container, env_vars=env_vars, interactive=interactive, detach=detach) + [
+        "sh",
+        "-c",
+        command,
+    ]
+
+
+def container_exec_raw_args(
+    host: HostConfig,
+    container: str,
+    command_argv: List[str],
+    *,
+    env_vars: Optional[Dict[str, str]] = None,
+    interactive: bool = False,
+    detach: bool = False,
+) -> List[str]:
+    """Build argv for `exec` of a program without a shell wrapper (e.g. tar)."""
+    return _container_exec_prefix(host, container, env_vars=env_vars, interactive=interactive, detach=detach) + list(
+        command_argv
+    )
+
+
+def container_rm_args(host: HostConfig, container: str) -> List[str]:
+    """Build argv for `rm -f CONTAINER`."""
+    return [host.engine, "rm", "-f", container]
+
+
+def volume_create_args(host: HostConfig, volume: str, labels: Optional[Dict[str, str]] = None) -> List[str]:
+    """Build argv for `volume create` with labels."""
+    argv = [host.engine, "volume", "create"]
+    for key, value in (labels or {}).items():
+        argv.extend(["--label", f"{key}={value}"])
+    argv.append(volume)
+    return argv
+
+
+def volume_rm_args(host: HostConfig, volume: str) -> List[str]:
+    """Build argv for `volume rm -f VOLUME`."""
+    return [host.engine, "volume", "rm", "-f", volume]
+
+
+def image_exists_args(host: HostConfig, tag: str) -> List[str]:
+    """Build argv that exits 0 when the image is present on the host."""
+    if host.engine == "podman":
+        return [host.engine, "image", "exists", tag]
+    return [host.engine, "image", "inspect", tag]
+
+
+def image_build_args(host: HostConfig, tag: str) -> List[str]:
+    """Build argv that builds an image from a Dockerfile on stdin."""
+    return [host.engine, "build", "-t", tag, "-f", "-", "/tmp"]
+
+
+def list_containers_args(host: HostConfig) -> List[str]:
+    """Build argv that lists every container, including stopped ones, as JSON."""
+    return [host.engine, "ps", "--all", "--format", "json"]
+
+
+def list_volumes_args(host: HostConfig) -> List[str]:
+    """Build argv that lists volumes as JSON."""
+    return [host.engine, "volume", "ls", "--format", "json"]
+
+
+def job_remote_script(
+    host: HostConfig,
+    command: str,
+    job_dir: str,
+    *,
+    image: str = "alpine:latest",
+    mem_limit: str = "16g",
+    cpus: int = 8,
+    network: str = "default",
+    repo_bundle: bool = False,
+) -> str:
+    """Build the remote shell script for a one-shot container job.
+
+    Pure function: reads no environment, runs nothing. ``job_dir`` is a literal
+    path (see ``new_job_dir``) so no remote shell variable reaches an argv token.
+    """
+    quoted_dir = shlex.quote(job_dir)
+    workspace = f"{job_dir}/workspace"
+    mount = f"{workspace}:/workspace" + (":Z" if host.needs_selinux_z else "")
+    run_argv = container_run_args(
+        host,
+        image,
+        ["sh", "-c", command],
+        volume=mount,
+        workdir="/workspace",
+        mem_limit=mem_limit,
+        cpus=cpus,
+        network=network,
+    )
+
+    lines = [
+        "set -e",
+        f"mkdir -p {quoted_dir}",
+        f"trap {shlex.quote(f'rm -rf {job_dir}')} EXIT",
+    ]
+    if repo_bundle:
+        bundle = shlex.quote(f"{job_dir}/repo.bundle")
+        lines.append(f"cat > {bundle}")
+        lines.append(f"git clone -q {bundle} {shlex.quote(workspace)}")
+    else:
+        lines.append(f"mkdir -p {shlex.quote(workspace)}")
+    lines.append(remote_argv(run_argv))
+    return "\n".join(lines) + "\n"
 
 
 def execute_job(
@@ -843,31 +1058,18 @@ def execute_job(
     """
     out = stdout if stdout is not None else sys.stdout
     err = stderr if stderr is not None else sys.stderr
-    selinux_flag = ":Z" if host.needs_selinux_z else ""
-    device_args = " ".join(host.device_flags) if host.device_flags else ""
-    limit_args = " ".join(container_limit_flags(host, network))
 
-    remote_script = f"""
-set -e
-JOB_DIR=$(mktemp -d /tmp/scavenger-job-XXXXXX)
-trap 'rm -rf "$JOB_DIR"' EXIT
-
-if [ -f "$JOB_DIR/repo.bundle" ]; then
-    git clone -q "$JOB_DIR/repo.bundle" "$JOB_DIR/workspace"
-else
-    mkdir -p "$JOB_DIR/workspace"
-fi
-
-{host.engine} run --rm \\
-    --memory={mem_limit} \\
-    --cpus={cpus} \\
-    {limit_args} \\
-    {device_args} \\
-    -v "$JOB_DIR/workspace:/workspace{selinux_flag}" \\
-    -w /workspace \\
-    {image} \\
-    sh -c '{command}'
-"""
+    job_dir = new_job_dir()
+    remote_script = job_remote_script(
+        host,
+        command,
+        job_dir,
+        image=image,
+        mem_limit=mem_limit,
+        cpus=cpus,
+        network=network,
+        repo_bundle=False,
+    )
 
     if repo_path and os.path.isdir(os.path.join(repo_path, ".git")):
         print(f"📦 Bundling repository from {repo_path} (HEAD)...", file=sys.stderr)
@@ -877,23 +1079,16 @@ fi
             stderr=subprocess.PIPE,
         )
 
-        ssh_wrapper = f"""
-set -e
-RECV_DIR=$(mktemp -d /tmp/scavenger-job-XXXXXX)
-trap 'rm -rf "$RECV_DIR"' EXIT
-cat > "$RECV_DIR/repo.bundle"
-git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
-
-{host.engine} run --rm \\
-    --memory={mem_limit} \\
-    --cpus={cpus} \\
-    {limit_args} \\
-    {device_args} \\
-    -v "$RECV_DIR/workspace:/workspace{selinux_flag}" \\
-    -w /workspace \\
-    {image} \\
-    sh -c '{command}'
-"""
+        ssh_wrapper = job_remote_script(
+            host,
+            command,
+            job_dir,
+            image=image,
+            mem_limit=mem_limit,
+            cpus=cpus,
+            network=network,
+            repo_bundle=True,
+        )
         print(f"🚀 Dispatching job to {host.name} ({host.arch}) inside {image}...", file=sys.stderr)
         ssh_proc = subprocess.Popen(
             ["ssh", "-o", "BatchMode=yes", host.ssh_alias, ssh_wrapper],
@@ -980,12 +1175,7 @@ def recipe_image_tag(recipe_path: str) -> str:
 
 def ensure_remote_image(host: HostConfig, tag: str, dockerfile_path: str) -> None:
     """Ensure a container image exists on the remote host; builds it from Dockerfile if missing."""
-    if host.engine == "podman":
-        check_cmd = f"podman image exists {tag}"
-    else:
-        check_cmd = f"docker image inspect {tag} >/dev/null 2>&1"
-
-    res = run_ssh(host.ssh_alias, check_cmd)
+    res = run_ssh(host.ssh_alias, remote_argv(image_exists_args(host, tag)))
     if res.returncode == 0:
         return
 
@@ -993,7 +1183,7 @@ def ensure_remote_image(host: HostConfig, tag: str, dockerfile_path: str) -> Non
     with open(dockerfile_path, "rb") as f:
         dockerfile_bytes = f.read()
 
-    build_cmd = f"{host.engine} build -t {tag} -f - /tmp"
+    build_cmd = remote_argv(image_build_args(host, tag))
     ssh_proc = subprocess.Popen(
         ["ssh", "-o", "BatchMode=yes", host.ssh_alias, build_cmd],
         stdin=subprocess.PIPE,
@@ -1035,6 +1225,7 @@ def env_create(
     slots are freed before host selection. A reap failure on one host is
     logged and does not block creation.
     """
+    validate_env_id(env_id)
     env_reap(fleet)
 
     now = time.time()
@@ -1093,9 +1284,10 @@ def env_create(
             workspace_path=ws_rel,
         )
         b64_lease = base64.b64encode(native_lease_json(res).encode("utf-8")).decode("ascii")
+        lease_path = home_shell_path(f"{ws_rel}/{NATIVE_LEASE_FILE}")
         mkdir_res = run_ssh(
             host.ssh_alias,
-            f"mkdir -p ~/{ws_rel} && echo '{b64_lease}' | base64 -d > ~/{ws_rel}/{NATIVE_LEASE_FILE}",
+            f"mkdir -p {home_shell_path(ws_rel)} && echo {shlex.quote(b64_lease)} | base64 -d > {lease_path}",
         )
         if mkdir_res.returncode != 0:
             raise RuntimeError(f"Failed to create workspace on {host.name}: {mkdir_res.stderr}")
@@ -1107,34 +1299,36 @@ def env_create(
         c_name = f"scavenger-env-{env_id}"
         v_name = f"scavenger-vol-{env_id}"
         selinux_flag = ":Z" if host.needs_selinux_z else ""
-        device_args = " ".join(host.device_flags) if host.device_flags else ""
-        labels = " ".join(
-            f'--label {k}="{v}"'
-            for k, v in (
-                (LABEL_ENV_ID, env_id),
-                (LABEL_EXPIRES_AT, int(expires_at)),
-                (LABEL_CREATED_AT, int(now)),
-                (LABEL_TTL_SECONDS, ttl_sec),
-            )
-        )
-        limit_args = " ".join(container_limit_flags(host, network))
+        labels = {
+            LABEL_ENV_ID: env_id,
+            LABEL_EXPIRES_AT: str(int(expires_at)),
+            LABEL_CREATED_AT: str(int(now)),
+            LABEL_TTL_SECONDS: str(ttl_sec),
+        }
 
-        create_script = f"""
-set -e
-{host.engine} rm -f {c_name} 2>/dev/null || true
-{host.engine} volume create {labels} {v_name} >/dev/null 2>&1 || true
-{host.engine} run -d \\
-    --name {c_name} \\
-    {labels} \\
-    --memory={mem_limit} \\
-    --cpus={cpus} \\
-    {limit_args} \\
-    {device_args} \\
-    -v {v_name}:/workspace{selinux_flag} \\
-    -w /workspace \\
-    {image} \\
-    sleep infinity
-"""
+        create_script = "\n".join(
+            [
+                "set -e",
+                f"{remote_argv(container_rm_args(host, c_name))} 2>/dev/null || true",
+                f"{remote_argv(volume_create_args(host, v_name, labels))} >/dev/null 2>&1 || true",
+                remote_argv(
+                    container_run_args(
+                        host,
+                        image,
+                        ["sleep", "infinity"],
+                        name=c_name,
+                        detached=True,
+                        remove=False,
+                        volume=f"{v_name}:/workspace{selinux_flag}",
+                        workdir="/workspace",
+                        mem_limit=mem_limit,
+                        cpus=cpus,
+                        network=network,
+                        labels=labels,
+                    )
+                ),
+            ]
+        )
         c_res = run_ssh(host.ssh_alias, create_script, timeout=60)
         if c_res.returncode != 0:
             raise RuntimeError(f"Failed to launch container on {host.name}: {c_res.stderr}")
@@ -1160,12 +1354,13 @@ set -e
         with open(setup_script, "r", encoding="utf-8") as sf:
             script_content = sf.read()
         b64_setup = base64.b64encode(script_content.encode("utf-8")).decode("ascii")
+        setup_inner = f"echo {shlex.quote(b64_setup)} | base64 -d | sh"
         if res.kind == "native":
             ws = res.workspace_path or f"workspaces/{res.env_id}"
-            run_cmd = f"cd ~/{ws} && echo '{b64_setup}' | base64 -d | sh"
+            run_cmd = f"cd {home_shell_path(ws)} && {setup_inner}"
         else:
             c_name = res.container_name or f"scavenger-env-{res.env_id}"
-            run_cmd = f"{host.engine} exec -i {c_name} sh -c 'echo \"{b64_setup}\" | base64 -d | sh'"
+            run_cmd = remote_argv(container_exec_args(host, c_name, setup_inner, interactive=True))
         setup_proc = run_ssh(host.ssh_alias, run_cmd, timeout=300)
         if setup_proc.returncode != 0:
             raise RuntimeError(f"Setup script failed on {host.name}:\n{setup_proc.stderr}")
@@ -1177,11 +1372,6 @@ set -e
     if env_vars is not None:
         save_env_vars(env_id, env_vars)
     return res
-
-
-def _env_exec_flags(env_vars: Dict[str, str]) -> str:
-    """Build shell-quoted `-e KEY=VALUE` flags for one engine exec."""
-    return " ".join(f"-e {shlex.quote(f'{k}={v}')}" for k, v in sorted(env_vars.items()))
 
 
 def env_exec(
@@ -1200,12 +1390,10 @@ def env_exec(
         exports = " ".join(f"{k}={shlex.quote(v)}" for k, v in sorted(env_vars.items()))
         prefix = f"export {exports} && " if exports else ""
         ws = res.workspace_path or f"workspaces/{res.env_id}"
-        remote_cmd = f"cd ~/{ws} && {prefix}{command}"
+        remote_cmd = f"cd {home_shell_path(ws)} && {prefix}{command}"
     else:
         c_name = res.container_name or f"scavenger-env-{res.env_id}"
-        flags = _env_exec_flags(env_vars)
-        flag_str = f"{flags} " if flags else ""
-        remote_cmd = f"{host.engine} exec -i {flag_str}{c_name} sh -c '{command}'"
+        remote_cmd = remote_argv(container_exec_args(host, c_name, command, env_vars=env_vars, interactive=True))
 
     return run_ssh(host.ssh_alias, remote_cmd, timeout=timeout_seconds, capture=True)
 
@@ -1229,16 +1417,19 @@ def env_exec_bg(
     exports = " ".join(f"{k}={shlex.quote(v)}" for k, v in sorted(env_vars.items()))
     prefix = f"export {exports}; " if exports else ""
     inner_script = (
-        f"rm -f '{exit_file}'; ({prefix}echo '{b64_cmd}' | base64 -d | sh) > '{log_file}' 2>&1; echo $? > '{exit_file}'"
+        f"rm -f {shlex.quote(exit_file)}; "
+        f"({prefix}echo {shlex.quote(b64_cmd)} | base64 -d | sh) > {shlex.quote(log_file)} 2>&1; "
+        f"echo $? > {shlex.quote(exit_file)}"
     )
     b64_full = base64.b64encode(inner_script.encode("utf-8")).decode("ascii")
+    wrapped = f"echo {shlex.quote(b64_full)} | base64 -d | sh"
 
     if res.kind == "native":
         ws = res.workspace_path or f"workspaces/{res.env_id}"
-        remote_cmd = f"cd ~/{ws} && nohup sh -c 'echo \"{b64_full}\" | base64 -d | sh' >/dev/null 2>&1 & echo $!"
+        remote_cmd = f"cd {home_shell_path(ws)} && nohup sh -c {shlex.quote(wrapped)} >/dev/null 2>&1 & echo $!"
     else:
         c_name = res.container_name or f"scavenger-env-{res.env_id}"
-        remote_cmd = f"{host.engine} exec -d {c_name} sh -c 'echo \"{b64_full}\" | base64 -d | sh'"
+        remote_cmd = remote_argv(container_exec_args(host, c_name, wrapped, detach=True))
 
     proc = run_ssh(host.ssh_alias, remote_cmd, timeout=15)
     pid = proc.stdout.strip().splitlines()[-1] if proc.stdout else "unknown"
@@ -1282,25 +1473,40 @@ def env_arm_watch(
 
     if watch_type == "exit":
         target_file = target or ".scavenger_exec.exit"
-        inner = f"while [ ! -f '{target_file}' ]; do sleep 1; done; cat '{target_file}'"
+        quoted = shlex.quote(target_file)
+        inner = f"while [ ! -f {quoted} ]; do sleep 1; done; cat {quoted}"
     elif watch_type == "file":
-        inner = f"while [ ! -f '{target}' ]; do sleep 1; done; ls -ld '{target}'"
+        quoted = shlex.quote(target)
+        inner = f"while [ ! -f {quoted} ]; do sleep 1; done; ls -ld {quoted}"
     elif watch_type == "pattern":
-        inner = f"touch '{target}' && tail -n +1 -f '{target}' | grep -m 1 -E '{pattern}'"
+        quoted = shlex.quote(target)
+        inner = f"touch {quoted} && tail -n +1 -f {quoted} | grep -m 1 -E {shlex.quote(pattern)}"
     else:
         raise ValueError(f"Unknown watch_type: {watch_type}")
 
     if res.kind == "native":
-        full_script = f"cd ~/{ws} && {inner}"
+        full_script = f"cd {home_shell_path(ws)} && {inner}"
     else:
-        full_script = f"{host.engine} exec -i {c_name} sh -c '{inner}'"
+        full_script = remote_argv(container_exec_args(host, c_name, inner, interactive=True))
 
     b64_cmd = base64.b64encode(full_script.encode("utf-8")).decode("ascii")
+    remote_cmd = f"echo {shlex.quote(b64_cmd)} | base64 -d | sh"
+    meta = json.dumps(
+        {
+            "env_id": res.env_id,
+            "host": res.host,
+            "watch_type": watch_type,
+            "target": target,
+            "pattern": pattern,
+        }
+    )
+    sentinel_json = meta[:-1]  # opening object with the static fields; result/timestamp appended below
     runner_script = f"""
-RESULT=$(ssh -o BatchMode=yes {host.ssh_alias} 'echo {b64_cmd} | base64 -d | sh' 2>/dev/null || echo 'WATCH_SSH_ERROR')
-cat <<EOF > "{sentinel_path}"
-{{"env_id": "{res.env_id}", "host": "{res.host}", "watch_type": "{watch_type}", "target": "{target}", "pattern": "{pattern}", "result": "$RESULT", "timestamp": $(date +%s)}}
-EOF
+RESULT=$({remote_argv(["ssh", "-o", "BatchMode=yes", host.ssh_alias, remote_cmd])} 2>/dev/null || echo 'WATCH_SSH_ERROR')
+cat > {shlex.quote(sentinel_path)} <<'SCAVENGER_SENTINEL'
+{sentinel_json}
+SCAVENGER_SENTINEL
+printf ', "result": "%s", "timestamp": %s}}\\n' "$RESULT" "$(date +%s)" >> {shlex.quote(sentinel_path)}
 """
     subprocess.Popen(["sh", "-c", runner_script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -1336,16 +1542,13 @@ def env_sync(
 
         if res.kind == "native":
             ws = res.workspace_path or f"workspaces/{res.env_id}"
-            ssh_cmd = ["ssh", "-o", "BatchMode=yes", host.ssh_alias, f"mkdir -p ~/{ws} && tar -xzf - -C ~/{ws}"]
+            remote_cmd = f"mkdir -p {home_shell_path(ws)} && tar -xzf - -C {home_shell_path(ws)}"
         else:
             c_name = res.container_name or f"scavenger-env-{res.env_id}"
-            ssh_cmd = [
-                "ssh",
-                "-o",
-                "BatchMode=yes",
-                host.ssh_alias,
-                f"{host.engine} exec -i {c_name} tar -xzf - -C /workspace",
-            ]
+            remote_cmd = remote_argv(
+                container_exec_raw_args(host, c_name, ["tar", "-xzf", "-", "-C", "/workspace"], interactive=True)
+            )
+        ssh_cmd = ["ssh", "-o", "BatchMode=yes", host.ssh_alias, remote_cmd]
 
         ssh_proc = subprocess.Popen(ssh_cmd, stdin=tar_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if tar_proc.stdout:
@@ -1358,16 +1561,11 @@ def env_sync(
         os.makedirs(local_path, exist_ok=True)
         if res.kind == "native":
             ws = res.workspace_path or f"workspaces/{res.env_id}"
-            ssh_cmd = ["ssh", "-o", "BatchMode=yes", host.ssh_alias, f"tar -czf - -C ~/{ws} ."]
+            remote_cmd = f"tar -czf - -C {home_shell_path(ws)} ."
         else:
             c_name = res.container_name or f"scavenger-env-{res.env_id}"
-            ssh_cmd = [
-                "ssh",
-                "-o",
-                "BatchMode=yes",
-                host.ssh_alias,
-                f"{host.engine} exec {c_name} tar -czf - -C /workspace .",
-            ]
+            remote_cmd = remote_argv(container_exec_raw_args(host, c_name, ["tar", "-czf", "-", "-C", "/workspace"]))
+        ssh_cmd = ["ssh", "-o", "BatchMode=yes", host.ssh_alias, remote_cmd]
 
         ssh_proc = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         untar_proc = subprocess.Popen(["tar", "-xzf", "-", "-C", local_path], stdin=ssh_proc.stdout)
@@ -1394,13 +1592,14 @@ def env_destroy(fleet: Dict[str, HostConfig], env_id: str) -> bool:
     try:
         if res.kind == "native":
             ws = res.workspace_path or f"workspaces/{env_id}"
-            destroy_res = run_ssh(host.ssh_alias, f"rm -rf ~/{ws}")
+            destroy_res = run_ssh(host.ssh_alias, f"rm -rf {home_shell_path(ws)}")
         else:
             c_name = res.container_name or f"scavenger-env-{env_id}"
             v_name = res.volume_name or f"scavenger-vol-{env_id}"
             destroy_res = run_ssh(
                 host.ssh_alias,
-                f"{host.engine} rm -f {c_name} 2>/dev/null; {host.engine} volume rm -f {v_name} 2>/dev/null || true",
+                f"{remote_argv(container_rm_args(host, c_name))} 2>/dev/null; "
+                f"{remote_argv(volume_rm_args(host, v_name))} 2>/dev/null || true",
             )
     except Exception as e:
         print(f"⚠️ Failed to destroy {env_id} on {host.name}: {e}", file=sys.stderr)
@@ -1499,10 +1698,10 @@ def _git_init_repo(path: str, marker: str) -> None:
 def _leftover_script(host: HostConfig, env_id: str) -> str:
     return f"""
 set -e
-c=$({host.engine} ps -a -q --filter name=scavenger-env-{env_id})
-v=$({host.engine} volume ls -q --filter name=scavenger-vol-{env_id})
+c=$({remote_argv([host.engine, "ps", "-a", "-q", "--filter", f"name=scavenger-env-{env_id}"])})
+v=$({remote_argv([host.engine, "volume", "ls", "-q", "--filter", f"name=scavenger-vol-{env_id}"])})
 w=""
-if [ -e ~/workspaces/{env_id} ]; then w=present; fi
+if [ -e {home_shell_path(f"workspaces/{env_id}")} ]; then w=present; fi
 echo "container=$c"
 echo "volume=$v"
 echo "workspace=$w"

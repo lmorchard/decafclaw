@@ -61,6 +61,7 @@ For multi-turn subagent sessions, full build pipelines, or dev environments wher
 
 ### `scavenger_env_create(env_id, host="", kind="container", image="alpine:latest", recipe="", setup_script="", sync_dir="", mem="16g", cpus=8, network="default", ttl="2h", arch="")`
 Reserves a warm, isolated environment across turns:
+- **`env_id`**: Must match `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$`. It becomes part of the container name, volume name, and remote workspace path, so an invalid id is refused before any remote command runs.
 - **`recipe`**: Pre-configured build recipe from the recipe directory (`recipes_dir` in `fleet.json`, else the workspace `dockerfiles/`) or the skill's bundled `dockerfiles/` (e.g. `"android-builder"`, `"node-dev"`, `"rust-builder"`). Automatically builds and caches the remote container image on the target host.
 - **`setup_script`**: Idempotent setup script executed once inside the workspace (e.g. `skills/scavenger/setup-scripts/setup-darwin-mlx.sh`). Essential for native Darwin nodes.
 - **`kind="container"`**: Creates a named container with a persistent volume (`/workspace`) on the chosen host.

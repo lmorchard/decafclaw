@@ -175,7 +175,7 @@ def test_cli_env_create_uses_fleet_recipes_dir(tmp_path, leases_file, monkeypatc
     assert image != "scavenger-recipe-custom:latest"
     assert built == [(image, str(recipes / "custom.Dockerfile"))]
     create_script = ssh.call_args_list[-1].args[1]
-    assert 'scavenger.env_id="e1"' in create_script
+    assert "scavenger.env_id=e1" in create_script
     assert "scavenger.expires_at=" in create_script
     assert "decafclaw." not in create_script
 
