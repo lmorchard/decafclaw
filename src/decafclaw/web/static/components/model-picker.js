@@ -3,19 +3,29 @@ import { LitElement, html, nothing } from 'lit';
 /** @typedef {{ name: string, models: string[] }} ModelGroup */
 
 /**
- * Shared conversation model picker (#1441).
+ * Shared model picker.
  *
- * Replaces the three native model `<select>`s with one searchable popup.
+ * `mode: 'conversation'` (default, #1441) renders the conversation selector:
+ * provider groups plus the active/default model, dispatching `set-model`.
  * Every visible value is read from properties during render: the panel,
  * trigger, and highlighted row follow `activeModel`, `defaultModel`, and
  * `groups` as the store re-sends them, which preserves the #1440
  * session-switch sync behavior.
+ *
+ * `mode: 'selection'` (#1948) serves settings model pointers. It renders a
+ * flat `options` list plus an `emptyLabel` inherit choice and dispatches
+ * `model-select` with `{ value }`; no conversation is involved.
  */
 export class ModelPicker extends LitElement {
   static properties = {
+    mode: { type: String },
     groups: { type: Array },
+    options: { type: Array },
     activeModel: { type: String, attribute: 'active-model' },
     defaultModel: { type: String, attribute: 'default-model' },
+    value: { type: String },
+    emptyLabel: { type: String, attribute: 'empty-label' },
+    label: { type: String },
     disabled: { type: Boolean, reflect: true },
     convId: { type: String, attribute: 'conv-id' },
     inline: { type: Boolean, reflect: true },
@@ -31,10 +41,16 @@ export class ModelPicker extends LitElement {
 
   constructor() {
     super();
+    this.mode = 'conversation';
     /** @type {ModelGroup[]} */
     this.groups = [];
+    /** @type {string[]} */
+    this.options = [];
     this.activeModel = '';
     this.defaultModel = '';
+    this.value = '';
+    this.emptyLabel = '';
+    this.label = '';
     this.disabled = false;
     this.convId = '';
     this.inline = false;
@@ -90,28 +106,38 @@ export class ModelPicker extends LitElement {
     }
   }
 
+  /** @returns {boolean} */
+  #isSelection() {
+    return this.mode === 'selection';
+  }
+
   /** The model the trigger and selected marker represent. @returns {string} */
   #target() {
+    if (this.#isSelection()) return this.value || '';
     return this.activeModel || this.defaultModel || '';
   }
 
-  /** Flat configured model list from the current groups. @returns {string[]} */
+  /** Flat configured model list from the current groups or selection options. @returns {string[]} */
   #configuredModels() {
+    if (this.#isSelection()) return this.options || [];
     return (this.groups || []).flatMap((group) => group.models || []);
   }
 
   /**
-   * Groups visible under the current search. Adds a synthetic "Current"
-   * group when the active model is not configured, so an unconfigured
-   * model stays visible and selectable as the current value.
+   * Groups visible under the current search. Selection mode uses a single
+   * flat "Models" group. Either mode adds a synthetic "Current" group when
+   * the selected model is not configured, so an unconfigured model stays
+   * visible and selectable as the current value.
    * @returns {ModelGroup[]}
    */
   #visibleGroups() {
     const target = this.#target();
     /** @type {ModelGroup[]} */
-    let groups = this.groups && this.groups.length
-      ? this.groups
-      : [{ name: 'Models', models: [] }];
+    let groups = this.#isSelection()
+      ? [{ name: 'Models', models: this.options || [] }]
+      : (this.groups && this.groups.length
+        ? this.groups
+        : [{ name: 'Models', models: [] }]);
     if (target && !this.#configuredModels().includes(target)) {
       groups = [{ name: 'Current', models: [target] }, ...groups];
     }
@@ -129,9 +155,14 @@ export class ModelPicker extends LitElement {
       .filter((group) => group.models.length > 0);
   }
 
-  /** @returns {string[]} */
+  /**
+   * Keyboard-navigable rows. Selection mode pins the empty/inherit choice
+   * at the top while the search is empty; typing searches only real models.
+   * @returns {string[]}
+   */
   #flatModels() {
-    return this.#visibleGroups().flatMap((group) => group.models);
+    const models = this.#visibleGroups().flatMap((group) => group.models);
+    return this.#isSelection() && !(this._query || '').trim() ? ['', ...models] : models;
   }
 
   #highlightIndex() {
@@ -190,7 +221,16 @@ export class ModelPicker extends LitElement {
   #choose(model) {
     const target = this.#target();
     this.#close(true);
-    if (model && model !== target) {
+    if (model === target) return;
+    if (this.#isSelection()) {
+      this.dispatchEvent(new CustomEvent('model-select', {
+        detail: { value: model },
+        bubbles: true,
+        composed: true,
+      }));
+      return;
+    }
+    if (model) {
       this.dispatchEvent(new CustomEvent('set-model', {
         detail: { model },
         bubbles: true,
@@ -243,10 +283,26 @@ export class ModelPicker extends LitElement {
   #renderList() {
     const target = this.#target();
     const groups = this.#visibleGroups();
-    let index = 0;
+    const showEmpty = this.#isSelection() && !(this._query || '').trim();
+    let index = showEmpty ? 1 : 0;
     const highlight = this.#highlightIndex();
     return html`
       <div class="model-picker-list" role="listbox" aria-label="Models">
+        ${showEmpty ? html`
+          <button
+            type="button"
+            role="option"
+            class="model-picker-option model-picker-option-empty${target === '' ? ' selected' : ''}${highlight === 0 ? ' highlighted' : ''}"
+            aria-selected=${target === '' ? 'true' : 'false'}
+            data-model=""
+            ?disabled=${this.disabled}
+            @click=${() => this.#choose('')}
+            @mousemove=${() => { this._highlight = 0; }}
+          >
+            <span class="model-picker-check" aria-hidden="true">${target === '' ? '✓' : ''}</span>
+            <span class="model-picker-model">${this.emptyLabel || 'Select model'}</span>
+          </button>
+        ` : nothing}
         ${groups.length === 0 ? html`
           <div class="model-picker-no-match">No models match “${(this._query || '').trim()}”.</div>
         ` : groups.map((group) => html`
@@ -268,7 +324,7 @@ export class ModelPicker extends LitElement {
                 >
                   <span class="model-picker-check" aria-hidden="true">${isTarget ? '✓' : ''}</span>
                   <span class="model-picker-model">${model}</span>
-                  ${model === this.defaultModel ? html`<span class="model-picker-default">default</span>` : nothing}
+                  ${!this.#isSelection() && model === this.defaultModel ? html`<span class="model-picker-default">default</span>` : nothing}
                   ${isTarget && !this.#configuredModels().includes(model) ? html`
                     <span class="model-picker-warning">⚠ not configured</span>
                   ` : nothing}
@@ -285,7 +341,8 @@ export class ModelPicker extends LitElement {
     const target = this.#target();
     const configured = this.#configuredModels();
     const unconfigured = Boolean(target && !configured.includes(target));
-    const isDefault = Boolean(target && target === this.defaultModel);
+    const isDefault = !this.#isSelection() && Boolean(target && target === this.defaultModel);
+    const emptyText = this.#isSelection() ? (this.emptyLabel || 'Select model') : 'Select model';
 
     if (this.inline) {
       return html`
@@ -297,13 +354,13 @@ export class ModelPicker extends LitElement {
     }
 
     return html`
-      <div class="model-picker-root">
+      <div class="model-picker-root${this.#isSelection() ? ' model-picker-selection' : ''}">
         <button
           type="button"
           class="model-picker-trigger"
           aria-haspopup="listbox"
           aria-expanded=${this._open ? 'true' : 'false'}
-          aria-label="Model"
+          aria-label=${this.label || 'Model'}
           ?disabled=${this.disabled}
           @click=${(/** @type {MouseEvent} */ e) => {
             e.stopPropagation();
@@ -311,7 +368,7 @@ export class ModelPicker extends LitElement {
             else this.#openPanel();
           }}
         >
-          <span class="model-picker-value">${target || 'Select model'}</span>
+          <span class="model-picker-value">${target || emptyText}</span>
           ${isDefault ? html`<span class="model-picker-default">default</span>` : nothing}
           ${unconfigured ? html`<span class="model-picker-warning" title="This model is not configured">⚠ not configured</span>` : nothing}
           <span class="model-picker-caret" aria-hidden="true">▾</span>

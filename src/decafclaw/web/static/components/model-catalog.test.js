@@ -82,6 +82,27 @@ async function mountCatalog(initialCatalog = CATALOG) {
   return { el, fetchMock };
 }
 
+/** @param {any} el @param {string} id */
+function pickerFor(el, id) {
+  return /** @type {any} */ (el.querySelector(`#${id}`));
+}
+
+/** @param {any} picker */
+async function openPicker(picker) {
+  picker.querySelector('.model-picker-trigger').click();
+  await picker.updateComplete;
+}
+
+/** @param {any} picker @param {string} model */
+async function chooseModel(picker, model) {
+  await openPicker(picker);
+  const row = [...picker.querySelectorAll('.model-picker-option')]
+    .find((option) => option.dataset.model === model);
+  expect(row).toBeTruthy();
+  row.click();
+  await picker.updateComplete;
+}
+
 describe('model-catalog component', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
@@ -184,28 +205,43 @@ describe('model-catalog component', () => {
     expect(JSON.parse(post[1].body)).toEqual({ key: 'local/qwen2.5', enabled: true });
   });
 
-  it('changing the default selector posts the pointer', async () => {
+  it('renders a model-picker for every settings selection and no model select', async () => {
+    const { el } = await mountCatalog();
+
+    expect(el.querySelectorAll('select').length).toBe(0);
+    for (const id of [
+      'catalog-default-picker',
+      'catalog-aux-approval-picker',
+      'catalog-reflection-picker',
+      'catalog-verifier-picker',
+    ]) {
+      const picker = pickerFor(el, id);
+      expect(picker).toBeTruthy();
+      expect(picker.mode).toBe('selection');
+      expect(picker.querySelector('.model-picker-trigger')).toBeTruthy();
+    }
+  });
+
+  it('default picker shows the raw pointer and posts a new choice', async () => {
     const { el, fetchMock } = await mountCatalog();
 
-    const select = el.querySelector('#catalog-default-select');
-    select.value = 'hand-model';
-    select.dispatchEvent(new Event('change'));
-    await el.updateComplete;
+    const picker = pickerFor(el, 'catalog-default-picker');
+    expect(picker.querySelector('.model-picker-trigger').textContent).toContain('local/llama3.2');
+
+    await openPicker(picker);
+    expect(picker.querySelector('[data-model=""]').textContent).toContain('(config.json default)');
+    const selected = picker.querySelector('.model-picker-option.selected');
+    expect(selected.dataset.model).toBe('local/llama3.2');
+
+    const row = [...picker.querySelectorAll('.model-picker-option')]
+      .find((option) => option.dataset.model === 'hand-model');
+    row.click();
+    await picker.updateComplete;
     await new Promise(r => setTimeout(r, 10));
 
     const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/default'));
     expect(post).toBeTruthy();
     expect(JSON.parse(post[1].body)).toEqual({ model: 'hand-model' });
-  });
-
-  it('default selector shows the raw pointer and a clear option', async () => {
-    const { el } = await mountCatalog();
-
-    const select = el.querySelector('#catalog-default-select');
-    const optionValues = [...select.querySelectorAll('option')].map(o => o.value);
-    expect(optionValues).toContain('');
-    const selected = select.querySelector('option[selected]');
-    expect(selected.value).toBe('local/llama3.2');
   });
 
   it('auto-approval picker lists the use-conversation-model default and posts the pointer', async () => {
@@ -215,18 +251,19 @@ describe('model-catalog component', () => {
       aux_approval_model: '',
     });
 
-    const select = el.querySelector('#catalog-aux-approval-select');
-    expect(select).toBeTruthy();
-    const optionValues = [...select.querySelectorAll('option')].map(o => o.value);
-    expect(optionValues).toContain('');
-    expect(optionValues).toContain('hand-model');
-    expect(optionValues).toContain('local/llama3.2');
-    // "Use conversation model" (empty) is the default when nothing is set.
-    expect(select.querySelector('option[selected]').value).toBe('');
+    const picker = pickerFor(el, 'catalog-aux-approval-picker');
+    expect(picker).toBeTruthy();
+    expect(picker.querySelector('.model-picker-trigger').textContent).toContain('(use conversation model)');
 
-    select.value = 'hand-model';
-    select.dispatchEvent(new Event('change'));
-    await el.updateComplete;
+    await openPicker(picker);
+    expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('');
+    expect([...picker.querySelectorAll('.model-picker-option')].map(o => o.dataset.model))
+      .toEqual(['', 'hand-model', 'local/llama3.2']);
+
+    const row = [...picker.querySelectorAll('.model-picker-option')]
+      .find((option) => option.dataset.model === 'hand-model');
+    row.click();
+    await picker.updateComplete;
     await new Promise(r => setTimeout(r, 10));
 
     const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/aux_approval'));
@@ -249,7 +286,7 @@ describe('model-catalog component', () => {
       },
     };
     const { el } = await mountCatalog(catalog);
-    expect(el.querySelector('#catalog-aux-approval-select')).toBeTruthy();
+    expect(pickerFor(el, 'catalog-aux-approval-picker')).toBeTruthy();
     // The judgment is a forced-tool call — a model known to lack tool
     // support gets a warning (#1213).
     expect(el.querySelector('.model-catalog-judge-warning')).toBeTruthy();
@@ -277,34 +314,37 @@ describe('model-catalog component', () => {
       reflection_model: '',
     });
 
-    const select = el.querySelector('#catalog-reflection-select');
-    expect(select).toBeTruthy();
-    const optionValues = [...select.querySelectorAll('option')].map(o => o.value);
-    expect(optionValues).toContain('');
-    expect(optionValues).toContain('hand-model');
-    expect(optionValues).toContain('local/llama3.2');
-    // Inherit (empty pointer) is the default when nothing is selected.
-    expect(select.querySelector('option[selected]').value).toBe('');
+    const picker = pickerFor(el, 'catalog-reflection-picker');
+    expect(picker).toBeTruthy();
+    expect(picker.querySelector('.model-picker-trigger').textContent)
+      .toContain('(config.json reflection / inherit)');
 
-    const verifier = el.querySelector('#catalog-verifier-select');
+    await openPicker(picker);
+    expect([...picker.querySelectorAll('.model-picker-option')].map(o => o.dataset.model))
+      .toEqual(['', 'hand-model', 'local/llama3.2']);
+    // Inherit (empty pointer) is the default when nothing is selected.
+    expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('');
+
+    const verifier = pickerFor(el, 'catalog-verifier-picker');
     expect(verifier).toBeTruthy();
-    expect([...verifier.querySelectorAll('option')].map(o => o.value)).toContain('');
+    expect(verifier.querySelector('.model-picker-trigger').textContent)
+      .toContain('(config.json verifier / inherit)');
+    await openPicker(verifier);
+    expect([...verifier.querySelectorAll('.model-picker-option')].map(o => o.dataset.model))
+      .toEqual(['', 'hand-model', 'local/llama3.2']);
   });
 
-  it('reflection selector posts the judge pointer and shows the inherit default', async () => {
+  it('reflection picker shows the judge pointer and posts a new choice', async () => {
     const { el, fetchMock } = await mountCatalog({
       ...CATALOG,
       reflection_pointer: 'local/llama3.2',
       reflection_model: 'local/llama3.2',
     });
 
-    const select = el.querySelector('#catalog-reflection-select');
-    const selected = select.querySelector('option[selected]');
-    expect(selected.value).toBe('local/llama3.2');
+    const picker = pickerFor(el, 'catalog-reflection-picker');
+    expect(picker.querySelector('.model-picker-trigger').textContent).toContain('local/llama3.2');
 
-    select.value = 'hand-model';
-    select.dispatchEvent(new Event('change'));
-    await el.updateComplete;
+    await chooseModel(picker, 'hand-model');
     await new Promise(r => setTimeout(r, 10));
 
     const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/reflection'));
@@ -312,22 +352,48 @@ describe('model-catalog component', () => {
     expect(JSON.parse(post[1].body)).toEqual({ model: 'hand-model' });
   });
 
-  it('verifier selector posts the verifier pointer', async () => {
+  it('verifier picker posts the verifier pointer', async () => {
     const { el, fetchMock } = await mountCatalog({
       ...CATALOG,
       verifier_pointer: 'local/llama3.2',
       verifier_model: 'local/llama3.2',
     });
 
-    const select = el.querySelector('#catalog-verifier-select');
-    select.value = 'hand-model';
-    select.dispatchEvent(new Event('change'));
-    await el.updateComplete;
+    const picker = pickerFor(el, 'catalog-verifier-picker');
+    await chooseModel(picker, 'hand-model');
     await new Promise(r => setTimeout(r, 10));
 
     const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/verifier'));
     expect(post).toBeTruthy();
     expect(JSON.parse(post[1].body)).toEqual({ model: 'hand-model' });
+  });
+
+  it('clearing every picker posts an empty pointer', async () => {
+    const { el, fetchMock } = await mountCatalog({
+      ...CATALOG,
+      aux_approval_pointer: 'hand-model',
+      aux_approval_model: 'hand-model',
+      reflection_pointer: 'hand-model',
+      reflection_model: 'hand-model',
+      verifier_pointer: 'hand-model',
+      verifier_model: 'hand-model',
+    });
+
+    const cases = [
+      ['catalog-default-picker', '/api/models/catalog/default'],
+      ['catalog-aux-approval-picker', '/api/models/catalog/aux_approval'],
+      ['catalog-reflection-picker', '/api/models/catalog/reflection'],
+      ['catalog-verifier-picker', '/api/models/catalog/verifier'],
+    ];
+    for (const [id, path] of cases) {
+      await chooseModel(pickerFor(el, id), '');
+      await new Promise(r => setTimeout(r, 10));
+      await el.updateComplete;
+
+      const post = fetchMock.mock.calls.find(([url]) => url.endsWith(path));
+      expect(post).toBeTruthy();
+      expect(JSON.parse(post[1].body)).toEqual({ model: '' });
+    }
   });
 
   it('warns when the reflection judge equals the active conversation model', async () => {
@@ -349,10 +415,7 @@ describe('model-catalog component', () => {
     expect(el.querySelector('.model-catalog-judge-warning')).toBeTruthy();
 
     // A different judge is fine — no warning.
-    const select = el.querySelector('#catalog-reflection-select');
-    select.value = 'hand-model';
-    select.dispatchEvent(new Event('change'));
-    await el.updateComplete;
+    await chooseModel(pickerFor(el, 'catalog-reflection-picker'), 'hand-model');
     await new Promise(r => setTimeout(r, 10));
     await el.updateComplete;
     expect(el.querySelector('.model-catalog-judge-warning')).toBeFalsy();
