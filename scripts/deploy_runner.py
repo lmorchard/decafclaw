@@ -39,6 +39,11 @@ Exit codes::
     3  deploy failed and the rollback succeeded
     4  deploy failed and the rollback also failed (service left for a human)
     5  blocked (another run holds the lock, or the SHA is quarantined)
+
+A child command that outlives its watchdog is abandoned with exit code 124
+(``COMMAND_TIMEOUT_EXIT``). The runner treats that as a failure and keeps going
+rather than blocking on a process wedged in a hard NFS mount; see
+``_run_command`` for why ``subprocess.run(timeout=...)`` cannot do this.
 """
 
 from __future__ import annotations
@@ -50,6 +55,7 @@ import logging
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -69,6 +75,10 @@ EXIT_REFUSED = 2
 EXIT_ROLLED_BACK = 3
 EXIT_ROLLBACK_FAILED = 4
 EXIT_BLOCKED = 5
+# A child command outlived its watchdog and was abandoned. Distinct from a normal
+# nonzero exit so an operator can tell "the command failed" from "we gave up on a
+# command that may still be wedged in a hard NFS mount".
+COMMAND_TIMEOUT_EXIT = 124
 
 DEFAULT_MAX_ATTEMPTS = 2
 
@@ -193,18 +203,95 @@ class RunnerConfig:
 # -- Default adapters --------------------------------------------------------
 
 
+# Every command the runner shells out to can block on a `hard` NFS mount. Such a
+# process sits in uninterruptible sleep: SIGTERM, SIGINT and even SIGKILL are
+# deferred until the syscall returns, so `kill` cannot end it. That is what froze
+# the host on 2026-11-26 -- no CPU, no memory, and no way to stop it.
+#
+# `subprocess.run(timeout=...)` does NOT help here, which is a trap worth naming:
+# on expiry it calls `kill()` and then `wait()`, and that `wait()` blocks forever
+# on a D-state child. It presents a bound that does not exist.
+#
+# What works is never blocking on the child at all. The command runs in its own
+# process group; on expiry we signal the group, then stop waiting and report a
+# distinguishable result. A wedged child may outlive us, but the runner records a
+# failure and moves on instead of holding the deploy lock forever.
+#
+# 1800s is set from measurement, not taste: this host's data home is ~16 GB and
+# gzip on it runs ~25 MB/s single-threaded (200 MB in 8s), so a full pre-deploy
+# backup legitimately takes ~11 minutes. A tighter bound would start killing real
+# backups and turning healthy deploys into refusals.
+DEFAULT_COMMAND_TIMEOUT_SEC = 1800.0
+
+
+def _command_timeout() -> float | None:
+    """Resolve the per-command watchdog from the environment.
+
+    ``0`` (or a negative value) disables it, for an operator debugging by hand.
+    """
+    raw = os.environ.get("DECAFCLAW_DEPLOY_COMMAND_TIMEOUT", "")
+    if not raw.strip():
+        return DEFAULT_COMMAND_TIMEOUT_SEC
+    try:
+        value = float(raw)
+    except ValueError:
+        log.warning(
+            "ignoring DECAFCLAW_DEPLOY_COMMAND_TIMEOUT=%r (not a number); using %ss",
+            raw,
+            DEFAULT_COMMAND_TIMEOUT_SEC,
+        )
+        return DEFAULT_COMMAND_TIMEOUT_SEC
+    return value if value > 0 else None
+
+
 def _run_command(cmd: list[str], cwd: Path | None = None) -> CommandResult:
     env = os.environ.copy()
     env["PATH"] = f"{Path.home()}/.local/bin:{env.get('PATH', '')}"
-    proc = subprocess.run(
+    timeout = _command_timeout()
+
+    if timeout is None:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return CommandResult(proc.returncode, proc.stdout, proc.stderr)
+
+    # start_new_session puts the child in its own process group so the whole
+    # tree can be signalled at once.
+    child = subprocess.Popen(
         cmd,
         cwd=str(cwd) if cwd else None,
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
+        start_new_session=True,
     )
-    return CommandResult(proc.returncode, proc.stdout, proc.stderr)
+    try:
+        stdout, stderr = child.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Signal the group, then do NOT wait. Waiting is the trap described above.
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        message = f"command exceeded the {timeout:.0f}s watchdog and was abandoned: {' '.join(cmd)}"
+        log.error(message)
+        # Do NOT read the child's pipes here. A wedged child still holds them
+        # open, so read() would block exactly like the wait() we just avoided.
+        return CommandResult(COMMAND_TIMEOUT_EXIT, "", message)
+    finally:
+        for stream in (child.stdout, child.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+    return CommandResult(child.returncode, stdout, stderr)
 
 
 def _fetch_health(url: str, timeout: float = 10.0) -> dict | None:
@@ -468,6 +555,13 @@ class DeployRunner:
                 return True, "no backup command; continuing because --allow-no-backup was given"
             return False, "no backup command configured; refusing to stop the service"
         result = self._run(self.config.backup_cmd, self.config.repo_dir)
+        if result.returncode == COMMAND_TIMEOUT_EXIT:
+            # Does not move on to stopping the service: the backup may be wedged on
+            # an NFS mount, and the next step is a stop plus a code change.
+            return False, (
+                "backup abandoned by the command watchdog; the backup directory is "
+                f"probably unreachable: {(result.stderr or result.stdout).strip()}"
+            )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()
             return False, f"backup failed (exit {result.returncode}): {detail}"
