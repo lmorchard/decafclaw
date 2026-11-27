@@ -1,14 +1,13 @@
-import { LitElement, html, nothing } from 'lit';
+import { LitElement, html } from 'lit';
 import { getConvFromUrl } from '../lib/conversation-url.js';
-import './context-inspector.js';
 import './notification-inbox.js';
-import './model-picker.js';
 import './vault-sidebar.js';
 import './files-sidebar.js';
 import './schedules-sidebar.js';
 import './calendar-sidebar.js';
 import './tags-sidebar.js';
 import './conversation-list.js';
+import './conversation-controls.js';
 
 /** Per-conversation sidebar collapse state: `sidebar-collapsed:<conv_id>` */
 const COLLAPSE_STORAGE_PREFIX = 'sidebar-collapsed:';
@@ -26,10 +25,11 @@ const SIDEBAR_SECTIONS = [
 
 /**
  * The sidebar shell. Owns tab state (which section is shown), the per-
- * conversation collapse width, the model picker, the context usage meter and
- * inspector, and the config footer. The conversation hierarchy itself — folders,
- * session groups, subagent rows, status badges, search, and the create actions —
- * lives in {@link ConversationList}.
+ * conversation collapse width, and the config footer. The conversation
+ * hierarchy itself — folders, session groups, subagent rows, status badges,
+ * search, and the create actions — lives in {@link ConversationList}; the model
+ * picker, context usage meter and inspector live in
+ * {@link ConversationControls}.
  */
 export class ConversationSidebar extends LitElement {
   static properties = {
@@ -38,20 +38,17 @@ export class ConversationSidebar extends LitElement {
     _collapsed: { type: Boolean, state: true },
     _mobileOpen: { type: Boolean, state: true },
     _sidebarSection: { type: String, state: true },
-    _contextInspectorOpen: { type: Boolean, state: true },
-    _contextVersion: { type: Number, state: true },
     _openSchedule: { type: String, state: true },
-    _hasControlsStrip: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
 
   // Change detection for #onStoreChange only — the rendered values are read
-  // straight from the store, never mirrored into reactive state (#1408).
+  // straight from the store, never mirrored into reactive state (#1408). The
+  // #lastConvId field detects the transition that re-applies the per-
+  // conversation collapse width; it is bookkeeping, not rendered state.
   /** @type {string|null} */
   #lastConvId = null;
-  /** @type {number} */
-  #lastContextUsage = 0;
 
   constructor() {
     super();
@@ -66,10 +63,7 @@ export class ConversationSidebar extends LitElement {
     if (urlConvId) this.#applyCollapsed(urlConvId);
     this._mobileOpen = false;
     this._sidebarSection = 'conversations';
-    this._contextInspectorOpen = false;
-    this._contextVersion = 0;
     this._openSchedule = '';
-    this._hasControlsStrip = document.querySelector('chat-controls') !== null;
   }
 
   openMobile() {
@@ -82,37 +76,25 @@ export class ConversationSidebar extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    this._onToggleInspector = () => {
-      this._contextInspectorOpen = !this._contextInspectorOpen;
-    };
-    document.addEventListener('toggle-context-inspector', this._onToggleInspector);
     // The store is the single source of truth: render() reads its getters
     // directly, so this handler only runs the per-change side effects and
-    // asks Lit to re-render (#1408). The #last* fields detect transitions;
-    // they are bookkeeping, not rendered state.
+    // asks Lit to re-render (#1408). The #lastConvId field detects the
+    // transition that re-applies the per-conversation collapse width; it is
+    // bookkeeping, not rendered state.
     this._onStoreChange = () => {
       const newId = this.store?.currentConvId;
       if (newId !== this.#lastConvId) {
-        this._contextInspectorOpen = false;
         // Collapse is per conversation: each tab reflects the conversation
         // it is showing instead of one global width for the whole browser.
         this.#applyCollapsed(newId);
       }
       this.#lastConvId = newId;
-      // Bump the inspector's version only when the usage actually changed,
-      // so a turn's streaming frames do not refetch diagnostics.
-      const newUsage = this.store?.contextUsage || 0;
-      if (newUsage !== this.#lastContextUsage) {
-        this._contextVersion++;
-        this.#lastContextUsage = newUsage;
-      }
       this.requestUpdate();
     };
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    document.removeEventListener('toggle-context-inspector', this._onToggleInspector);
     this.store?.removeEventListener('change', this._onStoreChange);
   }
 
@@ -376,48 +358,7 @@ export class ConversationSidebar extends LitElement {
         .active=${this._sidebarSection === 'conversations'}
         style="${this._sidebarSection !== 'conversations' ? 'display:none' : ''}"
       ></conversation-list>
-      ${!this._hasControlsStrip && (this.store?.availableModels || []).length > 0 ? html`
-      <div class="model-picker">
-        <label class="model-picker-label">Model</label>
-        <model-picker
-          .groups=${this.store?.modelGroups || []}
-          .activeModel=${this.store?.activeModel || ''}
-          .defaultModel=${this.store?.defaultModel || ''}
-          ?disabled=${Boolean(this.store?.isBusy || this.store?.isReadOnly)}
-          .convId=${this.#activeId}
-        ></model-picker>
-      </div>
-      ` : nothing}
-      ${!this._hasControlsStrip && (this.store?.contextLimit || 0) > 0 ? html`
-        ${(() => {
-          const limit = this.store?.contextLimit || 0;
-          const pct = Math.round((this.store?.contextUsage || 0) / limit * 100);
-          const cls = pct >= 100 ? 'full' : pct >= 80 ? 'warn' : '';
-          return html`
-            <div class="context-usage ${cls}" title="Click for details"
-                 style="cursor:pointer;position:relative"
-                 role="button"
-                 tabindex="0"
-                 aria-expanded=${this._contextInspectorOpen}
-                 @click=${() => { this._contextInspectorOpen = !this._contextInspectorOpen; }}
-                 @keydown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._contextInspectorOpen = !this._contextInspectorOpen; }}}>
-               <div class="context-usage-label">
-                 <span>Context</span>
-                 <span>${pct}%</span>
-               </div>
-               <div class="context-usage-bar">
-                 <div class="context-usage-fill" style="width: ${Math.min(100, pct)}%"></div>
-               </div>
-            </div>
-          `;
-        })()}
-      ` : nothing}
-      <context-inspector
-        .convId=${this.#activeId}
-        .open=${this._contextInspectorOpen}
-        .contextVersion=${this._contextVersion}
-        @close=${() => { this._contextInspectorOpen = false; }}
-      ></context-inspector>
+      <conversation-controls .store=${this.store}></conversation-controls>
       <div class="sidebar-footer">
         <div class="footer-icons">
           <theme-toggle></theme-toggle>
