@@ -1,10 +1,12 @@
 """Deterministic lifecycle and readiness policy tests for MCP client (#1148)."""
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from decafclaw import mcp_client
 from decafclaw.context import Context
 from decafclaw.events import EventBus
 from decafclaw.mcp_client import (
@@ -817,8 +819,13 @@ async def test_exhausted_budget_still_attempts_after_cooldown(monkeypatch):
     registry, caller = _make_caller(status=ConnState.FAILED, retry_count=99)
     state = registry.servers["srv"]
 
-    # Pretend the last retry happened long ago.
-    state.last_retry_time = 0.0
+    # Pretend the last retry was long enough ago to be outside the window.
+    #
+    # Relative to now, not 0.0: `time.monotonic()` is time since boot, so a
+    # literal 0.0 reads as "ancient" on a long-lived host and as "just now" on
+    # a freshly booted CI runner (where monotonic is only seconds). That made
+    # this test pass locally and fail in CI.
+    state.last_retry_time = time.monotonic() - (mcp_client._RETRY_WINDOW_S + 1)
 
     attempts = []
 
@@ -851,7 +858,7 @@ async def test_reprobe_failed_recovers_server_without_a_tool_call():
     path existed -- the connection could come back and nothing would ever look.
     """
     registry, _caller = _make_caller(status=ConnState.FAILED, retry_count=1)
-    registry.servers["srv"].last_retry_time = 0.0
+    registry.servers["srv"].last_retry_time = time.monotonic() - (mcp_client._RETRY_WINDOW_S + 1)
 
     async def fake_connect_server(config, generation=None):
         state = registry.servers["srv"]
@@ -884,7 +891,7 @@ async def test_reprobe_failed_ignores_connected_servers():
 async def test_reprobe_failed_survives_a_raising_connect():
     """One bad server must not abort the re-probe of the others."""
     registry, _caller = _make_caller(status=ConnState.FAILED, retry_count=0)
-    registry.servers["srv"].last_retry_time = 0.0
+    registry.servers["srv"].last_retry_time = time.monotonic() - (mcp_client._RETRY_WINDOW_S + 1)
     registry.disconnect_server = AsyncMock()
     registry.connect_server = AsyncMock(side_effect=RuntimeError("boom"))
 
