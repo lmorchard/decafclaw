@@ -736,17 +736,19 @@ The `DiagnosticsAndTelemetryExtension` (`src/decafclaw/extensions/diagnostics_an
   Optional fields can remain absent. A missing sidecar returns 404 and displays “No context data yet.”
   The route returns the stored data unchanged, including additional fields that the inspector does not use.
 - `GET /api/conversations/{id}/context/raw` returns the raw last request payload (`last_request.json`) with `model`, `messages`, and `tools`, plus `sources` when the composer produced per-source diagnostics.
+  Each `SourceEntry` records the lifecycle `slot` it mounted into (`head`, `delta`, `tail`, `epilogue`, or `working_memory`) and the originating `extension`, so the inspector can attribute hook-driven contributions (#1509).
   It requires authentication and applies the same conversation ownership/access checks as `/context`. If no request has been recorded yet, it returns 404.
 
 **Web UI:** Click the context usage bar in the sidebar to open a popover with:
 - **Diagnostics tab:**
   - Waffle chart (grid map) showing token allocation by source
   - Summary stats (estimated vs actual tokens, window size, compaction threshold)
-  - Source breakdown table with token counts and item details
+  - Source breakdown table with token counts, item details, slot badges, and extension attribution
   - Memory candidates with composite scores, score breakdowns, and graph expansion provenance
 - **Raw tab:**
   - "View source" inspection of the last request sent to the model
   - Model name and counts of messages and tools
+  - A slot-grouped contribution list (HEAD, DELTA, TAIL, EPILOGUE, WORKING MEMORY) with extension badges, a dashed **KV cache boundary** marker after HEAD, and the provider cacheable-prefix explanation
   - Full formatted JSON of messages and tool definitions
   - Copy button to copy the raw request JSON to the clipboard
 

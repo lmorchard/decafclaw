@@ -9,5 +9,7 @@ export type ContextSource = {
     items_included?: (number | null);
     items_truncated?: (number | null);
     details?: (ContextSourceDetails | null);
+    slot?: (string | null);
+    extension?: (string | null);
 };
 

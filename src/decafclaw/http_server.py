@@ -1514,6 +1514,10 @@ class ContextSource(BaseModel):
     items_included: int | None = None
     items_truncated: int | None = None
     details: ContextSourceDetails | None = None
+    # Lifecycle slot and originating extension for hook-driven contributions
+    # (#1509). Empty/None for sources that do not mount into a slot.
+    slot: str | None = None
+    extension: str | None = None
 
 
 class ContextCandidate(BaseModel):
@@ -1542,6 +1546,7 @@ class ContextRawResponse(BaseModel):
     model: str | None = None
     messages: list[dict[str, JsonValue]] | None = None
     tools: list[dict[str, JsonValue]] | None = None
+    sources: list[ContextSource] | None = None
 
 
 async def get_context_diagnostics(request: Request, id: str) -> JSONResponse:

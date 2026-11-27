@@ -33,6 +33,37 @@ const TYPE_LABELS = {
   graph_expansion: 'Linked page',
 };
 
+// Lifecycle slots (#1509). Each contribution's SourceEntry records the slot
+// it mounted into and the extension that produced it, so the inspector can
+// show where an injection landed and which prefix is cacheable.
+const SLOT_ORDER = ['head', 'delta', 'tail', 'epilogue', 'working_memory'];
+
+const SLOT_META = {
+  head: { label: 'HEAD', subtitle: 'Cached prefix', icon: '\u{1F535}' },
+  delta: { label: 'DELTA', subtitle: 'Chronological', icon: '\u{1F7E1}' },
+  tail: { label: 'TAIL', subtitle: 'Dynamic pre-user', icon: '\u{1F7E3}' },
+  epilogue: { label: 'EPILOGUE', subtitle: 'Post-user boundary', icon: '\u{1F7E2}' },
+  working_memory: { label: 'WORKING MEMORY', subtitle: 'This turn only', icon: '\u26AA' },
+};
+
+const SLOT_CLASS = {
+  head: 'slot-head',
+  delta: 'slot-delta',
+  tail: 'slot-tail',
+  epilogue: 'slot-epilogue',
+  working_memory: 'slot-working-memory',
+};
+
+/** @param {string} slot */
+function slotLabel(slot) {
+  return SLOT_META[slot]?.label || String(slot || '').toUpperCase();
+}
+
+/** @param {string} slot */
+function slotClass(slot) {
+  return SLOT_CLASS[slot] || 'slot-unknown';
+}
+
 export class ContextInspector extends LitElement {
   static properties = {
     convId: { type: String },
@@ -405,6 +436,8 @@ export class ContextInspector extends LitElement {
               <td>
                 <span class="source-swatch" style="background:${SOURCE_COLORS[s.source] || '#ccc'}"></span>
                 ${SOURCE_LABELS[s.source] || s.source}
+                ${this.#renderSlotBadge(s)}
+                ${this.#renderExtensionBadge(s)}
               </td>
               <td>${s.tokens_estimated?.toLocaleString()}</td>
               <td>${s.items_included}${s.items_truncated ? html` <span style="color:var(--pico-muted-color)">(+${s.items_truncated} dropped)</span>` : ''}</td>
@@ -465,6 +498,69 @@ export class ContextInspector extends LitElement {
     `;
   }
 
+  /** @param {Source} s */
+  #renderSlotBadge(s) {
+    if (!s.slot) return nothing;
+    const meta = SLOT_META[s.slot];
+    return html`<span class="slot-badge ${slotClass(s.slot)}" title="${meta?.subtitle || s.slot}">
+      ${meta?.icon || ''} ${slotLabel(s.slot)}
+    </span>`;
+  }
+
+  /** @param {Source} s */
+  #renderExtensionBadge(s) {
+    if (!s.extension) return nothing;
+    return html`<span class="extension-badge" title="Contributed by extension">${s.extension}</span>`;
+  }
+
+  /** @param {Diagnostics["sources"]} sources */
+  #renderSlotContributions(sources) {
+    const slotted = (sources || []).filter((s) => s?.slot);
+    if (!slotted.length) return nothing;
+
+    const groups = SLOT_ORDER
+      .map((slot) => ({ slot, meta: SLOT_META[slot], sources: slotted.filter((s) => s.slot === slot) }))
+      .filter((group) => group.sources.length);
+    const headIndex = groups.findIndex((group) => group.slot === 'head');
+    const boundary = html`
+      <div
+        class="kv-cache-boundary"
+        role="separator"
+        title="Messages through HEAD form the provider's cacheable prompt prefix."
+      >KV cache boundary</div>
+    `;
+
+    return html`
+      <div class="raw-section slot-contributions">
+        <h4>Slot contributions (${slotted.length})</h4>
+        ${headIndex < 0 ? boundary : nothing}
+        ${groups.map((group, index) => html`
+          <div class="slot-group ${slotClass(group.slot)}">
+            <div class="slot-group-header">
+              <span class="slot-badge ${slotClass(group.slot)}" title="${group.meta?.subtitle || group.slot}">
+                ${group.meta?.icon || ''} ${group.meta?.label || group.slot.toUpperCase()}
+              </span>
+              <span class="slot-subtitle">${group.meta?.subtitle || ''}</span>
+              <span class="slot-count">${group.sources.length}</span>
+            </div>
+            <ul class="slot-source-list">
+              ${group.sources.map((s) => html`
+                <li class="slot-source">
+                  ${this.#renderExtensionBadge(s)}
+                  <span class="slot-source-name">${SOURCE_LABELS[s.source] || s.source}</span>
+                  <span class="slot-source-cost">~${(s.tokens_estimated || 0).toLocaleString()} tok</span>
+                  ${s.items_included ? html`<span class="slot-source-items">${s.items_included} item${s.items_included === 1 ? '' : 's'}</span>` : nothing}
+                  ${s.items_truncated ? html`<span class="slot-source-items">(+${s.items_truncated} dropped)</span>` : nothing}
+                </li>
+              `)}
+            </ul>
+          </div>
+          ${index === headIndex ? boundary : nothing}
+        `)}
+      </div>
+    `;
+  }
+
   #renderRaw() {
     if (this._rawLoading) {
       return html`<div class="loading">Loading...</div>`;
@@ -507,6 +603,7 @@ export class ContextInspector extends LitElement {
             <copy-conversation-menu conv-id=${this.convId}></copy-conversation-menu>
           </div>
         </div>
+        ${this.#renderSlotContributions(d.sources)}
         ${this._rawFormat === 'tree' ? html`
           <div class="raw-section">
             <h4>Messages (${d.messages?.length || 0})</h4>

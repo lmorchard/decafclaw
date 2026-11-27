@@ -63,7 +63,15 @@ async def test_capture_freezes_request_and_settle_writes_sidecar(ctx):
     ]
     assert data["tools"] == tools
     assert data["sources"] == [
-        {"details": {}, "items_included": 1, "items_truncated": 0, "source": "system", "tokens_estimated": 12}
+        {
+            "details": {},
+            "items_included": 1,
+            "items_truncated": 0,
+            "source": "system",
+            "tokens_estimated": 12,
+            "slot": "",
+            "extension": "",
+        }
     ]
 
 

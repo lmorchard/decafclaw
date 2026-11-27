@@ -3054,6 +3054,13 @@ components:
             type: array
           - type: 'null'
           title: Tools
+        sources:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/ContextSource'
+            type: array
+          - type: 'null'
+          title: Sources
       type: object
       title: ContextRawResponse
     ContextSource:
@@ -3080,6 +3087,16 @@ components:
           anyOf:
           - $ref: '#/components/schemas/ContextSourceDetails'
           - type: 'null'
+        slot:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Slot
+        extension:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Extension
       type: object
       required:
       - source
