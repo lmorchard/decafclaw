@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from decafclaw.archive import read_archive
-from decafclaw.context import TokenUsage
+from decafclaw.context import TaskMode, TokenUsage
 from decafclaw.context_types import InjectionCursors
 from decafclaw.conversation_manager import (
     _CTX_DRIVEN_FIELDS,
@@ -754,6 +754,105 @@ async def test_start_turn_rollback_on_cancelled_status_publication(manager, conf
     # Must NOT be left stuck in busy=True
     assert state.busy is False
     assert state.agent_task is None
+
+
+# -- Context construction (#1347) ---------------------------------------------
+
+
+def _prepare_state(manager, conv_id):
+    state = manager._get_or_create(conv_id)
+    state.cancel_event = asyncio.Event()
+    state.steer_event = asyncio.Event()
+    return state
+
+
+@pytest.mark.asyncio
+async def test_build_context_user_turn_assembles_interactive_ctx(manager):
+    """``_build_context`` returns the wired USER-turn ctx and history (#1347)."""
+    state = _prepare_state(manager, "c-build-user")
+
+    built = await manager._build_context(state, kind=TurnKind.USER, user_id="u-42")
+
+    ctx = built.ctx
+    assert ctx.conv_id == "c-build-user"
+    assert ctx.channel_id == "c-build-user"
+    assert ctx.user_id == "u-42"
+    assert ctx.cancelled is state.cancel_event
+    assert ctx.steer_event is state.steer_event
+    assert ctx.manager is manager
+    assert callable(ctx.request_confirmation)
+    assert state.active_context is ctx
+    assert built.user_id == "u-42"
+    assert state.last_user_id == "u-42"
+    assert built.history == []
+    assert state.history is built.history
+
+
+@pytest.mark.asyncio
+async def test_build_context_wake_inherits_last_transport_context(manager):
+    """WAKE turns inherit the last USER turn's identity/setup (#1347).
+
+    The inherited ``user_id`` must come back on the result: ``_start_turn``
+    uses it in the wake_delivery payload.
+    """
+    state = _prepare_state(manager, "c-build-wake")
+    state.last_user_id = "u-owner"
+    seen = []
+
+    def context_setup(ctx):
+        seen.append(ctx)
+        ctx.channel_id = "chan-from-setup"
+
+    state.last_context_setup = context_setup
+
+    built = await manager._build_context(state, kind=TurnKind.WAKE)
+
+    assert built.user_id == "u-owner"
+    assert seen == [built.ctx]
+    assert built.ctx.task_mode is TaskMode.BACKGROUND_WAKE
+    assert built.ctx.channel_id == "chan-from-setup"
+    assert state.last_channel_id == "chan-from-setup"
+
+
+@pytest.mark.asyncio
+async def test_build_context_task_turn_honors_mode_and_history(manager):
+    """Task kinds default to their mode, accept an override, and keep supplied history (#1347)."""
+    state = _prepare_state(manager, "c-build-task")
+    supplied = [{"role": "user", "content": "history"}]
+
+    built = await manager._build_context(
+        state,
+        kind=TurnKind.SCHEDULED_TASK,
+        task_mode=TaskMode.INTERACTIVE,
+        history=supplied,
+    )
+
+    assert built.ctx.task_mode is TaskMode.INTERACTIVE
+    assert built.history is supplied
+    assert state.history is supplied
+
+
+@pytest.mark.asyncio
+async def test_build_context_resets_partial_accounting(manager):
+    """Construction clears the previous turn's streamed/cancel accounting (#1347)."""
+    state = _prepare_state(manager, "c-build-reset")
+    state.partial_assistant_chunks = ["old"]
+    state.partial_assistant_thinking_chunks = ["old"]
+    state.current_iteration_assistant_chunks = ["old"]
+    state.current_iteration_thinking_chunks = ["old"]
+    state.cancel_observed_by_agent = True
+    state.cancel_marker_written = True
+    state.turn_aborted_marker_written = True
+
+    await manager._build_context(state, kind=TurnKind.USER)
+
+    assert state.partial_assistant_chunks == []
+    assert state.partial_assistant_thinking_chunks == []
+    assert state.current_iteration_assistant_chunks == []
+    assert state.current_iteration_thinking_chunks == []
+    assert state.cancel_observed_by_agent is False
+    assert state.cancel_marker_written is False
+    assert state.turn_aborted_marker_written is False
 
 
 # -- suppress_user_message on WAKE turns -------------------------------------

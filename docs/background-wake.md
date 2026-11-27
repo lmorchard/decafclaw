@@ -34,7 +34,7 @@ _finalize_job(job):
                               Otherwise: queue behind in-flight turn via busy flag
                               │
                               ▼
-                              _start_turn builds Context for conv X
+                              _build_context builds Context for conv X
                               Loads full history from archive
                               ContextComposer expands background_event records
                               into synthetic tool-call + tool-result pairs
@@ -343,7 +343,7 @@ raced with those turns.
 After the refactor, every turn kind — user messages, heartbeat sections,
 scheduled tasks, child-agent delegations, and wake turns — enters via
 `manager.enqueue_turn(kind=TurnKind.WAKE)`. The `TurnKind` enum drives
-per-kind policy inside `_start_turn`:
+per-kind policy across `_start_turn` / `_build_context` (#1347):
 
 | Policy | USER | HEARTBEAT_SECTION / SCHEDULED_TASK / CHILD_AGENT | WAKE |
 |--------|------|--------------------------------------------------|------|
