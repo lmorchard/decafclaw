@@ -1380,7 +1380,15 @@ def env_exec(
     command: str,
     timeout_seconds: int = 1800,
 ) -> subprocess.CompletedProcess[str]:
-    """Execute a command inside an active reserved environment."""
+    """Execute a command inside an active reserved environment.
+
+    The command is passed through `shlex.quote` before it reaches the remote
+    shell. Wrapping it in literal single quotes instead (the previous form)
+    silently truncated any command that itself contained a single quote —
+    heredocs, `python3 -c "..."`, `awk '{print $1}'` and similar all arrived
+    mangled or with an "unterminated quoted string" error, and the failure
+    looked like a quoting mistake in the caller rather than in this builder.
+    """
     host = fleet.get(res.host)
     if not host:
         raise ValueError(f"Unknown host {res.host} for environment {res.env_id}")
