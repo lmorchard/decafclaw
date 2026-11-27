@@ -10,7 +10,7 @@ WorkingDirectory=%h/decafclaw
 ExecStart=/usr/bin/python3 %h/decafclaw/scripts/backup.py \
     --data-home %h/.decafclaw/decafclaw \
     --repo-dir %h/decafclaw \
-    --backup-dir %h/.decafclaw/decafclaw/backups
+    --backup-dir /mnt/decafclaw-backups
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 StandardOutput=journal
 StandardError=journal
