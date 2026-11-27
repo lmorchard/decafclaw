@@ -6,6 +6,7 @@ the exact payload (messages, tools) and script responses for behavior.
 """
 
 import asyncio
+from unittest.mock import patch
 
 import pytest
 
@@ -231,6 +232,34 @@ class TestBatch:
         assert result.data["results"][0]["text"] == "fast"
         assert result.data["results"][1]["ok"] is False
         assert "timed out" in result.data["results"][1]["error"]
+
+
+class TestSharedBatchEngine:
+    """#1336: the batch fan-out routes through the shared run_concurrent helper."""
+
+    @pytest.mark.asyncio
+    async def test_llm_query_batch_calls_run_concurrent(self, ctx, provider):
+        """A list prompt fans out via the shared engine with the batch
+        concurrency constant; its results and summary pass through."""
+        from decafclaw.tools.llm_tools import BATCH_CONCURRENCY
+
+        seen: dict = {}
+
+        async def fake_run_concurrent(worker, items, concurrency, publish_status, **kwargs):
+            seen["items"] = list(items)
+            seen["concurrency"] = concurrency
+            return (
+                [{"index": i, "ok": True, "text": f"done {p}"} for i, p in enumerate(items)],
+                {"total": len(items), "ok": len(items), "failed": 0},
+            )
+
+        with patch("decafclaw.tools.llm_tools.run_concurrent", side_effect=fake_run_concurrent):
+            result = await tool_llm_query(ctx, prompt=["a", "b"], model=MODEL_NAME)
+
+        assert seen["items"] == ["a", "b"]
+        assert seen["concurrency"] == BATCH_CONCURRENCY
+        assert result.data["summary"] == {"total": 2, "ok": 2, "failed": 0}
+        assert result.text == "2 completions: 2 succeeded, 0 failed"
 
 
 @pytest.mark.scripted_provider

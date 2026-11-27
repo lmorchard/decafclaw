@@ -872,6 +872,32 @@ class TestDelegateTasks:
         assert child_ctx.event_context_id == "parent-subscriber-id"
 
 
+class TestSharedBatchEngine:
+    """#1336: the batch fan-out routes through the shared run_concurrent helper."""
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_calls_run_concurrent(self, ctx):
+        """tool_delegate_tasks fans out via the shared engine with the
+        configured concurrency cap; its results and summary pass through."""
+        seen: dict = {}
+
+        async def fake_run_concurrent(worker, items, concurrency, publish_status, **kwargs):
+            seen["items"] = list(items)
+            seen["concurrency"] = concurrency
+            return (
+                [{"index": i, "ok": True, "text": f"done {t}"} for i, t in enumerate(items)],
+                {"total": len(items), "ok": len(items), "failed": 0},
+            )
+
+        with patch("decafclaw.tools.delegate.run_concurrent", side_effect=fake_run_concurrent):
+            result = await tool_delegate_tasks(ctx, ["a", "b"])
+
+        assert seen["items"] == ["a", "b"]
+        assert seen["concurrency"] == ctx.config.agent.max_parallel_delegates
+        assert result.data["summary"] == {"total": 2, "ok": 2, "failed": 0}
+        assert result.data["results"][1]["text"] == "done b"
+
+
 # -- Abnormal child termination must still hand back accumulated work (#707 round 1) --
 
 

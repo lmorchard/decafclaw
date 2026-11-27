@@ -9,6 +9,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..media import ToolResult
+from ._batch_common import run_concurrent
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -662,10 +663,6 @@ async def _run_one_delegated(
     *,
     task: str,
     idx: int,
-    semaphore: asyncio.Semaphore,
-    progress: dict,
-    progress_lock: asyncio.Lock,
-    total: int,
     model: str,
     allow_vault_retrieval: bool,
     allow_vault_read: bool,
@@ -674,80 +671,57 @@ async def _run_one_delegated(
     read_only: bool = False,
     strict: bool = False,
 ) -> dict:
-    """Run one child of a `delegate_tasks` batch under a semaphore.
+    """Run one child of a `delegate_tasks` batch.
 
     Returns a dict matching the per-task entry shape on
     ``ToolResult.data["results"]``: index + ok + (text/data | error).
 
     Per-child events are routed to a dedicated id (the child's own
-    conv id) so they don't flood the parent UI; the parent emits one
-    aggregate ``tool_status`` event per completion via this helper.
+    conv id) so they don't flood the parent UI; the batch engine emits
+    one aggregate ``tool_status`` event per completion.
     """
-    async with semaphore:
-        try:
-            text, data = await run_child_turn(
-                parent_ctx,
-                task,
-                model=model,
-                allow_vault_retrieval=allow_vault_retrieval,
-                allow_vault_read=allow_vault_read,
-                allow_vault_write=allow_vault_write,
-                return_schema=return_schema,
-                event_context_id_override=f"delegate-tasks-child-{idx}",
-                read_only=read_only,
-                strict=strict,
-            )
-        except Exception as exc:
-            log.warning(
-                "delegate_tasks: child %d raised unexpectedly: %s",
-                idx,
-                exc,
-                exc_info=True,
-            )
-            entry: dict = {
-                "index": idx,
-                "ok": False,
-                "error": f"delegate_tasks internal error: {exc}",
-            }
-        else:
-            # `run_child_turn` surfaces failure via an ERROR_TEXT_PREFIX-tagged
-            # text + data=None (lenient errors) or via structured-validation
-            # failure data (strict mode, #1123); either way it is a failed task.
-            failed = data is None and text.startswith(ERROR_TEXT_PREFIX)
-            if (
-                isinstance(data, dict)
-                and isinstance(data.get("structured"), dict)
-                and data["structured"].get("ok") is False
-            ):
-                failed = True
-            if failed:
-                entry = {"index": idx, "ok": False, "error": text}
-            elif data is None:
-                entry = {"index": idx, "ok": True, "text": text}
-            else:
-                entry = {
-                    "index": idx,
-                    "ok": True,
-                    "text": text,
-                    "data": data,
-                }
+    try:
+        text, data = await run_child_turn(
+            parent_ctx,
+            task,
+            model=model,
+            allow_vault_retrieval=allow_vault_retrieval,
+            allow_vault_read=allow_vault_read,
+            allow_vault_write=allow_vault_write,
+            return_schema=return_schema,
+            event_context_id_override=f"delegate-tasks-child-{idx}",
+            read_only=read_only,
+            strict=strict,
+        )
+    except Exception as exc:
+        log.warning(
+            "delegate_tasks: child %d raised unexpectedly: %s",
+            idx,
+            exc,
+            exc_info=True,
+        )
+        return {
+            "index": idx,
+            "ok": False,
+            "error": f"delegate_tasks internal error: {exc}",
+        }
 
-        async with progress_lock:
-            progress["done"] += 1
-            done = progress["done"]
-        try:
-            await parent_ctx.publish(
-                "tool_status",
-                tool="delegate_tasks",
-                message=f"{done}/{total} subtasks complete",
-            )
-        except Exception:
-            log.debug(
-                "delegate_tasks: failed to publish progress event (child %d)",
-                idx,
-                exc_info=True,
-            )
-        return entry
+    # `run_child_turn` surfaces failure via an ERROR_TEXT_PREFIX-tagged
+    # text + data=None (lenient errors) or via structured-validation
+    # failure data (strict mode, #1123); either way it is a failed task.
+    failed = data is None and text.startswith(ERROR_TEXT_PREFIX)
+    if isinstance(data, dict) and isinstance(data.get("structured"), dict) and data["structured"].get("ok") is False:
+        failed = True
+    if failed:
+        return {"index": idx, "ok": False, "error": text}
+    if data is None:
+        return {"index": idx, "ok": True, "text": text}
+    return {
+        "index": idx,
+        "ok": True,
+        "text": text,
+        "data": data,
+    }
 
 
 async def tool_delegate_tasks(
@@ -812,20 +786,18 @@ async def tool_delegate_tasks(
         "yes" if return_schema else "no",
     )
 
-    semaphore = asyncio.Semaphore(max(1, cap_parallel))
-    progress: dict = {"done": 0}
-    progress_lock = asyncio.Lock()
-    total = len(tasks)
+    async def _publish(done: int, total: int) -> None:
+        await ctx.publish(
+            "tool_status",
+            tool="delegate_tasks",
+            message=f"{done}/{total} subtasks complete",
+        )
 
-    coros = [
-        _run_one_delegated(
+    async def _worker(idx: int, task: str) -> dict:
+        return await _run_one_delegated(
             ctx,
-            task=t,
-            idx=i,
-            semaphore=semaphore,
-            progress=progress,
-            progress_lock=progress_lock,
-            total=total,
+            task=task,
+            idx=idx,
             model=model,
             allow_vault_retrieval=allow_vault_retrieval,
             allow_vault_read=allow_vault_read,
@@ -834,44 +806,20 @@ async def tool_delegate_tasks(
             read_only=read_only,
             strict=strict,
         )
-        for i, t in enumerate(tasks)
-    ]
-    raw_results = await asyncio.gather(*coros, return_exceptions=True)
 
-    # Replace any leaked exception with a structured failure entry.
-    # `_run_one_delegated` already swallows child errors, so this is
-    # purely defensive against bugs in the gather/setup path.
-    results: list[dict] = []
-    for i, r in enumerate(raw_results):
-        if isinstance(r, BaseException):
-            log.warning(
-                "delegate_tasks: gather slot %d raised unexpectedly: %s",
-                i,
-                r,
-                exc_info=r,
-            )
-            results.append(
-                {
-                    "index": i,
-                    "ok": False,
-                    "error": f"delegate_tasks internal error: {r}",
-                }
-            )
-        else:
-            results.append(r)
+    results, summary = await run_concurrent(
+        _worker,
+        tasks,
+        cap_parallel,
+        _publish,
+        failure_text=lambda idx, exc: f"delegate_tasks internal error: {exc}",
+    )
 
-    results.sort(key=lambda e: e["index"])
-    ok_count = sum(1 for e in results if e["ok"])
-    fail_count = total - ok_count
-    summary_line = f"{total} subtasks: {ok_count} succeeded, {fail_count} failed"
+    summary_line = f"{summary['total']} subtasks: {summary['ok']} succeeded, {summary['failed']} failed"
     return ToolResult(
         text=summary_line,
         data={
-            "summary": {
-                "total": total,
-                "ok": ok_count,
-                "failed": fail_count,
-            },
+            "summary": summary,
             "results": results,
         },
     )
