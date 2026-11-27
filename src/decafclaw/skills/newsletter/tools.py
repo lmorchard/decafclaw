@@ -20,6 +20,7 @@ from decafclaw.scheduled_activity import (
     is_status_token,
     parse_scheduled_conv_id,
 )
+from decafclaw.skill_state import skill_state
 from decafclaw.skills.vault.tools import collect_recent_pages, resolve_page
 
 if TYPE_CHECKING:
@@ -33,8 +34,6 @@ log = logging.getLogger(__name__)
 _TEMPLATE_PATH = Path(__file__).with_name("template.html")
 _NEWSLETTER_TEMPLATE = _TEMPLATE_PATH.read_text(encoding="utf-8")
 _CONTENT_PLACEHOLDER = "<!--NEWSLETTER_CONTENT-->"
-
-_skill_config: "SkillConfig | None" = None
 
 
 @dataclass
@@ -60,10 +59,14 @@ class SkillConfig:
     )
 
 
+# Shared state holder (#1373): the dataclass defaults are the fallback until
+# init() stores the resolved config, so read sites need no None guards.
+_skill_config = skill_state(SkillConfig())
+
+
 def init(config, skill_config: SkillConfig) -> None:
     """Initialize the newsletter skill. Called by the skill loader on activation."""
-    global _skill_config
-    _skill_config = skill_config
+    _skill_config.init(skill_config)
 
 
 _SELF_SKILL_NAME = "newsletter"
@@ -97,7 +100,8 @@ def _resolve_hours(window: str, hours: int | None) -> tuple[int, str]:
         h = _parse_window(window)
         return h, window.strip()
     if hours is None:
-        hours = _skill_config.window_hours if _skill_config is not None else 24
+        resolved = _skill_config.window_hours  # SkillConfig default via the holder
+        return resolved, f"{resolved}h"
     return hours, f"{hours}h"
 
 
@@ -284,9 +288,7 @@ def _collect_vault_changes(ctx: "Context", hours: int = 24) -> list[dict]:
     Excludes files under the newsletter output folder (self-references).
     """
     cutoff_ts = (datetime.now(timezone.utc) - timedelta(hours=hours)).timestamp()
-    newsletter_folder = None
-    if _skill_config is not None:
-        newsletter_folder = _skill_config.vault_folder
+    newsletter_folder = _skill_config.vault_folder
 
     out: list[dict] = []
     # Shared, symlink-safe recency scan (see vault.tools.collect_recent_pages).
@@ -489,7 +491,7 @@ async def newsletter_publish(
     )
 
     delivered_targets: list[str] = []
-    if has_content and _skill_config is not None:
+    if has_content:
         # Email delivery
         if _skill_config.email_enabled and _skill_config.email_recipients:
             subject_suffix = subject_hint or now.strftime("%Y-%m-%d")

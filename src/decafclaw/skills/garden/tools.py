@@ -18,6 +18,7 @@ from decafclaw.frontmatter import (
     split_frontmatter,
 )
 from decafclaw.media import ToolResult
+from decafclaw.skill_state import skill_state
 from decafclaw.skills.vault._events import KIND_UPDATE, publish_vault_changed
 from decafclaw.skills.vault._sections import Document
 from decafclaw.skills.vault.tools import (
@@ -51,13 +52,14 @@ class SkillConfig:
     excluded_folders: tuple[str, ...] = ("notifications", "kindle")
 
 
-_DEFAULT_EXCLUDED_FOLDERS = ("notifications", "kindle")
+# Shared state holder (#1373): the dataclass defaults are the fallback until
+# init() stores the resolved config, so read sites need no None guards.
+_skill_config = skill_state(SkillConfig())
 
 
 def _excluded_folders() -> tuple[str, ...]:
     """Agent-pages-relative folder prefixes that are out of scope for gardening."""
-    configured = getattr(_skill_config, "excluded_folders", None)
-    return tuple(configured) if configured is not None else _DEFAULT_EXCLUDED_FOLDERS
+    return _skill_config.excluded_folders
 
 
 def _is_excluded(rel: str) -> bool:
@@ -68,12 +70,8 @@ def _is_excluded(rel: str) -> bool:
     return any(folder in _excluded_folders() for folder in folders)
 
 
-_skill_config = SkillConfig()
-
-
 def init(config, skill_config: SkillConfig):
-    global _skill_config
-    _skill_config = skill_config
+    _skill_config.init(skill_config)
 
 
 def _iter_importance_candidates(config) -> list[tuple[str, Path]]:

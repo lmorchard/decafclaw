@@ -6,13 +6,12 @@ from typing import TYPE_CHECKING
 
 from decafclaw.media import ToolResult
 from decafclaw.scheduled_activity import collect_scheduled_activity
+from decafclaw.skill_state import skill_state
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
-
-_skill_config = None
 
 
 @dataclass
@@ -23,10 +22,14 @@ class SkillConfig:
     )
 
 
+# Shared state holder (#1373): the dataclass defaults are the fallback until
+# init() stores the resolved config, so read sites need no None guards.
+_skill_config = skill_state(SkillConfig())
+
+
 def init(config, skill_config: SkillConfig) -> None:
     """Initialize the dream skill. Called by the skill loader on activation."""
-    global _skill_config
-    _skill_config = skill_config
+    _skill_config.init(skill_config)
 
 
 async def dream_recent_runs(ctx: "Context", days: int | None = None) -> ToolResult:
@@ -35,7 +38,7 @@ async def dream_recent_runs(ctx: "Context", days: int | None = None) -> ToolResu
     Returns recent dream runs with started_at, final_message, and vault_pages_touched
     so dream can see what topics and pages were touched recently and avoid rehashing them.
     """
-    default_days = _skill_config.window_days if _skill_config is not None else 7
+    default_days = _skill_config.window_days
     if days is None:
         resolved_days = default_days
     else:

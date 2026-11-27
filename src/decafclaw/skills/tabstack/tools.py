@@ -14,6 +14,7 @@ from tabstack import APIStatusError, AsyncTabstack
 from tabstack.types import GeotargetGeoTarget
 
 from decafclaw.media import ToolResult, WidgetRequest
+from decafclaw.skill_state import SkillState
 from decafclaw.tools.confirmation import request_confirmation
 
 if TYPE_CHECKING:
@@ -28,25 +29,26 @@ class SkillConfig:
     api_url: str = field(default="", metadata={"env_alias": "TABSTACK_API_URL"})
 
 
-# Initialized once via init(config, skill_config) on skill activation
-_client: AsyncTabstack | None = None
+# Shared state holder (#1373): the client is built in init() on skill
+# activation; until then get() returns None and _get_client fails fast.
+_client = SkillState[AsyncTabstack | None](None)
 
 
 def init(config, skill_config: SkillConfig):
     """Initialize the Tabstack client. Called by the skill loader on activation."""
-    global _client
     api_url = skill_config.api_url or None
     if api_url:
-        _client = AsyncTabstack(api_key=skill_config.api_key, base_url=api_url)
+        _client.init(AsyncTabstack(api_key=skill_config.api_key, base_url=api_url))
     else:
-        _client = AsyncTabstack(api_key=skill_config.api_key)
+        _client.init(AsyncTabstack(api_key=skill_config.api_key))
     log.info(f"Tabstack client initialized (url={api_url or 'default'})")
 
 
 def _get_client() -> AsyncTabstack:
-    if _client is None:
+    client = _client.get()
+    if client is None:
         raise RuntimeError("Tabstack not initialized — skill not activated?")
-    return _client
+    return client
 
 
 # -- Read / extract tools ---------------------------------------------------
