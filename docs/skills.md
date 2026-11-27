@@ -270,6 +270,26 @@ Config resolution order per field:
 
 All `SkillConfig` fields must have defaults. Validate required values in `init()` and return a clear error if missing.
 
+#### State holder for config and module globals (`SkillState`)
+
+Skills that retain resolved state across tool calls use the shared `SkillState` holder (`decafclaw/skill_state.py`) instead of hand-rolling a mutable module global, a `global` statement in `init`, and None-guard fallbacks at every read site. Declare one holder per piece of state, seeded with the dataclass default:
+
+```python
+from decafclaw.skill_state import skill_state
+
+_skill_config = skill_state(SkillConfig())
+
+
+def init(config, skill_config: SkillConfig):
+    _skill_config.init(skill_config)  # no `global` statement
+
+
+def my_tool(ctx, days: int | None = None):
+    default_days = _skill_config.window_days  # dataclass default until init() runs
+```
+
+`get()` returns the stored value after `init()`, otherwise the default; attribute access on the holder (`_skill_config.window_days`) delegates to `get()`, so read sites need no None guards. The loader imports a fresh module object per activation, so each activation gets independent state. `dream`, `newsletter`, and `garden` hold their `SkillConfig`; `tabstack` holds the client it builds in `init()` (default `None`, fail-fast on use before activation).
+
 **Important:** Skills are loaded dynamically via `importlib.spec_from_file_location`, which does not set Python package context. This means `tools.py` **must use absolute imports**, not relative imports:
 
 ```python
