@@ -446,6 +446,31 @@ async def tool_calendar_update(
     if not changes:
         return ToolResult(text="[error: No changes were supplied]", data={"error": "no_changes"})
 
+    # A human grant is authored per-content, so editing the content voids it (#2018).
+    #
+    # `policy_granted` says "a human wrote this on the web surface, so its wake may
+    # install preapprovals". The agent cannot set that flag itself, but it can
+    # rewrite everything the flag covers: `_build_prompt` renders the title and
+    # reason as the turn's instructions, `session_*` decides which conversation
+    # receives the preapprovals, and `fire_at` decides when. Left alone, `reason`
+    # is the sharpest edge — replacing it substitutes agent-authored text into a
+    # turn that then runs preapproved shell patterns with no confirmation.
+    #
+    # Stripping on *any* change rather than diffing for "meaningful" edits is
+    # deliberate: a title edit is instruction-adjacent too, and a content diff
+    # would be a heuristic an attacker is invited to study. The cost is that an
+    # agent tidying a granted event drops it back to un-preapproved, which is the
+    # safe direction to be wrong in. The human re-grants in the editor.
+    cleared_grant = False
+    if event.policy_granted:
+        changes["policy_granted"] = False
+        cleared_grant = True
+        log.info(
+            "Calendar event %s: agent edit cleared the human policy grant (#2018) — "
+            "the preapproval was authored for content that just changed",
+            event_key,
+        )
+
     try:
         updated = await mgr.update(ctx.conv_id, event_key, **changes)
     except ValueError as exc:
@@ -462,10 +487,16 @@ async def tool_calendar_update(
     if updated is None:
         return ToolResult(text=f"[error: Calendar event '{event_key}' not found]", data={"error": "not_found"})
     await _publish_changed(ctx, updated, "updated")
-    return ToolResult(
-        text=f"Updated calendar event '{updated.event_id}' to fire at {updated.fire_at}: {updated.title}",
-        data=asdict(updated),
-    )
+    summary = f"Updated calendar event '{updated.event_id}' to fire at {updated.fire_at}: {updated.title}"
+    if cleared_grant:
+        # Say it out loud. An agent that quietly loses a preapproval would blame
+        # the scheduler later; and the human needs to know to re-grant.
+        summary += (
+            " — note: this edit cleared the event's human-granted preapproval, because"
+            " the grant was authored for the previous content. Re-grant it in the"
+            " calendar editor if the wake should keep running preapproved commands."
+        )
+    return ToolResult(text=summary, data=asdict(updated))
 
 
 async def tool_calendar_cancel(ctx: "Context", event_id: str) -> ToolResult:
