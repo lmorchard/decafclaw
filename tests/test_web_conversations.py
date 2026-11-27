@@ -1699,6 +1699,17 @@ async def test_context_raw_endpoint_serves_sidecar_and_checks_auth(authed_client
         "model": "gpt-4o",
         "messages": [{"role": "user", "content": "hello"}],
         "tools": [{"type": "function", "function": {"name": "test"}}],
+        "sources": [
+            {
+                "source": "vault_guide",
+                "tokens_estimated": 12,
+                "items_included": 1,
+                "items_truncated": 0,
+                "details": {},
+                "slot": "head",
+                "extension": "vault_guide",
+            }
+        ],
     }
     _write_snapshot(http_config, conv_id, payload)
 
