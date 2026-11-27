@@ -920,6 +920,65 @@ class TestCoreToolsDeclareWrites:
         assert not missing, f"Bundled skill tool definitions missing boolean 'writes' field: {missing}."
 
 
+# -- Invariant: TOOLS and TOOL_DEFINITIONS derive from one source (#1338) ------
+#
+# The registry used to maintain two parallel hand-kept lists (one per module,
+# for the dispatch dict and one for the schema list) that could silently
+# diverge in coverage or order. Both are now derived from a single source, and
+# these tests pin the correspondence so a future module that adds one side
+# without the other fails loudly.
+
+
+class TestRegistryCorrespondence:
+    """Every registered tool has a schema definition, and vice versa."""
+
+    def test_every_tool_has_definition(self):
+        from decafclaw.tools import _DISPATCH_ONLY_TOOLS, TOOL_DEFINITIONS, TOOLS
+
+        def_names = {td.get("function", {}).get("name") for td in TOOL_DEFINITIONS}
+        missing = sorted(set(TOOLS) - def_names - _DISPATCH_ONLY_TOOLS)
+        assert not missing, (
+            f"Registered tools with no schema definition: {missing}. "
+            "Add the definition, or document the name in _DISPATCH_ONLY_TOOLS."
+        )
+
+    def test_every_definition_has_tool(self):
+        from decafclaw.tools import TOOL_DEFINITIONS, TOOLS
+
+        def_names = {td.get("function", {}).get("name") for td in TOOL_DEFINITIONS}
+        missing = sorted(n for n in def_names if n is not None and n not in TOOLS)
+        assert not missing, (
+            f"Schema definitions with no registered tool: {missing}. Remove the definition or register the tool."
+        )
+
+    def test_each_source_module_corresponds(self):
+        """Per-module correspondence — the stronger check, since a name missing
+        in one module could be masked at assembly by another module defining it."""
+        from decafclaw.tools import _DISPATCH_ONLY_TOOLS, _TOOL_SOURCES
+
+        for tools, defs in _TOOL_SOURCES:
+            tool_names = set(tools)
+            def_names = {d.get("function", {}).get("name") for d in defs}
+            missing_def = tool_names - def_names - _DISPATCH_ONLY_TOOLS
+            missing_tool = {n for n in def_names if n is not None} - tool_names
+            assert not missing_def, f"Tools without definitions: {sorted(missing_def)}"
+            assert not missing_tool, f"Definitions without tools: {sorted(missing_tool)}"
+
+    def test_dispatch_only_allowlist_not_stale(self):
+        """The documented exception must be live: each name is registered and
+        still definition-less. A stale entry (tool removed, or a definition
+        added) would otherwise pass silently."""
+        from decafclaw.tools import _DISPATCH_ONLY_TOOLS, TOOL_DEFINITIONS, TOOLS
+
+        def_names = {td.get("function", {}).get("name") for td in TOOL_DEFINITIONS}
+        unregistered = _DISPATCH_ONLY_TOOLS - set(TOOLS)
+        assert not unregistered, f"_DISPATCH_ONLY_TOOLS names no longer registered: {sorted(unregistered)}"
+        with_defs = _DISPATCH_ONLY_TOOLS & def_names
+        assert not with_defs, (
+            f"_DISPATCH_ONLY_TOOLS names gained definitions — remove them from the allowlist: {sorted(with_defs)}"
+        )
+
+
 # -- No duplicate function declarations reach the provider (#684) --------------
 #
 # Providers reject a request carrying two declarations of the same function
