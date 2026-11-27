@@ -16,6 +16,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ..media import ToolResult
+from ._batch_common import run_concurrent
 from .delegate import (
     ERROR_TEXT_PREFIX,
     _parse_structured_output,
@@ -213,10 +214,6 @@ async def _run_one(
     strict: bool,
     timeout: int,
     completion_options: dict[str, Any],
-    semaphore: asyncio.Semaphore | None = None,
-    progress: dict | None = None,
-    progress_lock: asyncio.Lock | None = None,
-    total: int | None = None,
 ) -> dict:
     """Run one completion and return a per-item result entry.
 
@@ -226,7 +223,9 @@ async def _run_one(
     ``asyncio.wait_for`` so the timeout is enforced at tool level for
     every provider type (the scripted test provider does not enforce its
     ``timeout`` argument), and the same value is passed to
-    ``complete()`` for providers that enforce it internally.
+    ``complete()`` for providers that enforce it internally. Batch calls
+    run this under the shared engine's semaphore and progress publishing
+    (``_batch_common.run_concurrent``).
     """
 
     async def _call() -> dict:
@@ -266,54 +265,27 @@ async def _run_one(
             entry["data"] = data
         return entry
 
-    async def _guarded() -> dict:
-        try:
-            # asyncio.TimeoutError is the built-in TimeoutError on 3.11+.
-            return await asyncio.wait_for(_call(), timeout=timeout)
-        except TimeoutError:
-            log.warning("llm_query: item %s timed out after %ss", idx if idx is not None else "single", timeout)
-            return {
-                "index": idx,
-                "ok": False,
-                "error": f"{ERROR_TEXT_PREFIX} llm_query timed out after {timeout}s",
-            }
-        except Exception as exc:
-            log.warning(
-                "llm_query: item %s raised unexpectedly: %s",
-                idx if idx is not None else "single",
-                exc,
-            )
-            return {
-                "index": idx,
-                "ok": False,
-                "error": f"{ERROR_TEXT_PREFIX} llm_query call failed: {exc}",
-            }
-
-    async def _finished(entry: dict) -> dict:
-        """Emit the aggregate progress event (batch calls only)."""
-        if progress is None or progress_lock is None or total is None:
-            return entry
-        async with progress_lock:
-            progress["done"] += 1
-            done = progress["done"]
-        try:
-            await ctx.publish(
-                "tool_status",
-                tool="llm_query",
-                message=f"{done}/{total} completions",
-            )
-        except Exception:
-            log.debug(
-                "llm_query: failed to publish progress event (item %s)",
-                idx,
-                exc_info=True,
-            )
-        return entry
-
-    if semaphore is not None:
-        async with semaphore:
-            return await _finished(await _guarded())
-    return await _finished(await _guarded())
+    try:
+        # asyncio.TimeoutError is the built-in TimeoutError on 3.11+.
+        return await asyncio.wait_for(_call(), timeout=timeout)
+    except TimeoutError:
+        log.warning("llm_query: item %s timed out after %ss", idx if idx is not None else "single", timeout)
+        return {
+            "index": idx,
+            "ok": False,
+            "error": f"{ERROR_TEXT_PREFIX} llm_query timed out after {timeout}s",
+        }
+    except Exception as exc:
+        log.warning(
+            "llm_query: item %s raised unexpectedly: %s",
+            idx if idx is not None else "single",
+            exc,
+        )
+        return {
+            "index": idx,
+            "ok": False,
+            "error": f"{ERROR_TEXT_PREFIX} llm_query call failed: {exc}",
+        }
 
 
 async def tool_llm_query(
@@ -412,56 +384,39 @@ async def tool_llm_query(
             result.data = entry["data"]
         return result
 
-    semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
-    progress: dict = {"done": 0}
-    progress_lock = asyncio.Lock()
-    coros = [
-        _run_one(
+    async def _publish(done: int, total: int) -> None:
+        await ctx.publish(
+            "tool_status",
+            tool="llm_query",
+            message=f"{done}/{total} completions",
+        )
+
+    async def _worker(idx: int, prompt_text: str) -> dict:
+        return await _run_one(
             ctx,
-            messages=_assemble_messages(system, None, p),
-            idx=i,
+            messages=_assemble_messages(system, None, prompt_text),
+            idx=idx,
             provider=target.provider,
             model_id=target.model,
             return_schema=return_schema,
             strict=strict,
             timeout=timeout,
             completion_options=completion_options,
-            semaphore=semaphore,
-            progress=progress,
-            progress_lock=progress_lock,
-            total=len(prompt),
         )
-        for i, p in enumerate(prompt)
-    ]
-    raw_results = await asyncio.gather(*coros, return_exceptions=True)
 
-    results: list[dict] = []
-    for i, r in enumerate(raw_results):
-        if isinstance(r, BaseException):
-            log.warning("llm_query: gather slot %d raised unexpectedly: %s", i, r)
-            results.append(
-                {
-                    "index": i,
-                    "ok": False,
-                    "error": f"{ERROR_TEXT_PREFIX} llm_query internal error: {r}",
-                }
-            )
-        else:
-            results.append(r)
+    results, summary = await run_concurrent(
+        _worker,
+        prompt,
+        BATCH_CONCURRENCY,
+        _publish,
+        failure_text=lambda idx, exc: f"{ERROR_TEXT_PREFIX} llm_query internal error: {exc}",
+    )
 
-    results.sort(key=lambda e: e["index"])
-    total = len(prompt)
-    ok_count = sum(1 for e in results if e["ok"])
-    fail_count = total - ok_count
-    summary_line = f"{total} completions: {ok_count} succeeded, {fail_count} failed"
+    summary_line = f"{summary['total']} completions: {summary['ok']} succeeded, {summary['failed']} failed"
     return ToolResult(
         text=summary_line,
         data={
-            "summary": {
-                "total": total,
-                "ok": ok_count,
-                "failed": fail_count,
-            },
+            "summary": summary,
             "results": results,
         },
     )
