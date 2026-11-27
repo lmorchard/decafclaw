@@ -193,6 +193,25 @@ button.model-picker-option:disabled {
   font-size: 1rem;
 }
 
+/* Selection mode (#1948): settings pointers fill their settings block like
+   the native <select> they replace. */
+.model-picker-selection {
+  display: block;
+  max-width: none;
+}
+
+.model-picker-selection button.model-picker-trigger {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  background: var(--pico-form-element-background-color);
+  font-size: 0.9rem;
+}
+
+.model-picker-option-empty .model-picker-model {
+  color: var(--pico-muted-color);
+  font-style: italic;
+}
+
 /* Sidebar fallback: the picker fills the sidebar row like the old select. */
 conversation-sidebar .model-picker .model-picker-root {
   display: block;

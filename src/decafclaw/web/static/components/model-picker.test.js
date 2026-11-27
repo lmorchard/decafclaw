@@ -19,6 +19,19 @@ async function mount(props = {}) {
   return el;
 }
 
+/** Settings selection mode: a flat option list and an empty/inherit choice. @param {object} [props] */
+async function mountSelection(props = {}) {
+  const el = /** @type {any} */ (document.createElement('model-picker'));
+  el.mode = 'selection';
+  el.options = ['hand-model', 'local/llama'];
+  el.value = '';
+  el.emptyLabel = '(config.json default)';
+  Object.assign(el, props);
+  document.body.append(el);
+  await el.updateComplete;
+  return el;
+}
+
 /** @param {any} el */
 async function open(el) {
   el.querySelector('.model-picker-trigger').click();
@@ -194,5 +207,72 @@ describe('model-picker', () => {
     trigger.click();
     await el.updateComplete;
     expect(el.querySelector('.model-picker-panel')).toBeNull();
+  });
+
+  describe('selection mode', () => {
+    it('shows the empty label and a flat list with the empty choice', async () => {
+      const el = await mountSelection();
+      const trigger = el.querySelector('.model-picker-trigger');
+      expect(trigger.textContent).toContain('(config.json default)');
+
+      await open(el);
+      expect(models(el)).toEqual(['', 'hand-model', 'local/llama']);
+      const selected = el.querySelector('.model-picker-option.selected');
+      expect(selected.dataset.model).toBe('');
+      expect(selected.textContent).toContain('(config.json default)');
+    });
+
+    it('marks the selected model and shows it on the trigger', async () => {
+      const el = await mountSelection({ value: 'hand-model' });
+      expect(el.querySelector('.model-picker-trigger').textContent).toContain('hand-model');
+
+      await open(el);
+      const selected = el.querySelector('.model-picker-option.selected');
+      expect(selected.dataset.model).toBe('hand-model');
+    });
+
+    it('filters the flat option list', async () => {
+      const el = await mountSelection();
+      await open(el);
+
+      await type(el, 'llama');
+      expect(models(el)).toEqual(['local/llama']);
+
+      await type(el, 'HAND');
+      expect(models(el)).toEqual(['hand-model']);
+    });
+
+    it('emits model-select instead of set-model', async () => {
+      const el = await mountSelection();
+      const selectHandler = vi.fn();
+      const conversationHandler = vi.fn();
+      document.addEventListener('model-select', selectHandler);
+      document.addEventListener('set-model', conversationHandler);
+
+      await open(el);
+      el.querySelector('[data-model="local/llama"]').click();
+      await el.updateComplete;
+
+      document.removeEventListener('model-select', selectHandler);
+      document.removeEventListener('set-model', conversationHandler);
+      expect(selectHandler).toHaveBeenCalledTimes(1);
+      expect(selectHandler.mock.calls[0][0].detail).toEqual({ value: 'local/llama' });
+      expect(conversationHandler).not.toHaveBeenCalled();
+      expect(el.querySelector('.model-picker-panel')).toBeNull();
+    });
+
+    it('emits an empty value when the inherit choice is picked', async () => {
+      const el = await mountSelection({ value: 'hand-model' });
+      const handler = vi.fn();
+      document.addEventListener('model-select', handler);
+
+      await open(el);
+      el.querySelector('[data-model=""]').click();
+      await el.updateComplete;
+
+      document.removeEventListener('model-select', handler);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][0].detail).toEqual({ value: '' });
+    });
   });
 });

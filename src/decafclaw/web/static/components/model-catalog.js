@@ -15,6 +15,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
+import './model-picker.js';
 
 export class ModelCatalog extends LitElement {
   static properties = {
@@ -298,24 +299,27 @@ export class ModelCatalog extends LitElement {
     `;
   }
 
-  /** @param {import('../lib/api-client/index.js').ModelCatalogResponse} catalog */
+  /**
+   * Settings model pointers reuse the conversation `model-picker` in its
+   * selection mode (#1948): a flat `picker_models` list plus the field's own
+   * empty/inherit choice. The setters and endpoints are unchanged.
+   * @param {import('../lib/api-client/index.js').ModelCatalogResponse} catalog
+   */
   #renderDefaultPicker(catalog) {
     return html`
       <div class="model-catalog-default">
-        <label class="model-catalog-default-label" for="catalog-default-select">Default model</label>
-        <select
-          id="catalog-default-select"
-          class="model-catalog-default-select"
+        <span class="model-catalog-default-label">Default model</span>
+        <model-picker
+          id="catalog-default-picker"
+          class="model-catalog-picker"
+          mode="selection"
+          label="Default model"
+          .options=${catalog.picker_models}
+          .value=${catalog.default_pointer || ''}
+          .emptyLabel=${'(config.json default)'}
           ?disabled=${this._busy}
-          @change=${(e) => void this.#setDefault(e.target.value)}
-        >
-          <option value="" ?selected=${catalog.default_pointer === ''}>
-            (config.json default)
-          </option>
-          ${repeat(catalog.picker_models, m => m, m => html`
-            <option value="${m}" ?selected=${m === catalog.default_pointer}>${m}</option>
-          `)}
-        </select>
+          @model-select=${(e) => void this.#setDefault(e.detail.value)}
+        ></model-picker>
         <span class="model-catalog-default-hint" title="Used for conversations with no model selected">
           effective: ${catalog.default_model || '(none)'}
         </span>
@@ -334,18 +338,18 @@ export class ModelCatalog extends LitElement {
     const toolsWarning = Boolean(selected && selected.tools === false);
     return html`
       <div class="model-catalog-judge">
-        <label class="model-catalog-default-label" for="catalog-aux-approval-select">Auto-approval model</label>
-        <select
-          id="catalog-aux-approval-select"
-          class="model-catalog-default-select"
+        <span class="model-catalog-default-label">Auto-approval model</span>
+        <model-picker
+          id="catalog-aux-approval-picker"
+          class="model-catalog-picker"
+          mode="selection"
+          label="Auto-approval model"
+          .options=${catalog.picker_models}
+          .value=${catalog.aux_approval_pointer || ''}
+          .emptyLabel=${'(use conversation model)'}
           ?disabled=${this._busy}
-          @change=${(e) => void this.#setAuxApproval(e.target.value)}
-        >
-          <option value="" ?selected=${!catalog.aux_approval_pointer}>${'(use conversation model)'}</option>
-          ${repeat(catalog.picker_models, m => m, m => html`
-            <option value="${m}" ?selected=${m === catalog.aux_approval_pointer}>${m}</option>
-          `)}
-        </select>
+          @model-select=${(e) => void this.#setAuxApproval(e.detail.value)}
+        ></model-picker>
         <span class="model-catalog-default-hint" title="Judge that grades shell auto-approvals; empty = ride on the active conversation model">${catalog.aux_approval_model || '(use conversation model)'}</span>
         ${toolsWarning ? html`
           <div class="model-catalog-judge-warning" role="status">
@@ -364,18 +368,18 @@ export class ModelCatalog extends LitElement {
     const judgeWarning = Boolean(catalog.reflection_pointer) && catalog.reflection_pointer === this._activeModel;
     return html`
       <div class="model-catalog-judge">
-        <label class="model-catalog-default-label" for="catalog-reflection-select">Reflection model</label>
-        <select
-          id="catalog-reflection-select"
-          class="model-catalog-default-select"
+        <span class="model-catalog-default-label">Reflection model</span>
+        <model-picker
+          id="catalog-reflection-picker"
+          class="model-catalog-picker"
+          mode="selection"
+          label="Reflection model"
+          .options=${catalog.picker_models}
+          .value=${catalog.reflection_pointer || ''}
+          .emptyLabel=${'(config.json reflection / inherit)'}
           ?disabled=${this._busy}
-          @change=${(e) => void this.#setReflection(e.target.value)}
-        >
-          <option value="" ?selected=${!catalog.reflection_pointer}>${'(config.json reflection / inherit)'}</option>
-          ${repeat(catalog.picker_models, m => m, m => html`
-            <option value="${m}" ?selected=${m === catalog.reflection_pointer}>${m}</option>
-          `)}
-        </select>
+          @model-select=${(e) => void this.#setReflection(e.detail.value)}
+        ></model-picker>
         <span class="model-catalog-default-hint" title="Judge that grades each turn; empty = inherit">${catalog.reflection_model || '(inherit)'}</span>
         ${judgeWarning ? html`
           <div class="model-catalog-judge-warning" role="status">
@@ -390,18 +394,18 @@ export class ModelCatalog extends LitElement {
   #renderVerifierPicker(catalog) {
     return html`
       <div class="model-catalog-judge">
-        <label class="model-catalog-default-label" for="catalog-verifier-select">Verifier model</label>
-        <select
-          id="catalog-verifier-select"
-          class="model-catalog-default-select"
+        <span class="model-catalog-default-label">Verifier model</span>
+        <model-picker
+          id="catalog-verifier-picker"
+          class="model-catalog-picker"
+          mode="selection"
+          label="Verifier model"
+          .options=${catalog.picker_models}
+          .value=${catalog.verifier_pointer || ''}
+          .emptyLabel=${'(config.json verifier / inherit)'}
           ?disabled=${this._busy}
-          @change=${(e) => void this.#setVerifier(e.target.value)}
-        >
-          <option value="" ?selected=${!catalog.verifier_pointer}>${'(config.json verifier / inherit)'}</option>
-          ${repeat(catalog.picker_models, m => m, m => html`
-            <option value="${m}" ?selected=${m === catalog.verifier_pointer}>${m}</option>
-          `)}
-        </select>
+          @model-select=${(e) => void this.#setVerifier(e.detail.value)}
+        ></model-picker>
         <span class="model-catalog-default-hint" title="Second-opinion judge; empty = inherit">${catalog.verifier_model || '(inherit)'}</span>
       </div>
     `;

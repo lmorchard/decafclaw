@@ -445,6 +445,13 @@ panel. All visible state re-renders from properties, so session switches and
 mid-session model changes stay in sync (#1440). See
 [Model Selection](model-selection.md).
 
+The same element serves the four settings model pointers in **⚙ Agent
+Config → Models** (default, auto-approval, reflection, verifier) in selection
+mode (#1948). That mode renders the flat `picker_models` list from the model
+catalog plus the field's own empty/inherit label, and dispatches
+`model-select` with `{ value }` instead of `set-model`. Search, keyboard
+navigation, and the popup behavior are shared with the conversation picker.
+
 ### Context inspector
 
 Click the context usage bar in the sidebar to see a popover with:

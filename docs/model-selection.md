@@ -118,6 +118,10 @@ All of this is managed in the web UI's **⚙ Agent Config → Models** tab:
   typed text. Esc clears the field.
 - Set the global default model from any enabled model (discovered or
   hand-configured), or clear the pointer to fall back to `config.json`.
+  The default, auto-approval, reflection, and verifier pointers all use the
+  same searchable `<model-picker>` as the conversation control bar, in a
+  flat selection mode (#1948). Its empty row restores that field's
+  inherit/default behavior.
 
 State lives in the `data/{agent_id}/model_catalog.json` sidecar —
 `config.json` is never written by the UI. Entries are keyed
