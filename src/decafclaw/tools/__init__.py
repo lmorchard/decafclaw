@@ -103,7 +103,13 @@ TOOL_DEFINITIONS = [defn for _tools, defs in _TOOL_SOURCES for defn in defs]
 
 
 def _to_tool_result(value) -> ToolResult:
-    """Normalize a tool return value to ToolResult."""
+    """Normalize a tool return value to ToolResult.
+
+    The returned result carries a structured ``status`` (success/error/
+    cancelled), derived from the text prefix at construction — see
+    ``ToolResult.__post_init__``. Callers read that field rather than re-parsing
+    the ``[error: ...]`` / ``[cancelled...]`` text prefixes (#1331).
+    """
     if isinstance(value, ToolResult):
         return value
     if isinstance(value, str):

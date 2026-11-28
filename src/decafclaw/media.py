@@ -87,6 +87,60 @@ class TerminationReason(StrEnum):
     SKILL_ACTIVATION_FAILED = "skill_activation_failed"  # unattended turn with a denied skill activation
 
 
+class ToolStatus(StrEnum):
+    """Outcome of a tool call, as a structured field on ``ToolResult``.
+
+    Populated by the execution path (``execute_tool`` / ``_to_tool_result``,
+    via :func:`derive_tool_status`) so consumers read this instead of re-parsing
+    the legacy ``[error: ...]`` / ``[cancelled...]`` text prefixes (#1331).
+    String-valued so JSON round-trips and existing string comparisons keep
+    working (mirrors ``TerminationReason``). The values match the outcome
+    strings already produced by ``tool_telemetry.infer_outcome`` and
+    ``audit_log.infer_outcome``.
+    """
+
+    SUCCESS = "success"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+
+
+# Legacy cancellation markers, matched case-insensitively against the result's
+# leading text. Covers every phrasing the codebase has produced: [cancelled...]
+# and [tool interrupted...] (tools), [Agent turn cancelled by user] (agent loop /
+# tool_execution), and [subagent cancelled: ...] (subagent_cancel). The marker's
+# case must not matter, so matching is done on a lowercased prefix.
+_CANCELLED_PREFIXES = (
+    "[cancelled",
+    "[tool interrupted",
+    "[agent turn cancelled",
+    "[subagent cancelled",
+)
+
+
+def derive_tool_status(text: str | None) -> ToolStatus:
+    """Map a tool result's text prefix to a structured :class:`ToolStatus`.
+
+    The single source of truth for the legacy text conventions: a
+    ``[cancelled...]`` / ``[tool interrupted...]`` prefix is a cancellation,
+    an ``[error...`` prefix is an error (case-insensitive — extensions/mentions
+    capitalizes the marker), and anything else succeeded. Used to populate
+    :attr:`ToolResult.status`; consumers should read that field rather than
+    re-parsing text.
+
+    The derivation is a pure function of the result text (status is not
+    persisted with archived tool messages), so it must recognize every legacy
+    phrasing, including those in pre-existing conversation history.
+    """
+    # Only the leading marker can decide; slice before lowercasing so large
+    # outputs (e.g. shell results) don't pay for a full-string copy.
+    t = (text or "").lstrip()[:32].lower()
+    if t.startswith(_CANCELLED_PREFIXES):
+        return ToolStatus.CANCELLED
+    if t.startswith("[error"):
+        return ToolStatus.ERROR
+    return ToolStatus.SUCCESS
+
+
 @dataclass
 class ToolResult:
     """Result from a tool execution — text plus optional media attachments."""
@@ -115,6 +169,19 @@ class ToolResult:
     # watchdog failure without parsing `text`.
     timed_out: bool = False
     timeout_sec: float | None = None
+    # Structured call outcome (#1331): success / error / cancelled. Derived from
+    # the text prefix at construction (see __post_init__) so consumers read this
+    # instead of re-parsing [error: ...] / [cancelled...] text. Set explicitly to
+    # override the derivation (e.g. a tool that knows its own outcome).
+    status: ToolStatus | None = None
+
+    def __post_init__(self) -> None:
+        # Derive the outcome from the text prefix unless a caller set it
+        # explicitly. This keeps every ToolResult — wherever constructed (tool
+        # bodies, execute_tool's early returns, the tool_execution fallbacks) —
+        # carrying a meaningful status, so consumers never see None.
+        if self.status is None:
+            self.status = derive_tool_status(self.text)
 
     @classmethod
     def from_text(cls, text: str) -> "ToolResult":
