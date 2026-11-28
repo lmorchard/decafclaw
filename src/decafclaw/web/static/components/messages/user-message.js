@@ -9,6 +9,7 @@ export class UserMessage extends LitElement {
     content: { type: String },
     timestamp: { type: String },
     attachments: { type: Array },
+    failed: { type: Boolean, attribute: false },
   };
   createRenderRoot() { return this; }
   constructor() {
@@ -17,6 +18,8 @@ export class UserMessage extends LitElement {
     this.timestamp = '';
     /** @type {AttachmentResponse[] | null} */
     this.attachments = null;
+    /** The message could not be sent over the WebSocket (#1416). */
+    this.failed = false;
   }
 
   /** @param {AttachmentResponse} att */
@@ -40,7 +43,7 @@ export class UserMessage extends LitElement {
   render() {
     const atts = this.attachments;
     return html`
-      <div class="message user">
+      <div class="message user ${this.failed ? 'msg-failed' : ''}">
         <div class="role">user</div>
         ${this.content ? html`<div class="content">${this.content}</div>` : nothing}
         ${atts?.length ? html`
@@ -48,6 +51,7 @@ export class UserMessage extends LitElement {
             ${atts.map(a => this.#renderAttachment(a))}
           </div>
         ` : nothing}
+        ${this.failed ? html`<div class="msg-failed-note">⚠️ Not sent</div>` : nothing}
         ${this.timestamp ? html`<div class="msg-time">${formatTime(this.timestamp)}</div>` : nothing}
       </div>
     `;

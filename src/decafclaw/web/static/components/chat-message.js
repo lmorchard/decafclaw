@@ -29,6 +29,7 @@ export class ChatMessage extends LitElement {
     isError: { type: Boolean, attribute: false },
     timedOut: { type: Boolean, attribute: false },
     timeoutSec: { type: Number, attribute: false },
+    failed: { type: Boolean, attribute: false },
     suppressUserMessage: { type: Boolean, attribute: false },
   };
 
@@ -69,6 +70,7 @@ export class ChatMessage extends LitElement {
     this.timedOut = false;
     /** @type {number|null} */
     this.timeoutSec = null;
+    this.failed = false;
     this.suppressUserMessage = false;
   }
 
@@ -232,7 +234,7 @@ export class ChatMessage extends LitElement {
     }
 
     return html`<div class="message-row user-row">
-      <user-message .content=${this.content} .timestamp=${this.timestamp} .attachments=${this.attachments}></user-message>
+      <user-message .content=${this.content} .timestamp=${this.timestamp} .attachments=${this.attachments} .failed=${this.failed}></user-message>
       ${this.#branchButton()}
     </div>`;
   }

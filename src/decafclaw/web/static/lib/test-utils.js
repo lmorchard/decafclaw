@@ -9,10 +9,13 @@ import { ConversationStore } from './conversation-store.js';
 export class FakeWS extends EventTarget {
   /** @type {object[]} */
   sent = [];
+  /** Simulates the socket being down; `send()` then queues (returns true). */
+  connected = true;
 
-  /** @param {object} message */
+  /** @param {object} message @returns {boolean} true if the frame was queued */
   send(message) {
     this.sent.push(message);
+    return !this.connected;
   }
 
   /** Simulate the underlying socket (re)connecting. */
@@ -23,6 +26,11 @@ export class FakeWS extends EventTarget {
   /** Simulate a server→client frame arriving. @param {object} msg */
   fireMessage(msg) {
     this.dispatchEvent(new CustomEvent('message', { detail: msg }));
+  }
+
+  /** Simulate the client failing to deliver an outbound frame (#1416). @param {object} msg */
+  fireSendFailed(msg) {
+    this.dispatchEvent(new CustomEvent('send-failed', { detail: msg }));
   }
 }
 

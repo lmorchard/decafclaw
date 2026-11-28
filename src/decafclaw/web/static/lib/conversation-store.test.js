@@ -778,6 +778,107 @@ describe('conversation activity status tracking', () => {
   });
 });
 
+describe('outbound send failures (#1416)', () => {
+  /** @type {FakeWS} */
+  let ws;
+  /** @type {ConversationStore} */
+  let store;
+
+  beforeEach(() => {
+    // The `open` handler calls listConversations(), which fetches. Stub it to
+    // an empty listing so the handler neither throws nor leaves an unhandled
+    // rejection that could be mistaken for the assertion failure below.
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ conversations: [], folders: [], folder: '' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    ws = new FakeWS();
+    store = makeStore(ws);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('marks the optimistic echo failed and clears busy when a queued send cannot be delivered', () => {
+    store.selectConversation('c1');
+    ws.connected = false; // the socket is down: send() queues instead of delivering
+    store.sendMessage('hello');
+    expect(store.isBusy).toBe(true);
+    const echo = /** @type {any} */ (store.currentMessages.at(-1));
+    expect(echo.role).toBe('user');
+    expect(echo.failed).toBeFalsy();
+
+    ws.fireSendFailed(ws.sent.at(-1)); // the queued frame fails to deliver
+    expect(/** @type {any} */ (store.currentMessages.at(-1)).failed).toBe(true);
+    expect(store.isBusy).toBe(false);
+  });
+
+  it('leaves the echo and busy state alone when a queued send is delivered', () => {
+    store.selectConversation('c1');
+    ws.connected = false;
+    store.sendMessage('hello');
+    // No failure: the frame is flushed on open and delivered.
+    expect(/** @type {any} */ (store.currentMessages.at(-1)).failed).toBeFalsy();
+    expect(store.isBusy).toBe(true);
+  });
+
+  it('ignores a failed send for another conversation', () => {
+    store.selectConversation('c1');
+    ws.connected = false;
+    store.sendMessage('hello');
+    const frame = /** @type {any} */ (ws.sent.at(-1));
+    frame.conv_id = 'c-other'; // the echo was cleared with a conversation switch
+    ws.fireSendFailed(frame);
+    expect(/** @type {any} */ (store.currentMessages.at(-1)).failed).toBeFalsy();
+    expect(store.isBusy).toBe(true); // the turn it started is still tracked
+  });
+
+  it('ignores send-failed for non-send frames', () => {
+    store.selectConversation('c1');
+    ws.connected = false;
+    store.sendMessage('hello');
+    ws.fireSendFailed({ type: MESSAGE_TYPES.CANCEL_TURN, conv_id: 'c1' });
+    expect(/** @type {any} */ (store.currentMessages.at(-1)).failed).toBeFalsy();
+    expect(store.isBusy).toBe(true);
+  });
+
+  it('keeps busy for a failed steering send: the running turn is untouched', () => {
+    store.selectConversation('c1');
+    ws.fireMessage({ type: MESSAGE_TYPES.TURN_START, conv_id: 'c1' });
+    ws.connected = false; // the steer is queued while the socket is down
+    store.sendMessage('steer');
+    expect(store.isBusy).toBe(true);
+
+    ws.fireSendFailed(ws.sent.at(-1));
+    expect(/** @type {any} */ (store.currentMessages.at(-1)).failed).toBe(true);
+    expect(store.isBusy).toBe(true); // the original turn is still running
+  });
+
+  it('resolves queued-send tracking on open so a later failure cannot mark a stale echo', () => {
+    store.selectConversation('c1');
+    ws.connected = false;
+    store.sendMessage('hello');
+    expect(store.isBusy).toBe(true);
+
+    ws.connected = true; // the socket opens: the queued frame is delivered
+    ws.fireOpen();
+    // The open handler refetches history; simulate the server's response so
+    // the transcript holds a row with the same text as the queued send.
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_HISTORY,
+      conv_id: 'c1',
+      has_more: false,
+      messages: [{ role: 'user', content: 'hello', timestamp: 't1' }],
+    });
+
+    // A failure for a *different* (untracked) frame must not mark the row.
+    ws.fireSendFailed({ type: MESSAGE_TYPES.SEND, conv_id: 'c1', text: 'hello' });
+    expect(/** @type {any} */ (store.currentMessages.at(-1)).failed).toBeFalsy();
+  });
+});
+
 // #1005 — the context meter must drop after a successful compaction.
 // Previously the store read `msg.usage.prompt_tokens`, which on a compacting
 // turn is the pre-compaction prompt (>100%) and nothing corrected it. The

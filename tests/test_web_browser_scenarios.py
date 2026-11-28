@@ -2546,3 +2546,63 @@ def test_browser_host_gauges_vertically_centered(built_static, chromium, config)
         assert geometry["siblingHeight"] > 0, geometry
         assert geometry["blockMarginBottom"] == "0px", geometry
         assert abs(geometry["blockCenter"] - geometry["siblingCenter"]) <= 1, geometry
+
+
+def test_browser_ws_outbound_queue(built_static, chromium, config):
+    """#1416: a send issued before the socket opens is queued and delivered on open.
+
+    The client sends while the WebSocket does not exist yet (pre-fix this
+    console.warn'd and dropped the frame), then connects. The scenario asserts
+    the full round trip: the queued frame is flushed to the raw socket on open,
+    and the server answers it — never a silent drop.
+    """
+    with browser_scenario(built_static, chromium, config) as scenario:
+        result = scenario.page.evaluate(
+            """async () => {
+              const { WebSocketClient } = await import('/static/lib/websocket-client.js');
+              const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+              const url = `${proto}//${location.host}/ws/chat`;
+
+              // Capture every frame the raw socket writes, to prove delivery.
+              const frames = [];
+              const originalSend = WebSocket.prototype.send;
+              WebSocket.prototype.send = function (data) {
+                frames.push(data);
+                return originalSend.call(this, data);
+              };
+
+              const client = new WebSocketClient(url);
+              // Send before connect(): the socket does not exist yet, so a
+              // pre-fix client would console.warn and drop the frame.
+              const queued = client.send({ type: 'send', conv_id: 'no-such-conv', text: 'queued before open' });
+              const pendingBefore = client.pendingCount;
+
+              const opened = new Promise((resolve) => {
+                client.addEventListener('open', () => resolve(true), { once: true });
+                client.addEventListener('close', () => resolve(false), { once: true });
+              });
+              const error = new Promise((resolve) => {
+                client.addEventListener('message', (e) => {
+                  if (e.detail?.type === 'error') resolve(e.detail);
+                });
+              });
+
+              client.connect();
+              const didOpen = await opened;
+              const pendingAfter = client.pendingCount;
+              const flushed = frames.length > 0 && JSON.parse(frames[frames.length - 1]).text === 'queued before open';
+              const response = didOpen ? await Promise.race([error, new Promise((r) => setTimeout(() => r(null), 5000))]) : null;
+
+              client.disconnect();
+              WebSocket.prototype.send = originalSend;
+              return { queued, pendingBefore, pendingAfter, didOpen, flushed, response };
+            }"""
+        )
+        assert result["queued"] is True, "a send before connect must be queued, not dropped"
+        assert result["pendingBefore"] == 1
+        assert result["didOpen"] is True, "the test socket failed to open (auth?)"
+        assert result["flushed"] is True, "the queued frame was not flushed on open"
+        assert result["pendingAfter"] == 0
+        # The server received the frame and answered it: a full round trip.
+        assert result["response"] is not None, "the server never answered the flushed frame"
+        assert result["response"]["message"] == "Conversation not found"
