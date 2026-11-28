@@ -696,8 +696,8 @@ Every request the editor makes — autosave, force-save, and the conflict
 banner's **Reload** — goes to `{saveEndpoint}{page}`. A host that sets
 `save-endpoint` must therefore serve both verbs there, and both responses must
 put the editor's fields at the **top level**, since the component knows nothing
-about any per-endpoint envelope. All three branches call their generated
-operations directly while retaining this host contract:
+about any per-endpoint envelope. A `SAVE_ENDPOINTS` table (one row per endpoint)
+drives the editor's GET/PUT while retaining this host contract:
 
 - Vault `GET` returns the editable markdown as `body` and its mtime as
   `modified`; the generated vault branch reads those fields directly.
