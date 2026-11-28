@@ -903,3 +903,100 @@ describe('conversation-list session search (#1451)', () => {
     expect(list.querySelector('.conv-search-status')).toBeNull();
   });
 });
+
+// #1415 — a failed listing with nothing to render shows an error node instead
+// of the silently-empty "No conversations" placeholder.
+describe('conversation-list listing error state (#1415)', () => {
+  let list;
+
+  afterEach(() => {
+    list?.remove();
+  });
+
+  async function mount(overrides = {}) {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: '',
+      conversations: [],
+      sessions: [],
+      folders: [],
+      archivedConversations: [],
+      archivedFolders: [],
+      systemConversations: [],
+      systemFolders: [],
+      conversationsError: '',
+      archivedConversationsError: '',
+      systemConversationsError: '',
+      sessionsError: '',
+      getConversationStatus: vi.fn(() => 'idle'),
+      selectConversation: vi.fn(),
+      listConversations: vi.fn(),
+      listSessions: vi.fn(),
+      listArchivedConversations: vi.fn(),
+      listSystemConversations: vi.fn(),
+      ...overrides,
+    });
+    list = /** @type {any} */ (document.createElement('conversation-list'));
+    document.body.append(list);
+    list.store = store;
+    list.active = true;
+    await list.updateComplete;
+    return { list, store };
+  }
+
+  const noConversations = () => list.querySelector('.conv-list')?.textContent.includes('No conversations');
+
+  it('renders an error node when the active listing failed and nothing renders', async () => {
+    await mount({ conversationsError: 'Internal Server Error (500)' });
+    const error = list.querySelector('.conv-list-error');
+    expect(error).toBeTruthy();
+    expect(error.textContent).toBe('Internal Server Error (500)');
+    expect(error.getAttribute('role')).toBe('alert');
+    expect(noConversations()).toBe(false);
+  });
+
+  it('renders the sessions error when only the hierarchy listing failed', async () => {
+    await mount({ sessionsError: 'Could not reach the server' });
+    const error = list.querySelector('.conv-list-error');
+    expect(error?.textContent).toBe('Could not reach the server');
+  });
+
+  it('keeps the placeholder when nothing failed', async () => {
+    await mount();
+    expect(list.querySelector('.conv-list-error')).toBeNull();
+    expect(noConversations()).toBe(true);
+  });
+
+  it('keeps stale rows instead of an error node when a refresh failed', async () => {
+    await mount({
+      conversations: [{ conv_id: 'c1', title: 'Stale chat' }],
+      conversationsError: 'boom (500)',
+    });
+    expect(list.querySelector('.conv-list-error')).toBeNull();
+    expect(list.querySelector('.conv-title')?.textContent).toBe('Stale chat');
+  });
+
+  it('renders the archived section error when its listing failed', async () => {
+    await mount({ archivedConversationsError: 'boom (500)' });
+    // Navigate to the archived section like a breadcrumb click would.
+    list._chatSection = '_archived';
+    await list.updateComplete;
+    expect(list.querySelector('.conv-list-error')?.textContent).toBe('boom (500)');
+  });
+
+  it('renders the system section error when its listing failed', async () => {
+    await mount({ systemConversationsError: 'boom (503)' });
+    list._chatSection = '_system';
+    await list.updateComplete;
+    expect(list.querySelector('.conv-list-error')?.textContent).toBe('boom (503)');
+  });
+
+  it('clears the error node when a later refresh succeeds', async () => {
+    const { store } = await mount({ conversationsError: 'boom (500)' });
+    expect(list.querySelector('.conv-list-error')).toBeTruthy();
+    store.conversationsError = '';
+    store.dispatchEvent(new Event('change'));
+    await list.updateComplete;
+    expect(list.querySelector('.conv-list-error')).toBeNull();
+    expect(noConversations()).toBe(true);
+  });
+});

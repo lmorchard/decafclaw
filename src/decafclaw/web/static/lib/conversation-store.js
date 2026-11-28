@@ -6,6 +6,7 @@ import {
 } from './constants.js';
 
 import { ApiError, DefaultService } from './api-client/index.js';
+import { apiCall, apiErrorMessage } from './api.js';
 
 /** @typedef {import('./api-client/index.js').ConversationListingItem} ConversationMeta */
 /** @typedef {import('./api-client/index.js').SystemConversationListingItem} SystemConversationMeta */
@@ -135,6 +136,20 @@ export class ConversationStore extends EventTarget {
   #systemSeq = 0;
   #sessionsSeq = 0;
 
+  // -- REST error policy (#1415) --
+  // Last failure text per listing ('' when healthy). The sidebar renders an
+  // error node from these when a section has nothing else to show, so a 500
+  // is not silently empty. A failed refresh keeps the previous data; only an
+  // error with nothing to render is visible.
+  /** @type {string} */
+  #conversationsError = '';
+  /** @type {string} */
+  #archivedConversationsError = '';
+  /** @type {string} */
+  #systemConversationsError = '';
+  /** @type {string} */
+  #sessionsError = '';
+
   // -- Activity status state --
   /** @type {Map<string, 'idle' | 'busy' | 'waiting' | 'finished'>} */
   #conversationStatuses = new Map();
@@ -260,6 +275,14 @@ export class ConversationStore extends EventTarget {
   get systemCurrentFolder() { return this.#systemCurrentFolder; }
   /** @returns {SessionEntry[]} */
   get sessions() { return this.#sessions; }
+  /** @returns {string} last active-listing failure text ('' when healthy) */
+  get conversationsError() { return this.#conversationsError; }
+  /** @returns {string} last archived-listing failure text ('' when healthy) */
+  get archivedConversationsError() { return this.#archivedConversationsError; }
+  /** @returns {string} last system-listing failure text ('' when healthy) */
+  get systemConversationsError() { return this.#systemConversationsError; }
+  /** @returns {string} last sessions-listing failure text ('' when healthy) */
+  get sessionsError() { return this.#sessionsError; }
   /** @returns {boolean} */
   get isReadOnly() { return this.#readOnly; }
   /**
@@ -344,54 +367,79 @@ export class ConversationStore extends EventTarget {
   async listConversations(folder = '') {
     const seq = ++this.#conversationsSeq;
     const reqSeq = this.#statusSequence;
-    try {
-      const data = await DefaultService.listConversationsApiConversationsGet(folder || undefined);
-      if (seq !== this.#conversationsSeq) return;
-      this.#conversations = data.conversations || [];
-      this.#folders = data.folders || [];
-      this.#currentFolder = data.folder || '';
-      this.#syncConversationStatuses(this.#conversations, reqSeq);
+    const result = await apiCall(() => DefaultService.listConversationsApiConversationsGet(folder || undefined));
+    if (seq !== this.#conversationsSeq) return;
+    if (!result.ok) {
+      // An HTTP error status is expected and surfaced through the listing's
+      // error state; only unexpected failures (transport, decode) are logged.
+      if (!(result.error instanceof ApiError)) console.error('Failed to list conversations:', result.error);
+      this.#conversationsError = apiErrorMessage(result.error);
       this.#emitChange();
-    } catch (err) {
-      if (err instanceof ApiError) return;
-      console.error('Failed to list conversations:', err);
+      return;
     }
+    const data = result.data;
+    if (!data) {
+      // The transport resolved without a decodable body (a 204, or a response
+      // it could not parse); keep the previous listing rather than blanking it.
+      console.error('Failed to list conversations:', new Error('response body missing'));
+      return;
+    }
+    this.#conversationsError = '';
+    this.#conversations = data.conversations || [];
+    this.#folders = data.folders || [];
+    this.#currentFolder = data.folder || '';
+    this.#syncConversationStatuses(this.#conversations, reqSeq);
+    this.#emitChange();
   }
 
   /** @param {string} [folder] */
   async listArchivedConversations(folder = '') {
     const seq = ++this.#archivedSeq;
     const reqSeq = this.#statusSequence;
-    try {
-      const data = await DefaultService.listArchivedConversationsApiConversationsArchivedGet(folder || undefined);
-      if (seq !== this.#archivedSeq) return;
-      this.#archivedConversations = data.conversations || [];
-      this.#archivedFolders = data.folders || [];
-      this.#archivedCurrentFolder = data.folder || '';
-      this.#syncConversationStatuses(this.#archivedConversations, reqSeq);
+    const result = await apiCall(() => DefaultService.listArchivedConversationsApiConversationsArchivedGet(folder || undefined));
+    if (seq !== this.#archivedSeq) return;
+    if (!result.ok) {
+      if (!(result.error instanceof ApiError)) console.error('Failed to list archived conversations:', result.error);
+      this.#archivedConversationsError = apiErrorMessage(result.error);
       this.#emitChange();
-    } catch (err) {
-      if (err instanceof ApiError) return;
-      console.error('Failed to list archived conversations:', err);
+      return;
     }
+    const data = result.data;
+    if (!data) {
+      console.error('Failed to list archived conversations:', new Error('response body missing'));
+      return;
+    }
+    this.#archivedConversationsError = '';
+    this.#archivedConversations = data.conversations || [];
+    this.#archivedFolders = data.folders || [];
+    this.#archivedCurrentFolder = data.folder || '';
+    this.#syncConversationStatuses(this.#archivedConversations, reqSeq);
+    this.#emitChange();
   }
 
   /** @param {string} [folder] */
   async listSystemConversations(folder = '') {
     const seq = ++this.#systemSeq;
     const reqSeq = this.#statusSequence;
-    try {
-      const data = await DefaultService.listSystemConversationsApiConversationsSystemGet(folder || undefined);
-      if (seq !== this.#systemSeq) return;
-      this.#systemConversations = data.conversations || [];
-      this.#systemFolders = data.folders || [];
-      this.#systemCurrentFolder = data.folder || '';
-      this.#syncConversationStatuses(this.#systemConversations, reqSeq);
+    const result = await apiCall(() => DefaultService.listSystemConversationsApiConversationsSystemGet(folder || undefined));
+    if (seq !== this.#systemSeq) return;
+    if (!result.ok) {
+      if (!(result.error instanceof ApiError)) console.error('Failed to list system conversations:', result.error);
+      this.#systemConversationsError = apiErrorMessage(result.error);
       this.#emitChange();
-    } catch (err) {
-      if (err instanceof ApiError) return;
-      console.error('Failed to list system conversations:', err);
+      return;
     }
+    const data = result.data;
+    if (!data) {
+      console.error('Failed to list system conversations:', new Error('response body missing'));
+      return;
+    }
+    this.#systemConversationsError = '';
+    this.#systemConversations = data.conversations || [];
+    this.#systemFolders = data.folders || [];
+    this.#systemCurrentFolder = data.folder || '';
+    this.#syncConversationStatuses(this.#systemConversations, reqSeq);
+    this.#emitChange();
   }
 
   /**
@@ -402,19 +450,26 @@ export class ConversationStore extends EventTarget {
   async listSessions(folder = '') {
     const seq = ++this.#sessionsSeq;
     const reqSeq = this.#statusSequence;
-    try {
-      const data = await DefaultService.listSessionsApiSessionsGet(folder || undefined);
-      if (seq !== this.#sessionsSeq) return;
-      this.#sessions = data.sessions || [];
-      this.#syncConversationStatuses(
-        (this.#sessions || []).flatMap((s) => s.conversations || []),
-        reqSeq,
-      );
+    const result = await apiCall(() => DefaultService.listSessionsApiSessionsGet(folder || undefined));
+    if (seq !== this.#sessionsSeq) return;
+    if (!result.ok) {
+      if (!(result.error instanceof ApiError)) console.error('Failed to list sessions:', result.error);
+      this.#sessionsError = apiErrorMessage(result.error);
       this.#emitChange();
-    } catch (err) {
-      if (err instanceof ApiError) return;
-      console.error('Failed to list sessions:', err);
+      return;
     }
+    const data = result.data;
+    if (!data) {
+      console.error('Failed to list sessions:', new Error('response body missing'));
+      return;
+    }
+    this.#sessionsError = '';
+    this.#sessions = data.sessions || [];
+    this.#syncConversationStatuses(
+      (this.#sessions || []).flatMap((s) => s.conversations || []),
+      reqSeq,
+    );
+    this.#emitChange();
   }
 
   /**
@@ -432,14 +487,14 @@ export class ConversationStore extends EventTarget {
     const queue = [''];
     while (queue.length > 0) {
       const parent = /** @type {string} */ (queue.shift());
-      let data;
-      try {
-        data = await DefaultService.listConversationsApiConversationsGet(parent || undefined);
-      } catch (err) {
-        if (!(err instanceof ApiError)) console.error('Failed to list folders:', err);
+      const result = await apiCall(() => DefaultService.listConversationsApiConversationsGet(parent || undefined));
+      if (!result.ok) {
+        // The walk stops at the first failure and returns what it has; the
+        // move picker shows its (possibly partial) list either way.
+        if (!(result.error instanceof ApiError)) console.error('Failed to list folders:', result.error);
         break;
       }
-      for (const f of data.folders || []) {
+      for (const f of result.data.folders || []) {
         if (/** @type {any} */ (f).virtual) continue;
         const path = f.path || f.name;
         if (!path || path.split('/').some((seg) => seg.startsWith('_'))) continue;
@@ -499,36 +554,46 @@ export class ConversationStore extends EventTarget {
    * @param {string} [folder]
    */
   async createConversation(title = '', model = this.#activeModel || this.#defaultModel, folder = this.#currentFolder) {
-    try {
-      const conv = await DefaultService.createConversationApiConversationsPost({
-        title, ...(model ? { model } : {}), ...(folder ? { folder } : {}),
-      });
-      // Insert into local list and select
-      this.#conversations.unshift(conv);
-      if (conv.model) this.#activeModel = conv.model;
-      this.selectConversation(conv.conv_id);
-      // Flush any message queued while the conversation was being created
-      if (this.#pendingMessage) {
-        const text = this.#pendingMessage;
-        const atts = this.#pendingAttachments;
-        this.#pendingMessage = null;
-        this.#pendingAttachments = [];
-        this.#uploadAndSend(conv.conv_id, text, atts);
-      }
-      // #1443 — the active sidebar renders the session hierarchy when it is
-      // non-empty, so a new conversation is invisible until that list is
-      // refetched. #1274 covered rename/archive/unarchive/move, not create.
-      // Refetch the folder the conversation was created in, not
-      // `#currentFolder`: the sidebar passes its rendered folder explicitly,
-      // and a stale store folder would otherwise refetch the wrong listing
-      // and leave the new row invisible.
-      // Refresh after the queued message starts so the extra GET never delays
-      // the first turn.
-      await this.listSessions(folder);
-    } catch (err) {
-      if (err instanceof ApiError) return;
-      console.error('Failed to create conversation:', err);
+    const result = await apiCall(() => DefaultService.createConversationApiConversationsPost({
+      title, ...(model ? { model } : {}), ...(folder ? { folder } : {}),
+    }));
+    if (!result.ok) {
+      // A failed create used to vanish silently: the + Chat button (or a send
+      // with no conversation selected) did nothing at all.
+      if (!(result.error instanceof ApiError)) console.error('Failed to create conversation:', result.error);
+      showToast(`Could not create conversation: ${apiErrorMessage(result.error)}`);
+      return;
     }
+    const conv = result.data;
+    if (!conv) {
+      // The transport resolved without a decodable body; keep the previous
+      // state rather than inserting an undefined row.
+      console.error('Failed to create conversation:', new Error('response body missing'));
+      return;
+    }
+    // Insert into local list and select
+    this.#conversations.unshift(conv);
+    if (conv.model) this.#activeModel = conv.model;
+    this.selectConversation(conv.conv_id);
+    // Flush any message queued while the conversation was being created
+    if (this.#pendingMessage) {
+      const text = this.#pendingMessage;
+      const atts = this.#pendingAttachments;
+      this.#pendingMessage = null;
+      this.#pendingAttachments = [];
+      this.#uploadAndSend(conv.conv_id, text, atts);
+    }
+    // #1443 — the active sidebar renders the session hierarchy when it is
+    // non-empty, so a new conversation is invisible until that list is
+    // refetched. #1274 covered rename/archive/unarchive/move, not create.
+    // Refetch the folder the conversation was created in, not
+    // `#currentFolder`: the sidebar passes its rendered folder explicitly,
+    // and a stale store folder would otherwise refetch the wrong listing
+    // and leave the new row invisible.
+    // Refresh after the queued message starts so the extra GET never delays
+    // the first turn. A failed refresh surfaces through its own error state;
+    // it no longer aborts the create.
+    await this.listSessions(folder);
   }
 
   /**
@@ -543,41 +608,44 @@ export class ConversationStore extends EventTarget {
     const sourceConvId = this.#currentConvId;
     if (!sourceConvId || !timestamp) return null;
     if (parentConvIdOf(sourceConvId)) return null;
-    try {
-      const conv = await DefaultService.forkConversationApiConversationsIdForkPost(
-        sourceConvId, { message_timestamp: timestamp },
-      );
-      this.#conversations.unshift(conv);
-      this.selectConversation(conv.conv_id);
-      // The fork inherits the source folder; refresh that listing rather than
-      // the store's folder, which can be stale for a deep-linked conversation.
-      await this.listSessions(conv.folder ?? this.#currentFolder);
-      return conv;
-    } catch (err) {
-      if (err instanceof ApiError) {
-        showToast(`Could not branch conversation: ${err.body?.error || err.status}`);
-        return null;
-      }
-      console.error('Failed to fork conversation:', err);
+    const result = await apiCall(() => DefaultService.forkConversationApiConversationsIdForkPost(
+      sourceConvId, { message_timestamp: timestamp },
+    ));
+    if (!result.ok) {
+      if (!(result.error instanceof ApiError)) console.error('Failed to fork conversation:', result.error);
+      showToast(`Could not branch conversation: ${apiErrorMessage(result.error)}`);
       return null;
     }
+    const conv = result.data;
+    if (!conv) {
+      console.error('Failed to fork conversation:', new Error('response body missing'));
+      return null;
+    }
+    this.#conversations.unshift(conv);
+    this.selectConversation(conv.conv_id);
+    // The fork inherits the source folder; refresh that listing rather than
+    // the store's folder, which can be stale for a deep-linked conversation.
+    await this.listSessions(conv.folder ?? this.#currentFolder);
+    return conv;
   }
 
   /** @param {string} convId @param {string} title */
   async renameConversation(convId, title) {
-    try {
-      const updated = await DefaultService.renameConversationApiConversationsIdPatch(convId, { title });
-      this.#conversations = this.#conversations.map(c =>
-        c.conv_id === convId ? { ...c, ...updated } : c
-      );
-      this.#emitChange();
-      // #1274 — the sidebar hierarchy renders from sessions, not the flat list;
-      // refresh it so a rename shows without a page reload.
-      await this.listSessions(this.#currentFolder);
-    } catch (err) {
-      if (err instanceof ApiError) return;
-      console.error('Failed to rename conversation:', err);
+    const result = await apiCall(() => DefaultService.renameConversationApiConversationsIdPatch(convId, { title }));
+    if (!result.ok) {
+      // The rename prompt was accepted; a failure must not vanish silently.
+      if (!(result.error instanceof ApiError)) console.error('Failed to rename conversation:', result.error);
+      showToast(`Could not rename conversation: ${apiErrorMessage(result.error)}`);
+      return;
     }
+    const updated = result.data;
+    this.#conversations = this.#conversations.map(c =>
+      c.conv_id === convId ? { ...c, ...updated } : c
+    );
+    this.#emitChange();
+    // #1274 — the sidebar hierarchy renders from sessions, not the flat list;
+    // refresh it so a rename shows without a page reload.
+    await this.listSessions(this.#currentFolder);
   }
 
   /**
@@ -597,112 +665,112 @@ export class ConversationStore extends EventTarget {
    * @returns {Promise<boolean>}
    */
   async moveConversation(convId, folder) {
-    try {
-      await DefaultService.renameConversationApiConversationsIdPatch(convId, { folder }, true);
-      // Re-fetch current folder listing
-      await this.listConversations(this.#currentFolder);
-      // #1274 — a folder move changes which session group the conversation
-      // belongs to; refresh the hierarchy so it follows. #1277 — the write
-      // must update both sources or the Chats listing keeps the stale folder.
-      await this.listSessions(this.#currentFolder);
-      return true;
-    } catch (err) {
-      if (err instanceof ApiError) return false;
-      console.error('Failed to move conversation:', err);
+    const result = await apiCall(() => DefaultService.renameConversationApiConversationsIdPatch(convId, { folder }, true));
+    if (!result.ok) {
+      // The move picker toasts the failure; this method only reports it.
+      if (!(result.error instanceof ApiError)) console.error('Failed to move conversation:', result.error);
       return false;
     }
+    // Re-fetch current folder listing
+    await this.listConversations(this.#currentFolder);
+    // #1274 — a folder move changes which session group the conversation
+    // belongs to; refresh the hierarchy so it follows. #1277 — the write
+    // must update both sources or the Chats listing keeps the stale folder.
+    await this.listSessions(this.#currentFolder);
+    return true;
   }
 
   /** @param {string} convId */
   async archiveConversation(convId) {
-    try {
-      await DefaultService.archiveConversationApiConversationsIdArchivePost(convId, true);
-      // If we're viewing the archived conversation, deselect it
-      if (this.#currentConvId === convId) {
-        this.#currentConvId = null;
-        this.#messageStore.clear();
-      }
-      // Re-fetch current folder listing
-      await this.listConversations(this.#currentFolder);
-      // #1274 — the archived conversation must leave the sidebar hierarchy too;
-      // it renders from sessions, which the flat-list refetch above does not touch.
-      await this.listSessions(this.#currentFolder);
-    } catch (err) {
-      if (err instanceof ApiError) return;
-      console.error('Failed to archive conversation:', err);
+    const result = await apiCall(() => DefaultService.archiveConversationApiConversationsIdArchivePost(convId, true));
+    if (!result.ok) {
+      // The row's archive action must not vanish silently.
+      if (!(result.error instanceof ApiError)) console.error('Failed to archive conversation:', result.error);
+      showToast(`Could not archive conversation: ${apiErrorMessage(result.error)}`);
+      return;
     }
+    // If we're viewing the archived conversation, deselect it
+    if (this.#currentConvId === convId) {
+      this.#currentConvId = null;
+      this.#messageStore.clear();
+    }
+    // Re-fetch current folder listing
+    await this.listConversations(this.#currentFolder);
+    // #1274 — the archived conversation must leave the sidebar hierarchy too;
+    // it renders from sessions, which the flat-list refetch above does not touch.
+    await this.listSessions(this.#currentFolder);
   }
 
   /** @param {string} convId */
   async deleteConversation(convId) {
-    try {
-      await DefaultService.deleteConversationApiConversationsIdDelete(convId, true);
-      // If we're viewing the deleted conversation, deselect it
-      if (this.#currentConvId === convId) {
-        this.#currentConvId = null;
-        this.#messageStore.clear();
-      }
-      // Re-fetch archived listing to update folder counts. This is the only
-      // refresh delete needs: a deleted conversation was already out of the
-      // active hierarchy (it left when archived), so no sessions refetch — and
-      // the listArchivedConversations emission above re-renders the section.
-      await this.listArchivedConversations(this.#archivedCurrentFolder);
-    } catch (err) {
-      if (err instanceof ApiError) return;
-      console.error('Failed to delete conversation:', err);
+    const result = await apiCall(() => DefaultService.deleteConversationApiConversationsIdDelete(convId, true));
+    if (!result.ok) {
+      // The row's delete action must not vanish silently.
+      if (!(result.error instanceof ApiError)) console.error('Failed to delete conversation:', result.error);
+      showToast(`Could not delete conversation: ${apiErrorMessage(result.error)}`);
+      return;
     }
+    // If we're viewing the deleted conversation, deselect it
+    if (this.#currentConvId === convId) {
+      this.#currentConvId = null;
+      this.#messageStore.clear();
+    }
+    // Re-fetch archived listing to update folder counts. This is the only
+    // refresh delete needs: a deleted conversation was already out of the
+    // active hierarchy (it left when archived), so no sessions refetch — and
+    // the listArchivedConversations emission above re-renders the section.
+    await this.listArchivedConversations(this.#archivedCurrentFolder);
   }
 
   /** @param {string} convId */
   async unarchiveConversation(convId) {
-    try {
-      await DefaultService.unarchiveConversationApiConversationsIdUnarchivePost(convId, true);
-      // Re-fetch archived listing
-      await this.listArchivedConversations(this.#archivedCurrentFolder);
-      // #1274 — the restored conversation must reappear in the sidebar hierarchy.
-      await this.listSessions(this.#currentFolder);
-    } catch (err) {
-      if (err instanceof ApiError) return;
-      console.error('Failed to unarchive conversation:', err);
+    const result = await apiCall(() => DefaultService.unarchiveConversationApiConversationsIdUnarchivePost(convId, true));
+    if (!result.ok) {
+      // The row's unarchive action must not vanish silently.
+      if (!(result.error instanceof ApiError)) console.error('Failed to unarchive conversation:', result.error);
+      showToast(`Could not unarchive conversation: ${apiErrorMessage(result.error)}`);
+      return;
     }
+    // Re-fetch archived listing
+    await this.listArchivedConversations(this.#archivedCurrentFolder);
+    // #1274 — the restored conversation must reappear in the sidebar hierarchy.
+    await this.listSessions(this.#currentFolder);
   }
 
   // -- Folder management (REST) -----------------------------------------------
 
   /** @param {string} path */
   async createFolder(path) {
-    try {
-      await DefaultService.createConvFolderApiConversationsFoldersPost({ path }, true);
-      await this.listConversations(this.#currentFolder);
-      return true;
-    } catch (err) {
-      console.error('Failed to create folder:', err instanceof ApiError ? err.body?.error : err);
+    const result = await apiCall(() => DefaultService.createConvFolderApiConversationsFoldersPost({ path }, true));
+    if (!result.ok) {
+      // The caller alerts on the returned false; keep the diagnostic log.
+      console.error('Failed to create folder:', result.error instanceof ApiError ? result.error.body?.error : result.error);
       return false;
     }
+    await this.listConversations(this.#currentFolder);
+    return true;
   }
 
   /** @param {string} path */
   async deleteFolder(path) {
-    try {
-      await DefaultService.deleteConvFolderApiConversationsFoldersPathDelete(path, true);
-      await this.listConversations(this.#currentFolder);
-      return true;
-    } catch (err) {
-      console.error('Failed to delete folder:', err instanceof ApiError ? err.body?.error : err);
+    const result = await apiCall(() => DefaultService.deleteConvFolderApiConversationsFoldersPathDelete(path, true));
+    if (!result.ok) {
+      console.error('Failed to delete folder:', result.error instanceof ApiError ? result.error.body?.error : result.error);
       return false;
     }
+    await this.listConversations(this.#currentFolder);
+    return true;
   }
 
   /** @param {string} oldPath @param {string} newPath */
   async renameFolder(oldPath, newPath) {
-    try {
-      await DefaultService.renameConvFolderApiConversationsFoldersPathPut(oldPath, { path: newPath }, true);
-      await this.listConversations(this.#currentFolder);
-      return true;
-    } catch (err) {
-      console.error('Failed to rename folder:', err instanceof ApiError ? err.body?.error : err);
+    const result = await apiCall(() => DefaultService.renameConvFolderApiConversationsFoldersPathPut(oldPath, { path: newPath }, true));
+    if (!result.ok) {
+      console.error('Failed to rename folder:', result.error instanceof ApiError ? result.error.body?.error : result.error);
       return false;
     }
+    await this.listConversations(this.#currentFolder);
+    return true;
   }
 
   // -- WebSocket-based actions (chat streaming) --------------------------------

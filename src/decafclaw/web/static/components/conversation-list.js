@@ -1009,6 +1009,50 @@ export class ConversationList extends LitElement {
     return { conversations: store?.conversations || [], folders: store?.folders || [] };
   }
 
+  /**
+   * Whether the active section has nothing to render. The active section also
+   * renders from the session hierarchy (#1115), so a populated hierarchy is
+   * not an empty list even when the flat listing is.
+   * @param {{conversations: Array, folders: Array}} lists
+   */
+  #sectionEmpty({ conversations, folders }) {
+    if (conversations.length > 0 || folders.length > 0) return false;
+    return this._chatSection !== '' || (this.store?.sessions || []).length === 0;
+  }
+
+  /**
+   * The active section's listing failure text (#1415): '' while healthy or
+   * when stale data still renders, otherwise the store's recorded error for
+   * whichever listing feeds this section. A failed refresh keeps the previous
+   * rows; only an error with nothing to render is shown.
+   * @param {{conversations: Array, folders: Array}} lists
+   */
+  #sectionError({ conversations, folders }) {
+    if (!this.#sectionEmpty({ conversations, folders })) return '';
+    const store = this.store;
+    if (this._chatSection === '_archived') return store?.archivedConversationsError || '';
+    if (this._chatSection === '_system') return store?.systemConversationsError || '';
+    // The active section renders from sessions when non-empty, else the flat
+    // list; either listing's failure is worth showing when nothing renders.
+    return (store?.conversationsError || '') || (store?.sessionsError || '');
+  }
+
+  /**
+   * The empty-listing placeholder, or the error node that replaces it when a
+   * listing failed with nothing to render (#1415).
+   * @param {{conversations: Array, folders: Array}} lists
+   */
+  #renderEmptyOrError({ conversations, folders }) {
+    const error = this.#sectionError({ conversations, folders });
+    if (error) {
+      return html`<p class="conv-list-error" role="alert">${error}</p>`;
+    }
+    if (this.#sectionEmpty({ conversations, folders })) {
+      return html`<p style="padding: 0.5rem 0.75rem; color: var(--pico-muted-color); font-size: 0.85rem;">No conversations</p>`;
+    }
+    return nothing;
+  }
+
   render() {
     const currentFolder = this.store?.currentFolder ?? this._chatFolder ?? '';
     // The active section's rows and folders, read from the store (#1408).
@@ -1050,10 +1094,7 @@ export class ConversationList extends LitElement {
             </div>
           `;
         })}
-        ${conversations.length === 0 && folders.length === 0
-          ? html`<p style="padding: 0.5rem 0.75rem; color: var(--pico-muted-color); font-size: 0.85rem;">No conversations</p>`
-          : nothing
-        }
+        ${this.#renderEmptyOrError({ conversations, folders })}
         ${this._chatSection === '_archived'
           ? conversations.map(c => this.#renderConversationItem(c, {
               extraClass: 'archived',
