@@ -725,6 +725,56 @@ def test_browser_conversation_listings(built_static, chromium, config):
         ] == expected_requests
 
 
+def test_browser_conversation_listing_error_state(built_static, chromium, config):
+    """A 500 on the conversation listing shows an error node in the sidebar (#1415).
+
+    Before the shared REST error policy, a failed listConversations left the
+    sidebar silently empty ("No conversations"). The scenario stubs a 500 on
+    GET /api/conversations and asserts the sidebar renders the failure instead.
+    """
+    with browser_scenario(built_static, chromium, config, viewport={"width": 1280, "height": 800}) as scenario:
+        page = scenario.page
+
+        def stub_listing_500(route):
+            if route.request.url.split("?", 1)[0].endswith("/api/conversations"):
+                route.fulfill(
+                    status=500,
+                    content_type="application/json",
+                    body=json.dumps({"detail": "Internal Server Error"}),
+                )
+            else:
+                route.continue_()
+
+        page.route("**/api/conversations*", stub_listing_500)
+        page.goto(scenario.base + "/")
+        page.wait_for_selector("conversation-sidebar", timeout=15000)
+        # The error node replaces the "No conversations" placeholder; wait on
+        # the rendered failure rather than a fixed sleep.
+        page.wait_for_function(
+            """() => {
+                const sidebar = document.querySelector('conversation-sidebar');
+                return !!sidebar?.querySelector('.conv-list-error[role="alert"]');
+            }"""
+        )
+        error = page.evaluate(
+            """() => {
+                const node = document.querySelector('conversation-sidebar .conv-list-error');
+                return { text: node.textContent, role: node.getAttribute('role') };
+            }"""
+        )
+        # The custom transport adapter discards the listing's error body, so
+        # the message is status-based rather than a server-provided one.
+        assert error == {"text": "Request failed (HTTP 500)", "role": "alert"}
+        # The failure surfaced through the store's error state, not a silent empty list.
+        assert page.evaluate(
+            """() => !Array.from(document.querySelectorAll('conversation-sidebar p'))
+                .some(p => p.textContent.trim() === 'No conversations')"""
+        )
+        assert scenario.failed_requests, "the stubbed 500 was never requested"
+        assert all(url.split("?", 1)[0].endswith("/api/conversations") for url in scenario.failed_requests)
+        scenario.failed_requests.clear()  # the scenario teardown asserts none remain
+
+
 def test_browser_conversation_patch(built_static, chromium, config):
     nested = NESTED_CONV_FOLDER
     conv_id = seed_conversation(config, "Patch test")

@@ -1504,18 +1504,24 @@ describe('REST error policy (#1415)', () => {
   });
 
   const json = (body) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
-  const httpFailure = (status, body) => new Response(JSON.stringify(body), { status });
+  // The server always sends a JSON content type; the stock transport decodes
+  // error bodies only for that type, so failures must carry it too.
+  const httpFailure = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const emptyListing = (folder = '') => json({ folder, folders: [], conversations: [] });
 
+  // The conversation listings ride the custom transport adapter, which
+  // discards error bodies (ApiError.body stays undefined), so their message
+  // falls back to the status. /api/sessions uses the stock transport, which
+  // decodes JSON error bodies and surfaces the server's own message.
   it.each([
-    ['listConversations', 'conversationsError'],
-    ['listArchivedConversations', 'archivedConversationsError'],
-    ['listSystemConversations', 'systemConversationsError'],
-    ['listSessions', 'sessionsError'],
-  ])('records an error state and emits on an HTTP failure (%s)', async (method, getter) => {
+    ['listConversations', 'conversationsError', 'Request failed (HTTP 500)'],
+    ['listArchivedConversations', 'archivedConversationsError', 'Request failed (HTTP 500)'],
+    ['listSystemConversations', 'systemConversationsError', 'Request failed (HTTP 500)'],
+    ['listSessions', 'sessionsError', 'Internal Server Error (500)'],
+  ])('records an error state and emits on an HTTP failure (%s)', async (method, getter, message) => {
     fetchMock.mockResolvedValueOnce(httpFailure(500, { detail: 'Internal Server Error' }));
     await store[method]();
-    expect(store[getter]).toBe('Internal Server Error (500)');
+    expect(store[getter]).toBe(message);
     expect(change).toHaveBeenCalledTimes(1);
     // An HTTP error status is expected and surfaced through state, not the console.
     expect(log).not.toHaveBeenCalled();
@@ -1541,13 +1547,14 @@ describe('REST error policy (#1415)', () => {
     await store.listConversations('Work');
     expect(store.conversations.map((c) => c.conv_id)).toEqual(['a']);
     expect(store.folders).toHaveLength(1);
-    expect(store.conversationsError).toBe('boom (500)');
+    // The custom listing adapter discards the error body, so the message is status-based.
+    expect(store.conversationsError).toBe('Request failed (HTTP 500)');
   });
 
   it('clears the error state on a successful refresh', async () => {
     fetchMock.mockResolvedValueOnce(httpFailure(503, { error: 'unavailable' }));
     await store.listConversations();
-    expect(store.conversationsError).toBe('unavailable (503)');
+    expect(store.conversationsError).toBe('Request failed (HTTP 503)');
     fetchMock.mockResolvedValueOnce(emptyListing());
     await store.listConversations();
     expect(store.conversationsError).toBe('');
@@ -1579,7 +1586,9 @@ describe('REST error policy (#1415)', () => {
     // rename fails with the server's `error` field; the rest with a FastAPI detail.
     fetchMock.mockResolvedValueOnce(httpFailure(409, method === 'renameConversation' ? { error: 'conflict' } : { detail: 'boom' }));
     await store[method](id);
-    expect(/** @type {any} */ (showToast)).toHaveBeenCalledWith(`${prefix} ${method === 'renameConversation' ? 'conflict' : 'boom'} (409)`);
+    // The custom adapter discards these endpoints' error bodies, so the toast
+    // carries the status rather than a server message.
+    expect(/** @type {any} */ (showToast)).toHaveBeenCalledWith(`${prefix} Request failed (HTTP 409)`);
     // A failed mutation changes no state and emits nothing.
     expect(change).not.toHaveBeenCalled();
   });

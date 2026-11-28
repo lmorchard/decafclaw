@@ -378,6 +378,12 @@ export class ConversationStore extends EventTarget {
       return;
     }
     const data = result.data;
+    if (!data) {
+      // The transport resolved without a decodable body (a 204, or a response
+      // it could not parse); keep the previous listing rather than blanking it.
+      console.error('Failed to list conversations:', new Error('response body missing'));
+      return;
+    }
     this.#conversationsError = '';
     this.#conversations = data.conversations || [];
     this.#folders = data.folders || [];
@@ -399,6 +405,10 @@ export class ConversationStore extends EventTarget {
       return;
     }
     const data = result.data;
+    if (!data) {
+      console.error('Failed to list archived conversations:', new Error('response body missing'));
+      return;
+    }
     this.#archivedConversationsError = '';
     this.#archivedConversations = data.conversations || [];
     this.#archivedFolders = data.folders || [];
@@ -420,6 +430,10 @@ export class ConversationStore extends EventTarget {
       return;
     }
     const data = result.data;
+    if (!data) {
+      console.error('Failed to list system conversations:', new Error('response body missing'));
+      return;
+    }
     this.#systemConversationsError = '';
     this.#systemConversations = data.conversations || [];
     this.#systemFolders = data.folders || [];
@@ -445,6 +459,10 @@ export class ConversationStore extends EventTarget {
       return;
     }
     const data = result.data;
+    if (!data) {
+      console.error('Failed to list sessions:', new Error('response body missing'));
+      return;
+    }
     this.#sessionsError = '';
     this.#sessions = data.sessions || [];
     this.#syncConversationStatuses(
@@ -547,6 +565,12 @@ export class ConversationStore extends EventTarget {
       return;
     }
     const conv = result.data;
+    if (!conv) {
+      // The transport resolved without a decodable body; keep the previous
+      // state rather than inserting an undefined row.
+      console.error('Failed to create conversation:', new Error('response body missing'));
+      return;
+    }
     // Insert into local list and select
     this.#conversations.unshift(conv);
     if (conv.model) this.#activeModel = conv.model;
@@ -593,6 +617,10 @@ export class ConversationStore extends EventTarget {
       return null;
     }
     const conv = result.data;
+    if (!conv) {
+      console.error('Failed to fork conversation:', new Error('response body missing'));
+      return null;
+    }
     this.#conversations.unshift(conv);
     this.selectConversation(conv.conv_id);
     // The fork inherits the source folder; refresh that listing rather than

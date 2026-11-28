@@ -55,7 +55,9 @@ describe.each(operations)('%s generated transport', (method, route, itemsKey, fo
     expect(store[itemsKey]).toBe(items);
     expect(store[foldersKey]).toBe(entries);
     expect(store[folderKey]).toBe('old');
-    expect(changed).not.toHaveBeenCalled();
+    // #1415: a failed refresh emits so the sidebar can render its error state
+    // (a 500 must not be silently empty); the retained rows above are unchanged.
+    expect(changed).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledTimes(failure === 'http' ? 0 : 1);
     if (failure !== 'http') expect(log.mock.calls[0][0]).toBe(
       `Failed to list ${method === 'listConversations' ? '' : method === 'listArchivedConversations' ? 'archived ' : 'system '}conversations:`);
