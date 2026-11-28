@@ -10,9 +10,11 @@
  * conversation consumer of `<picker-popup>`, #2011), and #1684 retired session
  * modes, so no mode select remains.
  *
- * This case pins that dedup: all three surfaces must render the model selector
+ * These cases pin that dedup: all three surfaces must render the model selector
  * through the one shared element with identical adornment text, and none may
- * fall back to a per-surface native `<select>`.
+ * fall back to a per-surface native `<select>`. One case exercises the
+ * unconfigured-active-model warning; the other the clean configured state, so
+ * "one consistent behavior" is pinned in both.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -34,9 +36,11 @@ const DEFAULT_MODEL = 'vertex-gemini-flash-3.8';
 /**
  * One store shape every surface reads from: an unconfigured active model plus
  * a single configured default. Mirrors the per-surface test mounts (plain
- * EventTarget, fields assigned directly).
+ * EventTarget, fields assigned directly). `overrides` swaps in a configured
+ * active model for the clean-state case.
+ * @param {Record<string, unknown>} [overrides]
  */
-function makeStore() {
+function makeStore(/** @type {Record<string, unknown>} */ overrides = {}) {
   return Object.assign(new EventTarget(), {
     currentConvId: 'c1',
     conversations: [{ conv_id: 'c1', title: 'Trip planning' }],
@@ -59,7 +63,7 @@ function makeStore() {
     listArchivedConversations: vi.fn(),
     listSystemConversations: vi.fn(),
     createConversation: vi.fn(),
-  });
+  }, overrides);
 }
 
 /** @param {HTMLElement|null} node */
@@ -73,12 +77,13 @@ function textOf(node) {
  * render. The body is emptied first: `conversation-sidebar` snapshots whether
  * a `chat-controls` exists at construction time.
  * @param {string} tag
+ * @param {Record<string, unknown>} [storeOverrides]
  */
-async function mountSurface(tag) {
+async function mountSurface(/** @type {string} */ tag, /** @type {Record<string, unknown>} */ storeOverrides = {}) {
   document.body.innerHTML = '';
   const el = /** @type {any} */ (document.createElement(tag));
   document.body.append(el);
-  el.store = makeStore();
+  el.store = makeStore(storeOverrides);
   await el.updateComplete;
   // The surfaces mirror store fields into reactive state (or call
   // requestUpdate) from updated(), which schedules a follow-up update that the
@@ -138,13 +143,14 @@ async function adornmentSignature(surfaceEl) {
 
   const trigger = /** @type {HTMLElement|null} */ (popup?.querySelector('.picker-popup-trigger'));
   const selected = /** @type {HTMLElement|null} */ (popup?.querySelector('.picker-popup-option.selected'));
-  expect(selected).toBeTruthy(); // the unconfigured model stays visible and selected
+  expect(selected).toBeTruthy(); // the active model stays visible and selected
 
   const defaultRow = [...popup.querySelectorAll('.picker-popup-option')]
     .find((row) => row.dataset.value === DEFAULT_MODEL);
 
   return {
     triggerWarning: textOf(trigger?.querySelector('.picker-popup-warning')),
+    triggerBadge: textOf(trigger?.querySelector('.picker-popup-badge')),
     selectedValue: selected?.dataset.value ?? null,
     selectedWarning: textOf(selected?.querySelector('.picker-popup-warning')),
     defaultBadge: textOf(defaultRow?.querySelector('.picker-popup-badge')),
@@ -174,9 +180,35 @@ describe('model/mode select rendering across surfaces (#1414)', () => {
     }
 
     // The two non-inline surfaces carry the same warning on their trigger; the
-    // inline menu picker has no trigger (its rows are always visible).
+    // inline menu picker has no trigger (its rows are always visible). The
+    // unconfigured model earns a warning, never the default badge.
     expect(signatures[0].triggerWarning, 'chat-input is inline').toBeNull();
     expect(signatures[1].triggerWarning, 'conversation-sidebar trigger').toBe('⚠ not configured');
     expect(signatures[2].triggerWarning, 'chat-controls trigger').toBe('⚠ not configured');
+    for (let i = 0; i < SURFACES.length; i++) {
+      expect(signatures[i].triggerBadge, `${SURFACES[i]} trigger badge`).toBeNull();
+    }
+  });
+
+  it('renders the same clean adornments when the active model is configured', async () => {
+    const signatures = [];
+    for (const tag of SURFACES) {
+      const el = await mountSurface(tag, { activeModel: DEFAULT_MODEL });
+      signatures.push(await adornmentSignature(el));
+    }
+
+    // Configured: no warning anywhere, and the default badge rides on both the
+    // selected row and (for non-inline surfaces) its trigger — identically.
+    for (let i = 0; i < SURFACES.length; i++) {
+      const tag = SURFACES[i];
+      const sig = signatures[i];
+      expect(sig.selectedValue, `${tag} selected row`).toBe(DEFAULT_MODEL);
+      expect(sig.selectedWarning, `${tag} selected-row warning`).toBeNull();
+      expect(sig.defaultBadge, `${tag} default badge`).toBe('default');
+    }
+
+    expect(signatures[0].triggerBadge, 'chat-input is inline').toBeNull();
+    expect(signatures[1].triggerBadge, 'conversation-sidebar trigger').toBe('default');
+    expect(signatures[2].triggerBadge, 'chat-controls trigger').toBe('default');
   });
 });
