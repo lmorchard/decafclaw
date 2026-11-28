@@ -54,6 +54,16 @@ as soon as the socket reopens. The overlay is a sibling of `#chat-layout`
 (`lib/connection-overlay.js`), and `WebSocketClient` emits `reconnecting` with
 `{attempt, delayMs}` so the attempt line stays current.
 
+**Outbound queue (#1416).** `WebSocketClient.send()` never drops: while the
+socket is not open it buffers the frame (`pendingCount` tracks the queue) and
+flushes the buffer in order on `open`, ahead of reconnect housekeeping. A frame
+that cannot be delivered — the flush throws, or a deliberate `disconnect()`
+discards the queue — fires `send-failed` with the message as detail. The store
+tracks queued SEND frames and, on `send-failed`, marks the optimistic user echo
+`failed` (rendered as a "⚠️ Not sent" note on the bubble) and releases the turn
+busy state if that send set it. On `open` the tracking list is cleared, since
+the queue was just flushed or failed.
+
 **In-session links (#1485).** Markdown links rendered in a conversation open
 in the side panel instead of a new tab. `[[Page]]` and `vault://Notes/Page`
 open the Vault editor; `workspace://drafts/post.md` opens the Files editor.

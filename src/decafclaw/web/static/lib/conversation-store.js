@@ -38,6 +38,7 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {boolean} [is_error]
  * @property {boolean} [timed_out]
  * @property {number|null} [timeout_sec]
+ * @property {boolean} [failed] user message that could not be sent over the WebSocket (#1416)
  * @property {string} [source]
  * @property {AttachmentResponse[]} [attachments]
  */
@@ -168,6 +169,10 @@ export class ConversationStore extends EventTarget {
   #pendingMessage = null;
   /** @type {Array<AttachmentResponse | PendingAttachment>} attachments queued with pending message */
   #pendingAttachments = [];
+  /** Outbound SEND frames buffered by the client while the socket was down,
+   * with the text of their optimistic echo (#1416). */
+  /** @type {Array<{frame: object, text: string, wasBusy: boolean}>} */
+  #pendingSends = [];
 
   /** @param {WebSocketClient} wsClient */
   constructor(wsClient) {
@@ -177,6 +182,9 @@ export class ConversationStore extends EventTarget {
     this.#messageStore = new MessageStore(onChange);
     this.#toolStatusStore = new ToolStatusStore(onChange, wsClient, this.#messageStore);
     this.#ws.addEventListener('message', (e) => this.#handleMessage(/** @type {CustomEvent} */(e).detail));
+    // A queued outbound frame that cannot be delivered is surfaced on its
+    // optimistic echo instead of being dropped (#1416).
+    this.#ws.addEventListener('send-failed', (e) => this.#handleSendFailed(/** @type {CustomEvent} */(e).detail));
     // Sessions feed the sidebar hierarchy (#1115); refresh alongside the
     // flat list so delegated children appear without a page reload.
     // A reconnect refreshes the folder being viewed, not the top level
@@ -185,6 +193,11 @@ export class ConversationStore extends EventTarget {
     // A chat then created in that folder was created there but the sidebar
     // refetched the top level, so its row stayed invisible until a reload.
     this.#ws.addEventListener('open', () => {
+      // The client flushed its outbound queue before dispatching `open`: any
+      // frame that failed already fired send-failed, and the ones that made it
+      // are on the wire. Drop the tracking entries so a later failure cannot
+      // mark a stale echo (#1416).
+      this.#pendingSends = [];
       this.listConversations(this.#currentFolder);
       this.listSessions(this.#currentFolder);
     });
@@ -808,8 +821,35 @@ export class ConversationStore extends EventTarget {
     if (wasBusy) wsMsg.steering = true;
     const wikiPage = /** @type {any} */ (window).getOpenWikiPage?.();
     if (wikiPage) wsMsg.wiki_page = wikiPage;
-    this.#ws.send(wsMsg);
+    // While the socket is down the client queues the frame instead of dropping
+    // it (#1416); track it so a delivery failure can be surfaced on the echo.
+    if (this.#ws.send(wsMsg)) {
+      this.#pendingSends.push({ frame: wsMsg, text, wasBusy });
+    }
     this.#emitChange();
+  }
+
+  /**
+   * A queued outbound frame could not be delivered (#1416): mark its optimistic
+   * echo as failed and release the turn's busy state if this send set it.
+   * @param {object} message - The failed frame (send-failed detail)
+   */
+  #handleSendFailed(message) {
+    if (!message || message.type !== MESSAGE_TYPES.SEND) return;
+    const idx = this.#pendingSends.findIndex((s) => s.frame === message);
+    if (idx < 0) return; // not one of our queued sends, or already resolved
+    const { text, wasBusy } = this.#pendingSends[idx];
+    this.#pendingSends.splice(idx, 1);
+    if (message.conv_id !== this.#currentConvId) return; // echo cleared with the conversation
+    const marked = this.#messageStore.markUserMessageFailed(text);
+    if (!wasBusy) {
+      // This send set the busy flag; release it so the spinner resolves.
+      this.#busy = false;
+      if (this.#currentConvId) {
+        this.#setConversationStatus(this.#currentConvId, 'idle');
+      }
+    }
+    if (marked || !wasBusy) this.#emitChange();
   }
 
   /**

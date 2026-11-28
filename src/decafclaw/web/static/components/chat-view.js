@@ -217,6 +217,7 @@ export class ChatView extends LitElement {
           .isError=${!!m.is_error}
           .timedOut=${!!m.timed_out}
           .timeoutSec=${m.timeout_sec ?? null}
+          .failed=${!!m.failed}
           .suppressUserMessage=${!!m.suppress_user_message}
         ></chat-message>
       `)}

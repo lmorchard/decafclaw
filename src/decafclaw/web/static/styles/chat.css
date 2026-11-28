@@ -259,6 +259,19 @@ chat-message .message.tool.tool-timeout .tool-result-header {
   font-weight: 600;
 }
 
+/* A user message that could not be sent over the WebSocket (#1416): the
+   optimistic echo stays in the transcript with a loud not-sent marker. The
+   note inherits the bubble's text color so it reads on every palette. */
+chat-message .message.user.msg-failed {
+  opacity: 0.75;
+}
+
+chat-message .msg-failed-note {
+  margin-top: 0.2rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 chat-message .tool-badge {
   flex-shrink: 0;
   font-size: 0.7rem;

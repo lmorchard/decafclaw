@@ -55,6 +55,25 @@ export class MessageStore {
     this.#currentMessages.push(msg);
   }
 
+  /**
+   * Mark the newest user message with `text` as failed to send (#1416): its
+   * optimistic echo stays in the transcript with a not-sent indicator instead
+   * of silently vanishing. The row is replaced in a fresh array so views that
+   * hold the old reference re-render.
+   * @param {string} text
+   * @returns {boolean} true if a message was marked
+   */
+  markUserMessageFailed(text) {
+    for (let i = this.#currentMessages.length - 1; i >= 0; i--) {
+      const m = this.#currentMessages[i];
+      if (m.role !== 'user' || m.content !== text) continue;
+      this.#currentMessages = [...this.#currentMessages];
+      this.#currentMessages[i] = { ...m, failed: true };
+      return true;
+    }
+    return false;
+  }
+
   /** Update a tool_call message by tool_call_id (for status updates).
    * Accumulates a statusHistory array so the UI can show the full progress log.
    */
