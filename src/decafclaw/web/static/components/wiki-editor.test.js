@@ -27,7 +27,9 @@ vi.mock('@milkdown/kit', async (importOriginal) => {
   return { ...actual, Editor: { make }, __editors: editors };
 });
 
-await import('./wiki-editor.js');
+// Registers the <wiki-editor> custom element (side effect) and exposes the
+// endpoint table so a test can register a synthetic fourth endpoint.
+const { SAVE_ENDPOINTS } = /** @type {any} */ (await import('./wiki-editor.js'));
 /** Editors built by the stub above, in mount order. */
 const { __editors: editors } = /** @type {any} */ (await import('@milkdown/kit'));
 
@@ -238,5 +240,88 @@ describe('wiki-editor save flush', () => {
 
     expect(el._status).toBe('saved');
     expect(el.modified).toBe(42);
+  });
+});
+
+describe('wiki-editor SAVE_ENDPOINTS scaling', () => {
+  /** @type {ReturnType<typeof vi.fn>} */
+  let fetchMock;
+
+  // A synthetic fourth endpoint, registered as a single table row. Its get/put
+  // are recording mocks (no fetch), so these tests prove the table dispatches a
+  // brand-new endpoint through #save/#forceSave/#reload — one row, no per-
+  // method branches. Before the table this would have meant three new near-
+  // identical branches in each of those methods.
+  const NOTES = '/api/notes/';
+
+  beforeEach(() => {
+    editors.length = 0;
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.unstubAllGlobals();
+    // Remove the synthetic endpoint so it cannot leak into other tests.
+    delete SAVE_ENDPOINTS[NOTES];
+  });
+
+  it('dispatches a registered fourth endpoint through #reload', async () => {
+    const get = vi.fn(async (/** @type {string} */ page) => ({ content: `notes:${page}`, modified: 900 }));
+    const put = vi.fn();
+    SAVE_ENDPOINTS[NOTES] = { get, put, extractModified: (/** @type {any} */ d) => d.modified };
+
+    const el = await mountInConflict({ page: 'MyNote', saveEndpoint: NOTES });
+    clickReload(el);
+    await vi.waitFor(() => expect(get).toHaveBeenCalled());
+
+    expect(get).toHaveBeenCalledWith('MyNote');
+    expect(el.content).toBe('notes:MyNote');
+    expect(el.modified).toBe(900);
+    expect(el._status).toBe('saved');
+  });
+
+  it('dispatches a registered fourth endpoint through #save', async () => {
+    const get = vi.fn();
+    const put = vi.fn(async (/** @type {string} */ page, /** @type {{content: string}} */ body) => ({ modified: 901 }));
+    SAVE_ENDPOINTS[NOTES] = { get, put, extractModified: (/** @type {any} */ d) => d.modified };
+
+    const el = await mount({ page: 'MyNote', content: 'A', saveEndpoint: NOTES });
+    typeInto(editors[0], 'B');
+    await el.flushSave();
+
+    expect(put).toHaveBeenCalledTimes(1);
+    const [page, body] = put.mock.calls[0];
+    expect(page).toBe('MyNote');
+    expect(body.content).toBe('B');
+    // A normal save carries the mtime it last saw (0 here — never saved yet).
+    expect(body.modified).toBe(0);
+    expect(el.modified).toBe(901);
+    expect(el._status).toBe('saved');
+  });
+
+  it('dispatches a registered fourth endpoint through #forceSave', async () => {
+    const get = vi.fn();
+    const put = vi.fn(async (/** @type {string} */ page, /** @type {{content: string}} */ body) => ({ modified: 902 }));
+    SAVE_ENDPOINTS[NOTES] = { get, put, extractModified: (/** @type {any} */ d) => d.modified };
+
+    const el = await mount({ page: 'MyNote', content: 'A', saveEndpoint: NOTES });
+    el._status = 'conflict';
+    await el.updateComplete;
+
+    const buttons = [...el.querySelectorAll('.wiki-editor-conflict button')];
+    const overwrite = buttons.find(b => b.textContent?.trim() === 'Overwrite');
+    if (!overwrite) throw new Error('Overwrite button not rendered');
+    /** @type {HTMLButtonElement} */ (overwrite).click();
+
+    await vi.waitFor(() => expect(put).toHaveBeenCalled());
+    const [page, body] = put.mock.calls[0];
+    expect(page).toBe('MyNote');
+    expect(body.content).toBe('A');
+    // Force save omits the mtime to skip the server-side check.
+    expect(body).not.toHaveProperty('modified');
+    expect(el.modified).toBe(902);
+    expect(el._status).toBe('saved');
   });
 });
