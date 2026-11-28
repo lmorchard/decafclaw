@@ -100,10 +100,12 @@ _READ_ONLY_INSTRUCTION = """\
 You are in READ-ONLY MODE. You must not create, change, move, or delete
 anything, and you must not mutate any external system.
 
-Shell access follows the session's own approval policy, so read-only work
-(`git log`, `grep`, `ls`, `gh issue view`, `gh api` reads) is available and
-expected. Do not use it to change anything: no redirection into a file, no
-`gh issue close`, `gh pr merge`, `sed -i`, `git commit`, or any other write.
+Read-only shell commands are available and expected (`git log`, `grep`, `ls`,
+`gh issue view`, `gh api` with no request body). A write command is refused
+before it runs, so attempting one only wastes an iteration: no redirection into
+a file, no `gh issue close`, `gh pr merge`, `sed -i`, or `git commit`.
+Command chaining (`;`, `&&`, `||`) and output redirection are refused outright.
+Pipes between read-only commands are fine.
 
 Do not call the write-capable tools (workspace_write, admin_write,
 vault_write, send_email, and similar). Use read-only tools, and report the
@@ -425,9 +427,19 @@ async def run_child_turn(
         if read_only:
             # Read-only delegation (#87): keep only tools whose definition
             # declares `writes: False`; fail-closed on missing/unknown defs.
+            #
+            # `shell` is the one exception. It declares writes=True because a
+            # single flag cannot describe a tool that both reads and mutates,
+            # and stripping it removed `gh`/`git` access from every read-only
+            # child — which sent them to unauthenticated endpoints instead.
+            # It is kept here and gated per command by `tool_shell` via
+            # `ctx.tools.read_only`.
             child_ctx.tools.allowed = {
-                name for name in (child_ctx.tools.allowed or set()) if _tool_is_read_only(name, parent_ctx)
+                name
+                for name in (child_ctx.tools.allowed or set())
+                if _tool_is_read_only(name, parent_ctx) or name == "shell"
             }
+            child_ctx.tools.read_only = True
 
         # Carry over parent's activated skill tools and data
         child_ctx.tools.extra = parent_ctx.tools.extra
