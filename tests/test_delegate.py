@@ -1104,27 +1104,30 @@ class TestReadOnlyDelegation:
 
     @pytest.mark.asyncio
     async def test_read_only_strips_write_tools(self, ctx):
-        """With read_only=True, write tools (shell, workspace_write, send_email)
-        are absent and read-only tools (workspace_read) survive."""
-        from decafclaw.tools import TOOL_DEFINITIONS
+        """With read_only=True, write tools (workspace_write, send_email) are
+        absent and read-only tools (workspace_read) survive.
 
+        ``shell`` is deliberately NOT stripped: it declares writes=True but is
+        the only path to `gh`/`git`, so it survives with a per-command gate
+        (see test_shell_read_only_gate_*). Stripping it sent read-only children
+        to unauthenticated endpoints instead.
+        """
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
             await run_child_turn(ctx, "task", read_only=True)
 
         child_ctx = mock_run.call_args[0][0]
         allowed = child_ctx.tools.allowed or set()
-        for name in (
-            ("shell", "workspace_write, send_email".replace(", send_email", ""))
-            if False
-            else ("shell", "workspace_write", "send_email")
-        ):
+        for name in ("workspace_write", "send_email"):
             assert name not in allowed, f"{name} should be stripped in read-only mode"
+        assert "shell" in allowed, "shell must survive so `gh`/`git` remain reachable"
+        assert child_ctx.tools.read_only is True, "the shell gate must be armed"
         assert "workspace_read" in allowed, "workspace_read should survive read-only filtering"
 
     @pytest.mark.asyncio
     async def test_read_only_keeps_only_writes_false_tools(self, ctx):
-        """Every surviving tool must declare writes:False; build expectation by iterating definitions."""
+        """Surviving tools must declare writes:False — except ``shell``, which is
+        kept deliberately and gated per command instead."""
         from decafclaw.tools import TOOL_DEFINITIONS
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
@@ -1136,10 +1139,11 @@ class TestReadOnlyDelegation:
         for td in TOOL_DEFINITIONS:
             fn = td.get("function") or {}
             name = fn.get("name")
-            if name in allowed:
+            if name in allowed and name != "shell":
                 assert td.get("writes") is False, (
                     f"{name} survived read-only filter but declares writes={td.get('writes')}"
                 )
+        assert "shell" in allowed
 
     @pytest.mark.asyncio
     async def test_read_only_default_keeps_write_tools(self, ctx):
@@ -1185,6 +1189,86 @@ class TestReadOnlyDelegation:
         for forbidden in ("gh issue close", "gh pr merge", "git commit"):
             assert forbidden in text, f"read-only prompt should name {forbidden} as a write"
         assert "Do not call write-capable tools (for example workspace_write" not in text
+
+    def test_shell_read_only_gate_allows_reads(self):
+        """Read-only children must reach gh/git/grep; denying those was the bug."""
+        from decafclaw.tools.shell_tools import _read_only_denial
+
+        for command in (
+            "gh issue view 1314 --json number,title",
+            "gh pr checks 5",
+            "gh api rate_limit",
+            "gh api repos/o/r/issues --jq .[].title",
+            "gh api --method GET repos",
+            "gh api -X GET repos",
+            "gh search issues foo",
+            "git log --oneline -5",
+            "git diff origin/main --stat",
+            "git branch",
+            "git remote -v",
+            "grep -rn foo src/",
+            "ls -la",
+            "cat file.txt",
+            "gh issue view 1 | head -20",
+            "find . -name '*.py'",
+        ):
+            assert _read_only_denial(command) is None, f"read-only should allow: {command}"
+
+    def test_shell_read_only_gate_denies_writes(self):
+        """Every mutating shape must be refused before it runs."""
+        from decafclaw.tools.shell_tools import _read_only_denial
+
+        for command in (
+            "gh issue close 1",
+            "gh issue edit 1 --add-label triage:ready",
+            "gh issue comment 1 --body hi",
+            "gh pr merge 5 --squash",
+            "gh pr create --title x",
+            "gh api -X POST repos/o/r/issues",
+            "gh api --method=DELETE repos/o/r/issues/1",
+            "gh api -XPOST repos",
+            "gh api -f title=x repos",
+            "gh api -X",
+            "git commit -m x",
+            "git push",
+            "git checkout -b x",
+            "git branch -D foo",
+            "git config --global user.name x",
+            "echo hi > file.txt",
+            "ls; rm -rf /",
+            "ls && rm x",
+            "python3 evil.py",
+            "curl http://example.com",
+            "sed -i s/a/b/ f",
+            "tee out.txt",
+            "sh -c 'rm x'",
+            "gh\nissue close 1",
+        ):
+            denial = _read_only_denial(command)
+            assert denial, f"read-only must deny: {command}"
+
+    def test_shell_read_only_gate_fails_closed_on_unknown(self):
+        """An unrecognised verb is refused, not assumed harmless."""
+        from decafclaw.tools.shell_tools import _read_only_denial
+
+        assert _read_only_denial("some-new-tool --flag") is not None
+        assert _read_only_denial("") is not None
+        assert _read_only_denial("   ") is not None
+
+    @pytest.mark.asyncio
+    async def test_tool_shell_refuses_writes_when_read_only(self, ctx):
+        """The gate runs inside tool_shell, before approval or execution."""
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await run_child_turn(ctx, "task", read_only=True)
+
+        child_ctx = mock_run.call_args[0][0]
+
+        from decafclaw.tools.shell_tools import tool_shell
+
+        result = await tool_shell(child_ctx, "gh issue close 1")
+        text = result.text if hasattr(result, "text") else str(result)
+        assert "[error:" in text and "read-only mode" in text
 
     @pytest.mark.asyncio
     async def test_tool_wrapper_threads_read_only(self, ctx):

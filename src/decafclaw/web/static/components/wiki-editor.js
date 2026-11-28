@@ -69,6 +69,68 @@ const STATUS_LABELS = /** @type {Record<string, string>} */ ({
 
 /** @typedef {'/api/vault/'|'/api/config/files/'|'/api/schedules/'} EditorSaveEndpoint */
 
+/** A page's content and mtime, normalized across endpoints. @typedef {{content: string, modified: number}} SavedContent */
+
+/**
+ * One row of {@link SAVE_ENDPOINTS}: how to fetch a page (normalizing the
+ * endpoint's differing body/mtime fields into one shape), how to write it, and
+ * how to read the new mtime back from a write response. The generated client
+ * returns a different response type per endpoint, so `put`/`extractModified`
+ * are typed loosely and only the fields we read are touched.
+ * @typedef {{
+ *   get: (page: string) => Promise<SavedContent>,
+ *   put: (page: string, body: {content: string, modified?: number}) => Promise<any>,
+ *   extractModified: (data: any) => number,
+ * }} EndpointRow */
+
+/**
+ * Per-endpoint request table. `#save`, `#forceSave`, and `#reload` dispatch
+ * through this instead of branching per endpoint, so adding an endpoint is one
+ * row. Keyed by the `saveEndpoint` prefix; unknown prefixes fall back to
+ * schedules (see {@link endpointFor}). Exported so tests can register a
+ * synthetic endpoint and prove the table scales.
+ * @type {Record<string, EndpointRow>}
+ */
+export const SAVE_ENDPOINTS = {
+  '/api/vault/': {
+    get: async (/** @type {string} */ page) => {
+      const data = await DefaultService.wrapperApiVaultPageGet(page);
+      return { content: data.body, modified: data.modified };
+    },
+    put: (/** @type {string} */ page, /** @type {{content: string, modified?: number}} */ body) =>
+      DefaultService.wrapperApiVaultPagePut(page, body),
+    extractModified: (/** @type {any} */ data) => data.modified ?? 0,
+  },
+  '/api/config/files/': {
+    get: async (/** @type {string} */ page) => {
+      const data = await DefaultService.wrapperApiConfigFilesPathGet(page);
+      return { content: data.content, modified: data.modified ?? 0 };
+    },
+    put: (/** @type {string} */ page, /** @type {{content: string, modified?: number}} */ body) =>
+      DefaultService.wrapperApiConfigFilesPathPut(page, body),
+    extractModified: (/** @type {any} */ data) => data.modified ?? 0,
+  },
+  '/api/schedules/': {
+    get: async (/** @type {string} */ page) => {
+      const data = await DefaultService.wrapperApiSchedulesNameGet(page);
+      return { content: data.body, modified: data.modified };
+    },
+    put: (/** @type {string} */ page, /** @type {{content: string, modified?: number}} */ body) =>
+      DefaultService.wrapperApiSchedulesNamePut(page, body),
+    extractModified: (/** @type {any} */ data) => data.modified ?? 0,
+  },
+};
+
+/**
+ * Resolve the endpoint table row for `saveEndpoint`. Unknown prefixes fall back
+ * to schedules, matching the pre-table `else` branch (only the three known
+ * prefixes are ever set by a host).
+ * @param {string} saveEndpoint
+ */
+function endpointFor(saveEndpoint) {
+  return SAVE_ENDPOINTS[saveEndpoint] ?? SAVE_ENDPOINTS['/api/schedules/'];
+}
+
 // ── Wiki-link edit popover ─────────────────────────────────────────────
 
 /** Popover size assumptions, for viewport clamping (see #openLinkEdit). */
@@ -366,72 +428,11 @@ export class WikiEditor extends LitElement {
       return;
     }
 
+    const endpoint = endpointFor(this.saveEndpoint);
     this._status = 'saving';
-    if (this.saveEndpoint === '/api/vault/') {
-      try {
-        const data = await DefaultService.wrapperApiVaultPagePut(
-          this.page, { content, modified: this.modified },
-        );
-        const newModified = data.modified;
-        this.modified = newModified;
-        this.#lastSavedContent = content;
-        this._status = 'saved';
-        this._error = '';
-        this.dispatchEvent(new CustomEvent('saved', {
-          detail: { modified: newModified, page: this.page },
-          bubbles: true,
-          composed: true,
-        }));
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 409) {
-          this._status = 'conflict';
-          this._error = 'Page was modified externally.';
-        } else if (error instanceof ApiError) {
-          this._status = 'error';
-          this._error = `Save failed (${error.status})`;
-        } else {
-          this._status = 'error';
-          this._error = 'Save failed (network error)';
-        }
-      }
-      return;
-    }
-
-    if (this.saveEndpoint === '/api/config/files/') {
-      try {
-        const data = await DefaultService.wrapperApiConfigFilesPathPut(
-          this.page, { content, modified: this.modified },
-        );
-        const newModified = data.modified;
-        this.modified = newModified;
-        this.#lastSavedContent = content;
-        this._status = 'saved';
-        this._error = '';
-        this.dispatchEvent(new CustomEvent('saved', {
-          detail: { modified: newModified, page: this.page },
-          bubbles: true,
-          composed: true,
-        }));
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 409) {
-          this._status = 'conflict';
-          this._error = 'Page was modified externally.';
-        } else if (error instanceof ApiError) {
-          this._status = 'error';
-          this._error = `Save failed (${error.status})`;
-        } else {
-          this._status = 'error';
-          this._error = 'Save failed (network error)';
-        }
-      }
-      return;
-    }
-
     try {
-      const data = await DefaultService.wrapperApiSchedulesNamePut(
-        this.page, { content, modified: this.modified },
-      );
-      const newModified = data.modified;
+      const data = await endpoint.put(this.page, { content, modified: this.modified });
+      const newModified = endpoint.extractModified(data);
       this.modified = newModified;
       this.#lastSavedContent = content;
       this._status = 'saved';
@@ -499,38 +500,16 @@ export class WikiEditor extends LitElement {
 
   async #reload() {
     try {
-      /** @type {string} */
-      let newContent;
-      /** @type {number} */
-      let newModified;
-      if (this.saveEndpoint === '/api/vault/') {
-        try {
-          const data = await DefaultService.wrapperApiVaultPageGet(this.page);
-          newContent = data.body;
-          newModified = data.modified;
-        } catch (e) {
-          if (e instanceof ApiError) throw new Error(`HTTP ${e.status}`);
-          throw e;
-        }
-      } else if (this.saveEndpoint === '/api/config/files/') {
-        try {
-          const data = await DefaultService.wrapperApiConfigFilesPathGet(this.page);
-          newContent = data.content;
-          newModified = data.modified ?? 0;
-        } catch (e) {
-          if (e instanceof ApiError) throw new Error(`HTTP ${e.status}`);
-          throw e;
-        }
-      } else {
-        try {
-          const data = await DefaultService.wrapperApiSchedulesNameGet(this.page);
-          newContent = data.body;
-          newModified = data.modified;
-        } catch (e) {
-          if (e instanceof ApiError) throw new Error(`HTTP ${e.status}`);
-          throw e;
-        }
+      const endpoint = endpointFor(this.saveEndpoint);
+      /** @type {SavedContent} */
+      let data;
+      try {
+        data = await endpoint.get(this.page);
+      } catch (e) {
+        if (e instanceof ApiError) throw new Error(`HTTP ${e.status}`);
+        throw e;
       }
+      const { content: newContent, modified: newModified } = data;
       this.content = newContent;
       this.modified = newModified;
       if (this.#editor) {
@@ -557,58 +536,10 @@ export class WikiEditor extends LitElement {
     this._status = 'saving';
     const savedModified = this.modified;
     const content = this.#currentMarkdown;
-    if (this.saveEndpoint === '/api/vault/') {
-      try {
-        const data = await DefaultService.wrapperApiVaultPagePut(
-          this.page, { content },
-        );
-        this.modified = data.modified;
-        this.#lastSavedContent = content;
-        this._status = 'saved';
-        this._error = '';
-        this.dispatchEvent(new CustomEvent('saved', {
-          detail: { modified: this.modified, page: this.page },
-          bubbles: true,
-          composed: true,
-        }));
-      } catch (error) {
-        this._status = 'error';
-        this._error = error instanceof ApiError
-          ? `Force save failed (${error.status})`
-          : 'Force save failed (network error)';
-      }
-      return;
-    }
-
-    if (this.saveEndpoint === '/api/config/files/') {
-      try {
-        const data = await DefaultService.wrapperApiConfigFilesPathPut(
-          this.page, { content },
-        );
-        this.modified = data.modified;
-        this.#lastSavedContent = content;
-        this._status = 'saved';
-        this._error = '';
-        this.dispatchEvent(new CustomEvent('saved', {
-          detail: { modified: this.modified, page: this.page },
-          bubbles: true,
-          composed: true,
-        }));
-      } catch (error) {
-        this.modified = savedModified;
-        this._status = 'error';
-        this._error = error instanceof ApiError
-          ? `Force save failed (${error.status})`
-          : 'Force save failed (network error)';
-      }
-      return;
-    }
-
+    const endpoint = endpointFor(this.saveEndpoint);
     try {
-      const data = await DefaultService.wrapperApiSchedulesNamePut(
-        this.page, { content },
-      );
-      this.modified = data.modified;
+      const data = await endpoint.put(this.page, { content });
+      this.modified = endpoint.extractModified(data);
       this.#lastSavedContent = content;
       this._status = 'saved';
       this._error = '';
@@ -618,13 +549,14 @@ export class WikiEditor extends LitElement {
         composed: true,
       }));
     } catch (error) {
+      // The PUT failed, so the mtime never advanced — restore the pre-save
+      // value (a no-op in practice, since `modified` is only reassigned on a
+      // successful response).
       this.modified = savedModified;
       this._status = 'error';
-      if (error instanceof ApiError) {
-        this._error = `Force save failed (${error.status})`;
-      } else {
-        this._error = 'Force save failed (network error)';
-      }
+      this._error = error instanceof ApiError
+        ? `Force save failed (${error.status})`
+        : 'Force save failed (network error)';
     }
   }
 
