@@ -9,6 +9,7 @@ from decafclaw.conversation_manager import ConversationManager, TurnKind
 from decafclaw.events import EventBus
 from decafclaw.media import ToolResult
 from decafclaw.tools.delegate import (
+    _READ_ONLY_INSTRUCTION,
     DEFAULT_CHILD_SYSTEM_PROMPT,
     run_child_turn,
     tool_delegate_task,
@@ -1167,6 +1168,23 @@ class TestReadOnlyDelegation:
         assert any("READ-ONLY MODE" in p for p in prompts)
         await run_child_turn(ctx, "task")
         assert prompts[-1] and "READ-ONLY MODE" not in prompts[-1]
+
+    def test_read_only_instruction_permits_read_shell(self):
+        """Read-only forbids mutations, not the shell itself.
+
+        ``gh`` lives in the shell, so instructing a child not to call ``shell``
+        cut it off from the authenticated GitHub API. It then fell back to
+        anonymous ``api.github.com``, which allows 60 requests/hour per IP, and
+        sweeps stalled on 403s. The instruction must name writes to avoid and
+        leave read-only shell use explicitly available.
+        """
+        text = _READ_ONLY_INSTRUCTION
+        assert "READ-ONLY MODE" in text
+        for permitted in ("gh issue view", "git log", "grep"):
+            assert permitted in text, f"read-only prompt should permit {permitted}"
+        for forbidden in ("gh issue close", "gh pr merge", "git commit"):
+            assert forbidden in text, f"read-only prompt should name {forbidden} as a write"
+        assert "Do not call write-capable tools (for example workspace_write" not in text
 
     @pytest.mark.asyncio
     async def test_tool_wrapper_threads_read_only(self, ctx):

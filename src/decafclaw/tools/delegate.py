@@ -98,10 +98,16 @@ omitting fields."""
 _READ_ONLY_INSTRUCTION = """\
 
 You are in READ-ONLY MODE. You must not create, change, move, or delete
-anything. Do not call write-capable tools (for example workspace_write,
-shell, http_request, send_email, or similar). Use read-only tools only,
-and report the changes you recommend in your answer instead of applying
-them."""
+anything, and you must not mutate any external system.
+
+Shell access follows the session's own approval policy, so read-only work
+(`git log`, `grep`, `ls`, `gh issue view`, `gh api` reads) is available and
+expected. Do not use it to change anything: no redirection into a file, no
+`gh issue close`, `gh pr merge`, `sed -i`, `git commit`, or any other write.
+
+Do not call the write-capable tools (workspace_write, admin_write,
+vault_write, send_email, and similar). Use read-only tools, and report the
+changes you recommend in your answer instead of applying them."""
 
 _FENCED_JSON_RE = re.compile(
     r"```json\s*\n(?P<body>.+?)\n```",

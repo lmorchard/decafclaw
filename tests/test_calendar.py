@@ -838,10 +838,12 @@ async def test_update_recurrence_reanchors(ctx, mock_manager):
     ctx.conv_id = "conv-tools"
     # Adding a rule keeps the existing fire_at as the anchor, so the anchor has
     # to satisfy the rule: FREQ=WEEKLY;BYDAY=MO needs a Monday (#1954).
-    monday = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(days=1)
+    # Add the hour BEFORE aligning to a weekday: adding it afterwards can roll
+    # the anchor past midnight onto the next day, which is no longer a Monday
+    # whenever this runs in the late-UTC-23:00 window.
+    monday = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(days=1, hours=1)
     while monday.weekday() != 0:
         monday += timedelta(days=1)
-    monday += timedelta(hours=1)
     created = await tool_calendar_create(ctx, title="One-shot", reason="Later", fire_at=monday.isoformat())
     event_id = created.data["event_id"]
 
