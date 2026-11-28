@@ -485,6 +485,7 @@ Settings for shell command execution and pre-approval logic (see #473).
 | `read_only_enabled` | bool | `true` | `SHELL_READ_ONLY_ENABLED` |
 | `activity_window` | int | `50` | `SHELL_ACTIVITY_WINDOW` |
 | `direction_shadow_mode` | bool | `false` | `SHELL_DIRECTION_SHADOW_MODE` |
+| `opaque_arg_commands` | list[str] | `[]` | `SHELL_OPAQUE_ARG_COMMANDS` |
 | `foreground_wait_budget_sec` | float \| None | `None` | `SHELL_FOREGROUND_WAIT_BUDGET_SEC` |
 | `max_runtime_sec` | float | `30.0` | `SHELL_MAX_RUNTIME_SEC` |
 
@@ -495,6 +496,14 @@ When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxi
 `scope_rules_enabled` (#1641 phase 4) turns on merging the global, scope-keyed rulebook (`data/{agent_id}/shell_scope_rules.jsonl`) into the aux-judge prompt for commands in a matching activity scope. The rulebook is policy: only the `admin_*` tools write it, each with interactive confirmation and a diff preview, and they refuse unattended turns and child agents. The runtime reads it and never writes it. `scope_rule_min_approvals` / `scope_rule_max_denials` are the promotion thresholds: a `(scope, command shape)` with at least N human approvals and no more than M denials becomes a proposed rule. Promotion writes nothing either — it returns a draft for `admin_write`, so a human still confirms. Evidence lives in the append-only `data/{agent_id}/shell_scope_ledger.jsonl`; forged ledger entries cannot promote a rule unattended. See [Tools — Global scope rules](tools.md#global-scope-keyed-rulebook-1641-phase-4).
 
 `direction_shadow_mode` (#1661) computes direction for every shell command and writes a `direction_shadow` audit event (`would_decide`: `prompt`, `defer`, or `pass`, plus the activity) **without changing the decision**. It is the low-risk way to compare what direction would have done against real outcomes before trusting the tier; leave it `false` in normal operation. See [Tools — Direction-aware approval](tools.md#direction-aware-approval-1641).
+
+`opaque_arg_commands` (#2038) names commands whose **bare positional** arguments are opaque keys rather than filesystem paths. Some CLIs address a store with POSIX-style key paths that are indistinguishable from absolute paths — `tv resource json get /measurements` reaches Tier 1's containment check as `/measurements`, resolves to the filesystem root, and asks on every call. An entry matches the leading tokens of a command segment, so `"tv"` covers every subcommand while `"tv resource json"` covers only that family:
+
+```json
+{ "shell": { "opaque_arg_commands": ["tv resource json"] } }
+```
+
+The exemption is bare positionals only, and that is the safety argument. A token starting with `-` is an option; a token following an option is that option's **value**, which is exactly how a real path arrives. So `tv resource json set /measurements/key --file ~/.ssh/id_rsa` exempts the store key and still asks about the `--file` value. A wrong grammar entry therefore costs a prompt, never a silent allow. It also cannot relax a dangerous-pattern block or a sensitive-pattern ask, both of which are evaluated independently. Empty by default: this is an assertion about one CLI's grammar, and it is operator-only — the security monitor must not be configurable by the process it reviews.
 
 `activity_window` (#1641) is how many recent shell calls define a conversation's established activity. A command whose activity domain (derived from `cwd` and command tokens) appears in that window proceeds to the aux judge; a command that starts a new activity is confirmed once with the direction stated. The window is recomputed from conversation history, so compaction resets it naturally. `0` or below **disables direction entirely**: every command counts as established, so the new-activity tier never fires (the safe way to turn the tier off). Lower positive values make drift prompt sooner. See [Tools — Direction-aware approval](tools.md#direction-aware-approval-1641).
 

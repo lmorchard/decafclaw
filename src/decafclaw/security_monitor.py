@@ -687,8 +687,77 @@ def _expression_argument_indices(segment: list[str], exe_index: int | None) -> s
     return indices
 
 
+# A token led by a variable reference that also carries a path separator, e.g.
+# ``$HOME/.ssh``, ``${HOME}/.ssh`` or ``"$CACHE/x"``. Such a token is a path
+# whose target is only known at run time, so the literal containment scan cannot
+# see it (#2038). The separator requirement keeps ordinary data arguments
+# (``$n``, ``$!``, ``$%{http_code}``) out of the rule: measured against ~19.7k
+# historical shell commands, the separator form flagged 15 (0.08%) while the
+# unqualified form would have flagged 104 (0.53%), nearly all of them numbers
+# and PIDs rather than paths.
+_VARIABLE_PATH_RE = re.compile(r"^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/")
+
 _VENV_DIR_NAMES = frozenset({".venv", "venv"})
 _VENV_BIN_DIR_NAMES = frozenset({"bin", "Scripts"})
+
+
+def _opaque_argument_indices(segment: list[str], exe_index: int | None, prefixes: list[str]) -> set[int]:
+    """Indices of bare positional arguments whose values are opaque keys, not paths.
+
+    Some CLIs address a namespaced store with POSIX-style key paths that are
+    indistinguishable from absolute filesystem paths: ``tv resource json get
+    /measurements`` reaches the containment check below as ``/measurements`` and
+    prompts on every call (#2038). ``prefixes`` names those commands; an entry
+    matches the leading tokens of the segment's command word.
+
+    The exemption covers BARE POSITIONALS only, and that restriction is the
+    whole safety argument:
+
+    - a token starting with ``-`` is an option, not a positional — not exempt
+    - a token immediately following an option is that option's VALUE — not
+      exempt, because that is exactly how a real path arrives. ``tv resource
+      json set /store/key --file ~/.ssh/id_rsa`` has one opaque positional and
+      one filesystem path; only the first is skipped.
+
+    So an exempting prefix can never switch off path checking for a value the
+    command might read from disk. If the grammar is misread here, the failure
+    is a false positive (a prompt), never a silent allow.
+    """
+    if exe_index is None or not prefixes:
+        return set()
+
+    command = Path(segment[exe_index]).name
+    words = [command, *(token for token in segment[exe_index + 1 :] if not token.startswith("-"))]
+    matched = False
+    for prefix in prefixes:
+        prefix_tokens = prefix.split()
+        if not prefix_tokens:
+            continue
+        if command != prefix_tokens[0]:
+            continue
+        if words[: len(prefix_tokens)] != prefix_tokens:
+            continue
+        matched = True
+        break
+    if not matched:
+        return set()
+
+    indices: set[int] = set()
+    option_pending_value = False
+    for offset in range(exe_index + 1, len(segment)):
+        token = segment[offset]
+        if token.startswith("-"):
+            # An option consumes the next token as its value. Tracking this
+            # without knowing each option's arity is deliberately conservative:
+            # treating a value as an option cannot exempt it, and treating a
+            # flag as value-taking at worst costs a prompt.
+            option_pending_value = True
+            continue
+        if option_pending_value:
+            option_pending_value = False
+            continue
+        indices.add(offset)
+    return indices
 
 
 def venv_executable_path(command: str, workspace_path: str | Path | None = None) -> str | None:
@@ -728,8 +797,16 @@ def evaluate_command(
     workspace_path: str | Path | None = None,
     is_autonomous: bool = False,
     is_child_agent: bool = False,
+    opaque_arg_commands: list[str] | None = None,
 ) -> SecurityDecision:
-    """Evaluate a shell command using Tier 1 pattern matching and return a SecurityDecision."""
+    """Evaluate a shell command using Tier 1 pattern matching and return a SecurityDecision.
+
+    ``opaque_arg_commands`` names commands whose bare positional arguments are
+    opaque keys rather than filesystem paths (``shell.opaque_arg_commands``,
+    #2038). It only ever removes a false-positive ASK from the containment
+    check; it cannot relax a dangerous-pattern BLOCK or a SENSITIVE_PATTERNS
+    ASK, both of which are evaluated independently of it.
+    """
     if not command or not command.strip():
         return SecurityDecision(SecurityStatus.ALLOW, "Empty command")
 
@@ -747,6 +824,7 @@ def evaluate_command(
     wrapped_executable_indices: set[int] = set()
     unresolved_wrapper = False
     expression_indices: set[int] = set()
+    opaque_indices: set[int] = set()
     for start, segment in _command_segments(tokens):
         exe_index = _executable_index(segment)
         if exe_index is not None:
@@ -757,9 +835,12 @@ def evaluate_command(
             elif wrapped is not None:
                 wrapped_executable_indices.add(start + wrapped)
         expression_indices.update(start + i for i in _expression_argument_indices(segment, exe_index))
+        opaque_indices.update(
+            start + i for i in _opaque_argument_indices(segment, exe_index, opaque_arg_commands or [])
+        )
 
     for idx, token in enumerate(tokens):
-        if idx in expression_indices:
+        if idx in expression_indices or idx in opaque_indices:
             continue
 
         # Strip redirection operators attached to path, e.g. >/tmp/out, 2>>/tmp/err, </etc/passwd
@@ -772,6 +853,24 @@ def evaluate_command(
         # Ignore options/flags that do not carry path values
         if cleaned.startswith("-") and not cleaned.startswith("-/") and not cleaned.startswith("-~"):
             continue
+
+        # A token led by a variable that contains a path separator cannot be
+        # resolved here: the value is decided at run time, and the scan below
+        # only understands literal ``/``, ``~`` and ``..``. Without this branch
+        # ``cat "$HOME/.ssh/id_rsa"`` passes Tier 1 untouched, because the
+        # literal token begins with ``$`` and matches none of the path shapes.
+        # Ask rather than allow: the containment check cannot see the target.
+        #
+        # Known residual gaps, left open deliberately (they need dataflow, not
+        # a token scan): a variable holding an absolute path with no separator
+        # (``X=/etc/passwd; cat $X``) and a bare ``cat $X`` whose value is only
+        # known from an earlier assignment. Both fail closed to the later tiers
+        # rather than to a silent allow.
+        if _VARIABLE_PATH_RE.match(cleaned):
+            return SecurityDecision(
+                SecurityStatus.ASK,
+                f"Attempted operation on an unresolvable variable-led path: {token}",
+            )
 
         # Check if cleaned token represents a path
         if cleaned.startswith("/") or cleaned.startswith("~") or ".." in cleaned:
@@ -880,6 +979,7 @@ async def evaluate_command_llm(
     is_child_agent: bool = False,
     force_llm: bool = False,
     purpose: str = "",
+    opaque_arg_commands: list[str] | None = None,
 ) -> SecurityDecision:
     """Evaluate a command using Tier 1 pattern matching and Tier 2 LLM classification.
 
@@ -887,12 +987,15 @@ async def evaluate_command_llm(
     blocks and sensitive-pattern ASK decisions are absolute); it is shown to the
     Tier 2 classifier so a command that contradicts its stated purpose can be
     treated as high risk.
+
+    ``opaque_arg_commands`` is forwarded to Tier 1's containment check (#2038).
     """
     tier1_decision = evaluate_command(
         command,
         workspace_path=workspace_path,
         is_autonomous=is_autonomous,
         is_child_agent=is_child_agent,
+        opaque_arg_commands=opaque_arg_commands,
     )
 
     if tier1_decision.status in (SecurityStatus.BLOCK, SecurityStatus.ASK):
