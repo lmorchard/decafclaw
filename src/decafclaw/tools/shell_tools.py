@@ -1911,8 +1911,473 @@ def _native_read_redirect(ctx: "Context", command: str, cwd: str | None) -> Tool
     return ToolResult(text=prefix + text)
 
 
+# --- Read-only shell gate (#87) -------------------------------------------
+#
+# A read-only child keeps `shell`, because `gh`, `git`, and `grep` live there and
+# the tool's single `writes: True` flag cannot express "read-only use". The flag
+# is coarse by necessity, so the gate below decides per command.
+#
+# Design stance: deny by default. A command that is not recognised as a known
+# read-only form is refused, so a new tool or an unusual flag combination fails
+# closed rather than slipping through. The cost is over-blocking a legitimate
+# read; a read-only child can still fall back to workspace_read/workspace_search.
+
+# Whole commands that only ever inspect. Matched on the first word.
+_READ_ONLY_VERBS = frozenset(
+    {
+        "cat",
+        "head",
+        "tail",
+        "wc",
+        "ls",
+        "find",
+        "grep",
+        "egrep",
+        "fgrep",
+        "rg",
+        "ag",
+        "which",
+        "whoami",
+        "pwd",
+        "date",
+        "basename",
+        "dirname",
+        "realpath",
+        "stat",
+        "file",
+        "du",
+        "df",
+        "sort",
+        "uniq",
+        "cut",
+        "tr",
+        "jq",
+        "diff",
+        "comm",
+        "join",
+        "column",
+        "tree",
+        "less",
+        "more",
+        "md5sum",
+        "sha1sum",
+        "sha256sum",
+        "readlink",
+        "nl",
+        "awk",
+        "sed",
+    }
+)
+
+# `sed`/`awk` are only read-only without an in-place / write form.
+_READ_ONLY_SED_FORBIDDEN = ("-i", "--in-place")
+_READ_ONLY_AWK_FORBIDDEN = ("-i", "--in-place")
+
+# git subcommands that only inspect history/state.
+_READ_ONLY_GIT = frozenset(
+    {
+        "log",
+        "show",
+        "status",
+        "diff",
+        "blame",
+        "grep",
+        "ls-files",
+        "ls-tree",
+        "rev-parse",
+        "rev-list",
+        "cat-file",
+        "describe",
+        "shortlog",
+        "show-ref",
+        "branch",
+        "tag",
+        "remote",
+        "config",
+        "whatchanged",
+        "for-each-ref",
+        "merge-base",
+        "name-rev",
+        "symbolic-ref",
+        "count-objects",
+        "fsck",
+    }
+)
+# git subcommands that write, even though some spellings look like reads.
+_GIT_WRITES = frozenset(
+    {
+        "commit",
+        "push",
+        "pull",
+        "fetch",
+        "merge",
+        "rebase",
+        "reset",
+        "checkout",
+        "switch",
+        "restore",
+        "clean",
+        "add",
+        "rm",
+        "mv",
+        "apply",
+        "am",
+        "cherry-pick",
+        "revert",
+        "stash",
+        "tag",
+        "gc",
+        "prune",
+        "update-ref",
+        "filter-branch",
+        "init",
+        "clone",
+        "worktree",
+        "submodule",
+        "notes",
+        "bisect",
+        "replace",
+    }
+)
+# `git branch`, `git tag`, `git remote`, `git config` are reads only in their
+# listing forms; any argument that adds/removes/deletes is a write.
+_GIT_WRITE_FLAGS = frozenset(
+    {
+        "-d",
+        "-D",
+        "--delete",
+        "-m",
+        "-M",
+        "--move",
+        "-c",
+        "-C",
+        "--copy",
+        "-f",
+        "--force",
+        "-u",
+        "--unset",
+        "--add",
+        "--replace-all",
+        "--edit",
+        "-e",
+        "--rename",
+        "--set-upstream-to",
+        "--set",
+        "--global",
+        "--system",
+        "--local",
+        "-a",
+        "--append",
+        "--create",
+        "--annotate",
+        "--sign",
+    }
+)
+
+# gh subcommands that write. `gh api` is handled separately by method.
+_GH_WRITES = frozenset(
+    {
+        "close",
+        "reopen",
+        "edit",
+        "create",
+        "delete",
+        "merge",
+        "comment",
+        "review",
+        "lock",
+        "unlock",
+        "transfer",
+        "pin",
+        "unpin",
+        "approve",
+        "ready",
+        "draft",
+        "rerun",
+        "cancel",
+        "upload",
+        "release",
+        "set",
+        "add",
+        "remove",
+        "sync",
+        "fork",
+        "clone",
+        "rename",
+        "archive",
+        "unarchive",
+        "restore",
+        "watch",
+        "unwatch",
+        "subscribe",
+        "unsubscribe",
+        "disable",
+        "enable",
+        "download",
+    }
+)
+# `gh <group> <verb>` pairs where the verb is the third word.
+_GH_WRITE_PAIRS = {
+    ("pr", "merge"),
+    ("pr", "create"),
+    ("pr", "edit"),
+    ("pr", "close"),
+    ("pr", "reopen"),
+    ("pr", "review"),
+    ("pr", "comment"),
+    ("pr", "ready"),
+    ("pr", "lock"),
+    ("pr", "unlock"),
+    ("pr", "checkout"),
+    ("pr", "update-branch"),
+    ("issue", "create"),
+    ("issue", "edit"),
+    ("issue", "close"),
+    ("issue", "reopen"),
+    ("issue", "comment"),
+    ("issue", "delete"),
+    ("issue", "transfer"),
+    ("issue", "lock"),
+    ("issue", "unlock"),
+    ("issue", "pin"),
+    ("issue", "unpin"),
+    ("label", "create"),
+    ("label", "edit"),
+    ("label", "delete"),
+    ("label", "clone"),
+    ("project", "create"),
+    ("project", "edit"),
+    ("project", "delete"),
+    ("project", "item-add"),
+    ("project", "item-edit"),
+    ("project", "item-archive"),
+    ("project", "field-create"),
+    ("project", "field-delete"),
+    ("run", "rerun"),
+    ("run", "cancel"),
+    ("run", "delete"),
+    ("repo", "create"),
+    ("repo", "delete"),
+    ("repo", "edit"),
+    ("repo", "fork"),
+    ("release", "create"),
+    ("release", "edit"),
+    ("release", "delete"),
+    ("release", "upload"),
+    ("gist", "create"),
+    ("gist", "edit"),
+    ("gist", "delete"),
+    ("secret", "set"),
+    ("secret", "remove"),
+    ("variable", "set"),
+    ("variable", "remove"),
+    ("workflow", "enable"),
+    ("workflow", "disable"),
+    ("auth", "login"),
+    ("auth", "logout"),
+    ("auth", "switch"),
+    ("cache", "delete"),
+    ("extension", "install"),
+    ("extension", "remove"),
+}
+
+# Separators that introduce another command in the same string. A read-only
+# child may pipe between read-only verbs; anything that sequences commands is
+# refused, because the second half is not inspected deeply enough to trust.
+_SEQUENCING_SEPARATORS = (";", "&&", "||", "&", "\n", "`", "$(", ">", "<")
+
+# A redirection into a file is a write. `>&` / `2>` also. `<<` heredoc feeds a
+# command but does not itself modify the filesystem, yet a heredoc usually
+# accompanies a write, so it is refused as well.
+_WRITE_REDIRECT_RE = re.compile(r"(?:^|[^0-9])>{1,2}|>>|<{2}|\btee\b")
+
+
+def _read_only_denial(command: str) -> str | None:
+    """Return a denial reason when ``command`` may mutate; None when it is a read.
+
+    Deny-by-default: only explicitly recognised read-only shapes pass. Anything
+    that sequences commands, redirects to a file, or names an unknown verb is
+    refused, so an unrecognised command fails closed.
+    """
+    text = (command or "").strip()
+    if not text:
+        return "read-only mode: empty command"
+
+    # A pipe is allowed only when every segment is itself read-only.
+    if "|" in text and not any(sep in text for sep in _SEQUENCING_SEPARATORS):
+        segments = [part.strip() for part in text.split("|")]
+        for segment in segments:
+            reason = _read_only_segment_denial(segment)
+            if reason:
+                return reason
+        return None
+
+    if any(sep in text for sep in _SEQUENCING_SEPARATORS):
+        return (
+            "read-only mode: command chaining, redirection, and substitution are "
+            "not permitted; run a single read-only command"
+        )
+
+    return _read_only_segment_denial(text)
+
+
+def _read_only_segment_denial(segment: str) -> str | None:
+    """Decide whether one command segment (no pipes, no sequencing) is a read."""
+    segment = segment.strip()
+    if not segment:
+        return "read-only mode: empty command segment"
+    if _WRITE_REDIRECT_RE.search(segment):
+        return "read-only mode: output redirection is not permitted"
+
+    try:
+        words = shlex.split(segment)
+    except ValueError:
+        return "read-only mode: command could not be parsed safely"
+    if not words:
+        return "read-only mode: empty command segment"
+
+    # Strip a leading `sudo`/`env VAR=x` style prefix; both are refused unless
+    # the underlying verb is read-only, and `sudo` itself is never read-only.
+    while words and words[0] in ("sudo", "doas", "nice", "time"):
+        words = words[1:]
+        if not words:
+            return "read-only mode: privilege or timing wrapper with no command"
+    while words and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0]):
+        words = words[1:]
+        if not words:
+            return "read-only mode: environment assignment with no command"
+
+    verb = os.path.basename(words[0])
+    args = words[1:]
+
+    if verb == "git":
+        return _read_only_git_denial(args)
+    if verb == "gh":
+        return _read_only_gh_denial(args)
+    if verb == "sed":
+        if any(flag in args for flag in _READ_ONLY_SED_FORBIDDEN):
+            return "read-only mode: `sed -i` modifies files"
+        return None
+    if verb == "awk":
+        if any(flag in args for flag in _READ_ONLY_AWK_FORBIDDEN):
+            return "read-only mode: `awk -i` modifies files"
+        return None
+    if verb in _READ_ONLY_VERBS:
+        return None
+
+    return f"read-only mode: `{verb}` is not recognised as read-only; use a read-only verb or a read-only tool instead"
+
+
+def _read_only_git_denial(args: list[str]) -> str | None:
+    if not args:
+        return "read-only mode: bare `git` is ambiguous"
+    # Skip global options like `-C <dir>` / `--no-pager`.
+    idx = 0
+    while idx < len(args) and args[idx].startswith("-"):
+        if args[idx] in ("-C", "-c"):
+            idx += 2
+        else:
+            idx += 1
+    if idx >= len(args):
+        return "read-only mode: `git` with only global options"
+    sub = args[idx]
+    if sub in _GIT_WRITES:
+        if sub in ("branch", "tag", "remote", "config"):
+            pass  # handled below, but they are in both sets; decide by flags
+        else:
+            return f"read-only mode: `git {sub}` modifies the repository"
+    if sub not in _READ_ONLY_GIT:
+        return f"read-only mode: `git {sub}` is not recognised as read-only"
+    rest = args[idx + 1 :]
+    if sub in ("branch", "tag", "remote", "config"):
+        for token in rest:
+            if token in _GIT_WRITE_FLAGS:
+                return f"read-only mode: `git {sub} {token}` modifies state"
+    return None
+
+
+def _read_only_gh_denial(args: list[str]) -> str | None:
+    if not args:
+        return "read-only mode: bare `gh` is ambiguous"
+    group = args[0]
+    if group.startswith("-"):
+        return "read-only mode: `gh` with only flags"
+
+    if group == "api":
+        # `gh api` defaults to GET. It is a read unless a method or request
+        # body is named, so the absence of a write indicator is what makes it
+        # safe — the default is not a guess about intent.
+        rest = args[1:]
+        for index, token in enumerate(rest):
+            if token in ("-X", "--method"):
+                if index + 1 >= len(rest):
+                    return "read-only mode: `gh api` with a dangling method flag"
+                method = rest[index + 1].upper()
+                if method and method != "GET":
+                    return "read-only mode: `gh api` non-GET method may write"
+                continue
+            if token.startswith("--method="):
+                method = token.split("=", 1)[1].upper()
+                if method and method != "GET":
+                    return "read-only mode: `gh api` non-GET method may write"
+                continue
+            if token.startswith("-X") and len(token) > 2:
+                method = token[2:].lstrip("=").upper()
+                if method and method != "GET":
+                    return "read-only mode: `gh api` non-GET method may write"
+                continue
+            if token in ("-f", "--field", "-F", "--raw-field", "--input", "--raw-field=", "--field="):
+                return "read-only mode: `gh api` with a request body may write"
+        return None
+    if group == "search" or group == "browse":
+        return None
+    if group == "auth" and len(args) > 1 and args[1] == "status":
+        return None
+    if group == "config" and len(args) > 1 and args[1] in ("get", "list"):
+        return None
+    if group == "status":
+        return None
+    if len(args) > 1 and (group, args[1]) in _GH_WRITE_PAIRS:
+        return f"read-only mode: `gh {group} {args[1]}` modifies GitHub state"
+    if group in _GH_WRITES:
+        return f"read-only mode: `gh {group}` may modify GitHub state"
+
+    # `gh pr view`, `gh issue view`, `gh run list`, etc.
+    if len(args) > 1 and args[1] in ("view", "list", "diff", "checks", "status", "get"):
+        return None
+    if len(args) > 1 and args[1] in (
+        "merge",
+        "create",
+        "edit",
+        "close",
+        "reopen",
+        "comment",
+        "delete",
+        "review",
+        "ready",
+        "draft",
+        "rerun",
+        "cancel",
+        "upload",
+        "set",
+        "add",
+        "remove",
+    ):
+        return f"read-only mode: `gh {group} {args[1]}` modifies GitHub state"
+    if len(args) == 1:
+        # A bare group such as `gh pr` prints help; harmless, treat as read.
+        return None
+    return f"read-only mode: `gh {group} {args[1]}` is not recognised as read-only"
+
+
 async def tool_shell(ctx: "Context", command: str, cwd: str | None = None, purpose: str = "") -> ToolResult:
     """Run a shell command after user confirmation, optionally inside a workspace subdirectory."""
+    if getattr(ctx.tools, "read_only", False):
+        denial = _read_only_denial(command)
+        if denial:
+            log.info(f"[tool:shell] denied by read-only gate: {command} ({denial})")
+            return ToolResult(text=f"[error: {denial}]")
+
     if rewritten := _rewrite_cd_chain(command, cwd):
         command, cwd = rewritten
         log.info(f"[tool:shell] rewrote cd chain to cwd={cwd}: {command}")

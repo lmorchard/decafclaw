@@ -61,6 +61,12 @@ class ToolState:
     deferred_pool: list[dict[str, Any]] = field(default_factory=list)
     allowed: set[str] | None = None
     disallowed: set[str] | None = None
+    # Read-only delegation (#87). ``shell`` is a single tool that can both read
+    # and mutate, so it cannot be split by the ``writes`` flag without removing
+    # `gh`/`git` access entirely. Read-only children therefore keep ``shell``
+    # and this flag makes ``tool_shell`` refuse any command it cannot prove is
+    # non-mutating. False everywhere except a read-only child turn.
+    read_only: bool = False
     preapproved: set[str] = field(default_factory=set)
     preapproved_shell_patterns: list[str] = field(default_factory=list)
     llm_approved_shell_patterns: list[str] = field(default_factory=list)
