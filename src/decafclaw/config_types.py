@@ -292,6 +292,31 @@ class ShellConfig:
     # *would* have done (prompt / defer / pass). This is the low-risk way to
     # compare direction decisions with real outcomes before trusting the tier.
     direction_shadow_mode: bool = False
+    # Command prefixes whose BARE POSITIONAL arguments are opaque keys, not
+    # filesystem paths (#2038). Some CLIs take POSIX-style key paths that look
+    # exactly like absolute filesystem paths: `tv resource json get /measurements`
+    # reaches the Tier 1 containment check as `/measurements`, resolves to the
+    # filesystem root, and demands human confirmation on every call even with a
+    # matching allow pattern installed.
+    #
+    # The exemption is deliberately narrow — bare positionals only:
+    #   - a token starting with `-` is an option, not a positional: not exempt
+    #   - a token following an option is that option's VALUE: not exempt, because
+    #     that is exactly how a real path arrives (`tv resource json set
+    #     /store/path --file ~/.ssh/id_rsa` — the store path is opaque, the
+    #     `--file` value must still be checked)
+    #
+    # That is what keeps this a false-positive fix rather than a hole: an
+    # exempting prefix cannot turn off path checking for anything it can read
+    # from the filesystem. Entries match on the leading tokens of a command
+    # segment, so "tv" covers every tv subcommand while "tv resource json"
+    # covers only the JSON store family.
+    #
+    # Empty by default: this is an operator assertion about a specific CLI's
+    # argument grammar, and it must be made knowingly. Agents cannot add
+    # themselves to it (the security monitor must not be configurable by the
+    # process it reviews).
+    opaque_arg_commands: list[str] = field(default_factory=list)
 
     # --- Resource caps for spawned shell commands ---------------------------
     # Agent-authored shell commands are the least predictable child processes

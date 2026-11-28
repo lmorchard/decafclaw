@@ -960,6 +960,7 @@ async def _approve_by_security_monitor(
         command,
         workspace_path=ctx.config.workspace_path,
         is_autonomous=ctx.is_unattended,
+        opaque_arg_commands=ctx.config.shell.opaque_arg_commands,
     )
     if tier1.status != SecurityStatus.BLOCK:
         return None

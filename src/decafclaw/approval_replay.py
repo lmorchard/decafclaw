@@ -61,6 +61,7 @@ class ReplaySettings:
     read_only_enabled: bool = True
     aux_approval_enabled: bool = False
     allow_patterns: tuple[str, ...] = ()
+    opaque_arg_commands: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -404,7 +405,12 @@ def _activity_for(command: ReplayCommand, settings: ReplaySettings) -> Activity:
 
 
 def _replay_one(command: ReplayCommand, settings: ReplaySettings) -> ReplayResult:
-    tier1 = evaluate_command(command.command, workspace_path=settings.workspace, is_autonomous=False)
+    tier1 = evaluate_command(
+        command.command,
+        workspace_path=settings.workspace,
+        is_autonomous=False,
+        opaque_arg_commands=list(settings.opaque_arg_commands),
+    )
 
     def result(tier: str, decision: str, reason: str = "", activity: Activity | None = None) -> ReplayResult:
         return ReplayResult(
@@ -564,6 +570,7 @@ def settings_from_config(config, root: Path, workspace_override: Path | None = N
         read_only_enabled=getattr(config.shell, "read_only_enabled", True) is not False,
         aux_approval_enabled=bool(getattr(config.shell, "aux_approval_enabled", False)),
         allow_patterns=tuple(_load_allow_patterns(SimpleNamespace(agent_path=agent_path))),
+        opaque_arg_commands=tuple(getattr(config.shell, "opaque_arg_commands", ()) or ()),
     )
 
 
