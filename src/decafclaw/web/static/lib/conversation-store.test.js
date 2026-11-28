@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// The store toasts failed mutations (#1415); mock it so tests can assert the
+// surfaced message instead of touching a toast container.
+vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
+
 import { ConversationStore, parentConvIdOf } from './conversation-store.js';
+import { showToast } from './toast.js';
 import { CHILD_ID_SEPARATOR, SIDE_EFFECT_COMMANDS } from './constants.js';
 import { MESSAGE_TYPES } from './message-types.js';
 // The wire-type manifest, not the generated JS constants: the manifest is the
@@ -1468,6 +1473,144 @@ describe('listing response ordering', () => {
     }));
     await first;
     expect(store.sessions.map((s) => s.session_id)).toEqual(['b']);
+  });
+});
+
+// #1415 — REST error policy: a failed listing records an error state the
+// sidebar can render, and a failed mutation toasts instead of swallowing.
+describe('REST error policy (#1415)', () => {
+  /** @type {import('./conversation-store.js').ConversationStore} */
+  let store;
+  /** @type {import('vitest').Mock} */
+  let fetchMock;
+  /** @type {import('vitest').Mock} */
+  let log;
+  /** @type {import('vitest').Mock} */
+  let change;
+
+  beforeEach(() => {
+    log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    store = makeStore(new FakeWS());
+    change = vi.fn();
+    store.addEventListener('change', change);
+    /** @type {any} */ (showToast).mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  const json = (body) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+  const httpFailure = (status, body) => new Response(JSON.stringify(body), { status });
+  const emptyListing = (folder = '') => json({ folder, folders: [], conversations: [] });
+
+  it.each([
+    ['listConversations', 'conversationsError'],
+    ['listArchivedConversations', 'archivedConversationsError'],
+    ['listSystemConversations', 'systemConversationsError'],
+    ['listSessions', 'sessionsError'],
+  ])('records an error state and emits on an HTTP failure (%s)', async (method, getter) => {
+    fetchMock.mockResolvedValueOnce(httpFailure(500, { detail: 'Internal Server Error' }));
+    await store[method]();
+    expect(store[getter]).toBe('Internal Server Error (500)');
+    expect(change).toHaveBeenCalledTimes(1);
+    // An HTTP error status is expected and surfaced through state, not the console.
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['listConversations', 'conversationsError'],
+    ['listArchivedConversations', 'archivedConversationsError'],
+    ['listSystemConversations', 'systemConversationsError'],
+    ['listSessions', 'sessionsError'],
+  ])('records an error state and logs a transport failure (%s)', async (method, getter) => {
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await store[method]();
+    expect(store[getter]).toBe('Could not reach the server');
+    expect(change).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(expect.any(String), expect.any(TypeError));
+  });
+
+  it('preserves the previous listing on failure', async () => {
+    fetchMock.mockResolvedValueOnce(json({ folder: 'Work', folders: [{ name: 'Work', path: 'Work' }], conversations: [{ conv_id: 'a', title: 'A' }] }));
+    await store.listConversations('Work');
+    fetchMock.mockResolvedValueOnce(httpFailure(500, { detail: 'boom' }));
+    await store.listConversations('Work');
+    expect(store.conversations.map((c) => c.conv_id)).toEqual(['a']);
+    expect(store.folders).toHaveLength(1);
+    expect(store.conversationsError).toBe('boom (500)');
+  });
+
+  it('clears the error state on a successful refresh', async () => {
+    fetchMock.mockResolvedValueOnce(httpFailure(503, { error: 'unavailable' }));
+    await store.listConversations();
+    expect(store.conversationsError).toBe('unavailable (503)');
+    fetchMock.mockResolvedValueOnce(emptyListing());
+    await store.listConversations();
+    expect(store.conversationsError).toBe('');
+  });
+
+  it('does not record an error from a superseded listing request', async () => {
+    let failOlder;
+    fetchMock.mockImplementationOnce(
+      () => new Promise((resolve, reject) => { failOlder = () => reject(new Error('offline')); }),
+    );
+    fetchMock.mockResolvedValueOnce(emptyListing('New'));
+    const older = store.listConversations('Old');
+    const newer = store.listConversations('New');
+    await newer; // the success applies first and clears any error state
+    failOlder();
+    await older; // its failure is superseded (seq) and must not set an error state
+    expect(store.conversationsError).toBe('');
+    expect(store.currentFolder).toBe('New');
+  });
+
+  it.each([
+    ['createConversation', 'Could not create conversation:'],
+    ['renameConversation', 'Could not rename conversation:'],
+    ['archiveConversation', 'Could not archive conversation:'],
+    ['deleteConversation', 'Could not delete conversation:'],
+    ['unarchiveConversation', 'Could not unarchive conversation:'],
+  ])('toasts a failed %s instead of swallowing it', async (method, prefix) => {
+    const id = 'c1';
+    // rename fails with the server's `error` field; the rest with a FastAPI detail.
+    fetchMock.mockResolvedValueOnce(httpFailure(409, method === 'renameConversation' ? { error: 'conflict' } : { detail: 'boom' }));
+    await store[method](id);
+    expect(/** @type {any} */ (showToast)).toHaveBeenCalledWith(`${prefix} ${method === 'renameConversation' ? 'conflict' : 'boom'} (409)`);
+    // A failed mutation changes no state and emits nothing.
+    expect(change).not.toHaveBeenCalled();
+  });
+
+  it('logs an unexpected create failure but not a server error status', async () => {
+    fetchMock.mockResolvedValueOnce(httpFailure(500, { detail: 'boom' }));
+    await store.createConversation();
+    expect(log).not.toHaveBeenCalled();
+    fetchMock.mockRejectedValueOnce(new Error('offline'));
+    await store.createConversation();
+    expect(log).toHaveBeenCalledWith('Failed to create conversation:', expect.any(Error));
+  });
+
+  it('keeps the fork toast on failure', async () => {
+    store.selectConversation('c1');
+    fetchMock.mockResolvedValueOnce(httpFailure(409, { error: 'cannot fork' }));
+    const result = await store.forkConversation('2026-01-01T00:00:00Z');
+    expect(result).toBeNull();
+    expect(/** @type {any} */ (showToast)).toHaveBeenCalledWith('Could not branch conversation: cannot fork (409)');
+  });
+
+  it('returns false from a failed move without an extra toast (the caller toasts)', async () => {
+    fetchMock.mockResolvedValueOnce(httpFailure(409, { error: 'conflict' }));
+    expect(await store.moveConversation('c1', 'Work')).toBe(false);
+    expect(/** @type {any} */ (showToast)).not.toHaveBeenCalled();
+  });
+
+  it('returns false from a failed folder operation without an extra toast', async () => {
+    fetchMock.mockResolvedValueOnce(httpFailure(409, { error: 'folder problem' }));
+    expect(await store.createFolder('Work')).toBe(false);
+    expect(/** @type {any} */ (showToast)).not.toHaveBeenCalled();
   });
 });
 

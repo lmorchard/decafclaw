@@ -67,6 +67,17 @@ conversation-sidebar .conv-search-status {
   font-size: 0.85rem;
 }
 
+/* A failed listing with nothing to render (#1415): the error replaces the
+   "No conversations" placeholder so a 500 is not silently empty. */
+conversation-sidebar .conv-list-error {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--pico-danger-background, #b02a37);
+  border-radius: 0.35rem;
+  color: var(--pico-danger-color, #b02a37);
+  font-size: 0.85rem;
+}
+
 conversation-sidebar .conv-search-results {
   display: flex;
   flex-direction: column;
