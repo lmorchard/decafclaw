@@ -409,3 +409,180 @@ def test_unresolved_wrapper_asks(tmp_path: Path):
         decision = evaluate_command(cmd, workspace_path=tmp_path)
         assert decision.status == SecurityStatus.ASK, f"Expected ASK for {cmd}: {decision.reason}"
         assert "wrapper command could not be resolved" in decision.reason
+
+
+# ---------------------------------------------------------------------------
+# Opaque positional arguments (#2038)
+# ---------------------------------------------------------------------------
+
+
+OPAQUE_TV = ["tv resource json"]
+
+
+def test_opaque_positional_key_is_allowed(tmp_path: Path):
+    """POSIX-style store keys must not be read as filesystem paths (#2038)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commands = [
+        "tv resource json get --artifact X /measurements",
+        "tv resource json get /measurements --artifact X",
+        "tv resource json set /measurements/carrier_t 1.58 --artifact X",
+        "tv resource json update --artifact X /measurements '{\"usb_z\": 8.6}'",
+        "tv resource json remove --artifact X /measurements/height",
+        "tv resource json watch /measurements --artifact X",
+        "tv resource json push /measurements/readings 42 --artifact X",
+    ]
+    for cmd in commands:
+        decision = evaluate_command(cmd, workspace_path=workspace, opaque_arg_commands=OPAQUE_TV)
+        assert decision.status == SecurityStatus.ALLOW, f"Expected ALLOW for {cmd}: {decision.reason}"
+
+
+def test_opaque_exemption_does_not_cover_option_values(tmp_path: Path):
+    """The safety argument: an option's value is where a real path arrives.
+
+    ``tv resource json set <key> --file <path>`` has one opaque positional and
+    one genuine filesystem path. Only the positional is exempt.
+
+    The path must sit outside both the workspace and the allowed temp dirs
+    (``tmp_path`` lives under /tmp, which is allowed by design), so home is used.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    secrets = Path.home() / ".ssh" / "id_rsa"
+    for cmd in [
+        f"tv resource json set /measurements/key --file {secrets}",
+        f"tv resource json set --file {secrets} /measurements/key",
+        f"tv resource json get --artifact X --file {secrets} /measurements",
+    ]:
+        decision = evaluate_command(cmd, workspace_path=workspace, opaque_arg_commands=OPAQUE_TV)
+        assert decision.status == SecurityStatus.ASK, f"Expected ASK for {cmd}: {decision.reason}"
+        assert "outside workspace path" in decision.reason
+
+
+def test_opaque_exemption_is_scoped_to_matching_prefix(tmp_path: Path):
+    """A configured prefix must not leak to commands or subcommands it does not name."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    # Deeper tv subcommand: excluded by the narrower entry.
+    decision = evaluate_command(
+        "tv resource info /measurements", workspace_path=workspace, opaque_arg_commands=OPAQUE_TV
+    )
+    assert decision.status == SecurityStatus.ASK
+    # Unrelated executable with the same path-looking argument.
+    decision = evaluate_command("echo /measurements", workspace_path=workspace, opaque_arg_commands=OPAQUE_TV)
+    assert decision.status == SecurityStatus.ASK
+
+
+def test_opaque_exemption_can_widen_to_bare_executable(tmp_path: Path):
+    """A bare executable prefix covers every subcommand of that tool."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    decision = evaluate_command("tv resource info /measurements", workspace_path=workspace, opaque_arg_commands=["tv"])
+    assert decision.status == SecurityStatus.ALLOW, decision.reason
+
+
+def test_opaque_exemption_absent_by_default(tmp_path: Path):
+    """Without configuration the containment check is unchanged."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    for kwargs in ({}, {"opaque_arg_commands": []}, {"opaque_arg_commands": None}):
+        decision = evaluate_command(
+            "tv resource json get --artifact X /measurements", workspace_path=workspace, **kwargs
+        )
+        assert decision.status == SecurityStatus.ASK
+        assert "outside workspace path" in decision.reason
+
+
+def test_opaque_exemption_does_not_relax_dangerous_or_sensitive(tmp_path: Path):
+    """The exemption only touches containment; BLOCK and sensitive ASK still fire."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    blocked = evaluate_command("rm -rf /", workspace_path=workspace, opaque_arg_commands=["rm"])
+    assert blocked.status == SecurityStatus.BLOCK
+
+    sensitive = evaluate_command(
+        "tv resource json get --artifact X /measurements && git push --force",
+        workspace_path=workspace,
+        opaque_arg_commands=["tv"],
+    )
+    assert sensitive.status == SecurityStatus.ASK
+    assert "forced git push" in sensitive.reason
+
+
+# ---------------------------------------------------------------------------
+# Variable-led paths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        'cat "$HOME/.ssh/id_rsa"',
+        "cat ${HOME}/.ssh/id_rsa",
+        "cat $HOME/.ssh/id_rsa",
+        "cp $CACHE/data.db .",
+        'echo hi > "$TMPDIR/out.txt"',
+    ],
+)
+def test_variable_led_paths_ask(tmp_path: Path, cmd: str):
+    """A path whose target is only known at run time must not pass Tier 1 (#2038)."""
+    decision = evaluate_command(cmd, workspace_path=tmp_path)
+    assert decision.status == SecurityStatus.ASK, f"Expected ASK for {cmd}: {decision.reason}"
+    assert "unresolvable variable-led path" in decision.reason
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "for n in 1 2 3; do echo $n; done",
+        "echo $PATH",
+        "pgrep -f x && echo $!",
+        "curl -sS -w '%{http_code}' https://example.com",
+    ],
+)
+def test_variable_data_arguments_still_allowed(tmp_path: Path, cmd: str):
+    """The rule keys on a separator: numbers, PIDs and curl formats stay quiet.
+
+    Measured against ~19.7k historical shell commands, the separator form
+    flagged 15 (0.08%); the unqualified form would have flagged 104 (0.53%),
+    nearly all of them non-paths.
+    """
+    decision = evaluate_command(cmd, workspace_path=tmp_path)
+    assert decision.status == SecurityStatus.ALLOW, f"Expected ALLOW for {cmd}: {decision.reason}"
+
+
+@pytest.mark.asyncio
+async def test_tier1_passes_config_opaque_commands_through(tmp_path: Path):
+    """`shell.opaque_arg_commands` must reach the containment check (#2038).
+
+    The helper has its own tests above; this one covers the wiring, because a
+    correct helper nobody passes config to fixes nothing.
+    """
+    from types import SimpleNamespace
+
+    from decafclaw.tools.shell_tools import _approve_by_security_monitor
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    command = "tv resource json get --artifact X /measurements"
+
+    # Configured: Tier 1 no longer asks, so the pipeline falls through to the
+    # allowlist/judge tiers instead of prompting outright.
+    configured = SimpleNamespace(
+        config=SimpleNamespace(
+            workspace_path=workspace,
+            shell=SimpleNamespace(opaque_arg_commands=["tv resource json"]),
+        ),
+        is_unattended=False,
+    )
+    assert (
+        await _approve_by_security_monitor(configured, command=command, cwd=None, activity=None, tool_name="shell")
+        is None
+    )
+
+    # Unconfigured: the containment check still reports the escape. Evaluated
+    # through evaluate_command because _approve_by_security_monitor returns None
+    # for every non-BLOCK status by design.
+    unconfigured = evaluate_command(command, workspace_path=workspace, opaque_arg_commands=[])
+    assert unconfigured.status == SecurityStatus.ASK
+    assert "outside workspace path" in unconfigured.reason
